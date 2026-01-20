@@ -43,5 +43,5 @@ def count_images_per_folder(base_dir):
 # 실행 부분
 # ==========================================
 if __name__ == "__main__":
-    target_path = r"C:\Users\admin\Desktop\cropped_image\Rejected_cropped_image"
+    target_path = r"C:\Users\admin\Desktop\cropped_image"
     count_images_per_folder(target_path)

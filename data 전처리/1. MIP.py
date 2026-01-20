@@ -53,6 +53,16 @@ EXPERIMENTS = {
     #     ]
     # },
 
+    "Diverse_GBA": {
+        "rows": [4], 
+        "input_dirs": [
+            ##r"C:\Users\admin\Desktop\professor_data\005004__2022-08-16T13_36_04-Measurement 1_diverse\Images",  플레이트 이상
+            r"C:\Users\admin\Desktop\professor_data\005005__2022-08-16T14_22_56-Measurement 1_diverse\Images",
+            ##r"C:\Users\admin\Desktop\professor_data\005006__2022-08-16T15_10_03-Measurement 1_diverse\Images",  플레이트 이상
+            r"C:\Users\admin\Desktop\professor_data\005007__2022-08-16T16_06_39-Measurement 1_diverse\Images",
+        ]
+    },
+
     # "PINK1": {
     #     "rows": [2, 3, 4],
     #     "input_dirs": [
@@ -60,6 +70,17 @@ EXPERIMENTS = {
     #         r"C:\Users\admin\Desktop\professor_data\New_data\004005__2022-06-27T14_56_55-Measurement 1_PINK1\Images",
     #         r"C:\Users\admin\Desktop\professor_data\New_data\004006__2022-06-27T15_46_53-Measurement 1_PINK1\Images",
     #         r"C:\Users\admin\Desktop\professor_data\New_data\004007__2022-06-27T17_09_02-Measurement 1_PINK1\Images",
+    #     ]
+    # },
+
+    # "LRRK2": {
+    #     "rows": [5, 6, 7], 
+    #     "input_dirs": [
+    #         r"D:\professor_data\New_data\004001__2022-06-27T11_22_54-Measurement 1_C4_LRRK2\Images",
+    #         r"D:\professor_data\New_data\004002__2022-06-27T12_12_52-Measurement 1_C4_LRRK2\Images",
+    #         r"D:\professor_data\New_data\004003__2022-06-27T13_02_42-Measurement 1_C4_LRRK2\Images", ### 안에 이미지 없음. 따라서 150 * 3(row 개수) * 2(파일 개수) = 900개
+ 
+
     #     ]
     # },
 
@@ -72,12 +93,23 @@ EXPERIMENTS = {
     #     ]
     # },
 
-    "Control_C18": {
-        "rows": [2, 3], 
+    # "Control_C18": {
+    #     "rows": [2, 3], 
+    #     "input_dirs": [
+    #         r"C:\Users\admin\Desktop\professor_data\New_data\005001__2022-08-16T10_54_01-Measurement 1_C18\Images",
+    #         r"C:\Users\admin\Desktop\professor_data\New_data\005002__2022-08-16T11_43_12-Measurement 1_C18\Images",
+    #         r"C:\Users\admin\Desktop\professor_data\New_data\005003__2022-08-16T12_31_25-Measurement 1_C18\Images",
+    #     ]
+    # },
+
+
+    "Diverse_C18": {
+        "rows": [3], 
         "input_dirs": [
-            r"C:\Users\admin\Desktop\professor_data\New_data\005001__2022-08-16T10_54_01-Measurement 1_C18\Images",
-            r"C:\Users\admin\Desktop\professor_data\New_data\005002__2022-08-16T11_43_12-Measurement 1_C18\Images",
-            r"C:\Users\admin\Desktop\professor_data\New_data\005003__2022-08-16T12_31_25-Measurement 1_C18\Images",
+            ##r"C:\Users\admin\Desktop\professor_data\005004__2022-08-16T13_36_04-Measurement 1_diverse\Images",  플레이트 이상
+            r"C:\Users\admin\Desktop\professor_data\005005__2022-08-16T14_22_56-Measurement 1_diverse\Images",
+            ##r"C:\Users\admin\Desktop\professor_data\005006__2022-08-16T15_10_03-Measurement 1_diverse\Images",  플레이트 이상
+            r"C:\Users\admin\Desktop\professor_data\005007__2022-08-16T16_06_39-Measurement 1_diverse\Images",
         ]
     },
 
@@ -99,6 +131,8 @@ EXPERIMENTS = {
     #         r"C:\Users\admin\Desktop\professor_data\New_data\003006__2022-05-16T17_13_39-Measurement 1_C19_GBA\Images",
     #     ]
     # },
+
+
 
 }
 
