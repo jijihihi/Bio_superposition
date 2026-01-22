@@ -1,24 +1,40 @@
 # ==============================================================================
 # RAM bank dataset (same spirit as yours)
 # ==============================================================================
-import os
 import io
 import time
 from typing import List, Optional
 
 import numpy as np
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, Sampler
 from torch.utils.data.dataloader import default_collate
 from torchvision import transforms
 from tqdm.auto import tqdm
 
-from sae_project.step02_logging_utils import get_logger
+from sae_project.step02_logging_utils import get_logger, SUPERCLASS_MAP
+
 
 try:
     import tifffile
 except Exception:
     raise RuntimeError("tifffile not installed. pip install tifffile")
+
+
+
+
+import os, io, time, random
+
+from collections import defaultdict, deque
+
+
+
+
+
+# tif decoder
+
+
+import json
 
 logger = get_logger("data_bank")
 
@@ -35,6 +51,133 @@ def collate_skip_none(batch):
     if len(batch) == 0:
         return None
     return default_collate(batch)
+
+
+
+#클래스 라인별로 이미지 균형있게 뽑는 함수
+
+
+
+class StrictPlateBalancedBatchSamplerOnBank(Sampler[List[int]]):
+    """
+    bank/dataset 인덱스(0..N-1)를 반환하는 strict plate-uniform sampler
+    """
+    def __init__(self, bank, batch_size: int, seed: int):
+        self.bank = bank
+        self.batch_size = int(batch_size)
+        self.seed = int(seed)
+        self._epoch = 0
+
+        # group by (superclass, line, plate) using bank arrays
+        self.orig = defaultdict(list)
+        for j in range(len(bank.images)):
+            if bank.images[j] is None:
+                continue
+            line = bank.lines[j]
+            sup = SUPERCLASS_MAP.get(line, line)
+            plate = bank.plates[j]
+            self.orig[(sup, line, plate)].append(j)
+
+        self.line_plates = defaultdict(list)
+        for (sup, line, plate) in self.orig.keys():
+            self.line_plates[(sup, line)].append(plate)
+        for k in self.line_plates:
+            self.line_plates[k] = sorted(set(self.line_plates[k]))
+
+        self.control_lines = ["Control_C4", "Control_C18", "Control_C19"]
+
+    def __len__(self):
+        # rough
+        n = sum(len(v) for v in self.orig.values())
+        return max(1, n // self.batch_size)
+
+    def _make_working_deques(self, rng: random.Random):
+        g = {}
+        for k, lst in self.orig.items():
+            lst2 = lst[:]
+            rng.shuffle(lst2)
+            g[k] = deque(lst2)
+        return g
+
+    def __iter__(self):
+        self._epoch += 1
+        rng = random.Random(self.seed + self._epoch)
+        g = self._make_working_deques(rng)
+
+        def take_many(sup: str, line: str, plate: str, n: int) -> List[int]:
+            dq = g.get((sup, line, plate), None)
+            if dq is None or len(dq) == 0:
+                return []
+            out = []
+            for _ in range(n):
+                if len(dq) == 0:
+                    break
+                out.append(dq.popleft())
+            return out
+
+        while True:
+            bs = self.batch_size
+
+            # superclass allocation
+            per = bs // 4
+            rem = bs - per * 4
+            targets = {"Control": per, "SNCA": per, "GBA": per, "LRRK2": per}
+            for k in ["Control", "SNCA", "GBA", "LRRK2"]:
+                if rem <= 0: break
+                targets[k] += 1
+                rem -= 1
+
+            batch = []
+
+            # Control split into 3 lines
+            ctl = targets["Control"]
+            pcl = ctl // 3
+            remc = ctl - pcl * 3
+            for li, line in enumerate(self.control_lines):
+                need = pcl + (1 if li < remc else 0)
+                plates = self.line_plates.get(("Control", line), [])
+                if not plates or need <= 0:
+                    continue
+                plates = list(plates)
+                rng.shuffle(plates)
+
+                P = len(plates)
+                per_plate = need // P
+                remp = need - per_plate * P
+
+                for p in plates:
+                    if per_plate > 0:
+                        batch.extend(take_many("Control", line, p, per_plate))
+                for p in plates[:remp]:
+                    batch.extend(take_many("Control", line, p, 1))
+
+            # Mutations
+            for sup in ["SNCA", "GBA", "LRRK2"]:
+                need = targets[sup]
+                line = sup
+                plates = self.line_plates.get((sup, line), [])
+                if not plates or need <= 0:
+                    continue
+                plates = list(plates)
+                rng.shuffle(plates)
+
+                P = len(plates)
+                per_plate = need // P
+                remp = need - per_plate * P
+
+                for p in plates:
+                    if per_plate > 0:
+                        batch.extend(take_many(sup, line, p, per_plate))
+                for p in plates[:remp]:
+                    batch.extend(take_many(sup, line, p, 1))
+
+            if len(batch) < self.batch_size:
+                break
+
+            yield batch[:self.batch_size]
+
+
+
 
 
 def validate_uint16_rgb_128(img: np.ndarray, img_size: int):

@@ -9,7 +9,7 @@ import pickle
 from dataclasses import dataclass
 from typing import Dict, List, Tuple
 
-from sae_project.logging_utils import get_logger, PLATE_DIR_RE, SUPERCLASS_MAP, CLASS_TO_LABEL
+from sae_project.step02_logging_utils import get_logger, PLATE_DIR_RE, SUPERCLASS_MAP, CLASS_TO_LABEL
 
 logger = get_logger("data_shards")
 
