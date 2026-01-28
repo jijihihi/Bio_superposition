@@ -36,7 +36,7 @@ def renorm_unit_per_out_channel_(model: nn.Module, eps: float = 1e-12):
             w.div_(n)
 
 
-def conv2d(in_ch, out_ch, k=3, stride=1, padding=1, dilation=1, bias=False):
+def conv2d(in_ch, out_ch, k=3, stride=1, padding=1, dilation=1, bias=True):
     return nn.Conv2d(in_ch, out_ch, kernel_size=k, stride=stride,
                      padding=padding, dilation=dilation, bias=bias)
 
@@ -44,17 +44,17 @@ def conv2d(in_ch, out_ch, k=3, stride=1, padding=1, dilation=1, bias=False):
 class ResBlock(nn.Module):
     def __init__(self, in_ch, out_ch, dilation=1):
         super().__init__()
-        self.c1 = conv2d(in_ch, out_ch, 3, 1, padding=dilation, dilation=dilation, bias=False)
-        self.c2 = conv2d(out_ch, out_ch, 3, 1, padding=dilation, dilation=dilation, bias=False)
+        self.c1 = conv2d(in_ch, out_ch, 3, 1, padding=dilation, dilation=dilation, bias=True)
+        self.c2 = conv2d(out_ch, out_ch, 3, 1, padding=dilation, dilation=dilation, bias=True)
         self.proj = None
         if in_ch != out_ch:
             self.proj = conv2d(in_ch, out_ch, 1, 1, padding=0, bias=False)
 
     def forward(self, x):
         identity = x
-        x = F.relu(x, inplace=False)
+        x = F.relu(x, inplace=True)
         x = self.c1(x)
-        x = F.relu(x, inplace=False)
+        x = F.relu(x, inplace=True)
         x = self.c2(x)
         if self.proj is not None:
             identity = self.proj(identity)
@@ -79,12 +79,12 @@ class Stage(nn.Module):
 
 
 class Encoder(nn.Module):
-    def __init__(self, blocks=(2, 2, 4, 4), dilations=(1, 1, 1, 1), refine_blocks=1, ckpt_segments=2):
+    def __init__(self, blocks=(2, 2, 2, 3), dilations=(1, 1, 1, 1), refine_blocks=1, ckpt_segments=2):
         super().__init__()
         b2, b3, b4, b5 = blocks
         d2, d3, d4, d5 = dilations
 
-        self.stem = nn.Sequential(conv2d(3, 64, k=3, stride=2, padding=1, bias=False))  # 128->64
+        self.stem = nn.Sequential(conv2d(3, 64, k=3, stride=2, padding=1, bias=True))  # 128->64
         self.stage2 = Stage(64, 128, b2, d2, use_ckpt=False, ckpt_segments=1)
         self.stage3 = Stage(128, 256, b3, d3, use_ckpt=False, ckpt_segments=1)
         self.stage4 = Stage(256, 512, b4, d4, use_ckpt=True, ckpt_segments=ckpt_segments)
@@ -125,12 +125,12 @@ def build_projector(in_dim: int, embed_dim: int, proj_layers: int, proj_hidden: 
     dropout = float(dropout)
 
     def lin(a, b):
-        return nn.Linear(a, b, bias=False)
+        return nn.Linear(a, b, bias=False) #BN 쓰면 bias=False 하는게 일반적. 이게 표준
 
     def bn(d):
         return nn.BatchNorm1d(d) if use_bn else nn.Identity()
 
-    def do():
+    def do():  # 뒤에 dropout 안 씀. p.add_argument("--proj_dropout", type=float, default=0.0) 이고 결국 proj_dropout이 들어가는데 설정에서 0.0으로 해놨음. 선택만 가능 일반적으로 projector에 dropout 안씀
         return nn.Dropout(p=dropout) if dropout > 0 else nn.Identity()
 
     if proj_layers <= 1:
@@ -169,13 +169,14 @@ class SupConMoCoModel(nn.Module):
     def __init__(
         self,
         embed_dim=512,
-        blocks=(2, 2, 4, 4),
+        blocks=(2, 2, 3, 3),
         dilations=(1, 1, 1, 1),
         refine_blocks=1,
         ckpt_segments=2,
         proj_layers: int = 2,
         proj_hidden: int = 2048,
         proj_bn: bool = False,
+        #dropout 안씀
         proj_dropout: float = 0.0,
     ):
         super().__init__()
@@ -199,3 +200,29 @@ class SupConMoCoModel(nn.Module):
         pooled = F.normalize(pooled, dim=1)
         z = self.projector(pooled)
         return F.normalize(z, dim=1)
+
+
+def robust_load_state_dict(model: nn.Module, state_dict: dict, strict: bool = False):
+    """
+    Robustly load state_dict by:
+    1. Extracting 'model_q' if the state_dict is a full checkpoint dictionary.
+    2. Stripping common prefixes like 'module.' (DataParallel) or '_orig_mod.' (torch.compile).
+    """
+    if "model_q" in state_dict:
+        sd = state_dict["model_q"]
+    elif "model" in state_dict:
+        sd = state_dict["model"]
+    else:
+        sd = state_dict
+
+    # Strip prefixes
+    new_sd = {}
+    for k, v in sd.items():
+        name = k
+        if name.startswith("module."):
+            name = name[7:]
+        if name.startswith("_orig_mod."):
+            name = name[10:]
+        new_sd[name] = v
+
+    return model.load_state_dict(new_sd, strict=strict)

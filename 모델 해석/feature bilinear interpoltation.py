@@ -22,12 +22,153 @@ from tqdm.auto import tqdm
 
 import tifffile
 from PIL import Image
+from torch.utils.checkpoint import checkpoint_sequential
 
 # =========================
 # Constants / maps
 # =========================
 OUT_DIM = 512
 PLATE_DIR_RE = re.compile(r"plate=(\d{6})")
+
+# =========================
+# Model Definition (bias=True)
+# =========================
+def conv2d(in_ch, out_ch, k=3, stride=1, padding=1, dilation=1, bias=True):
+    return nn.Conv2d(in_ch, out_ch, kernel_size=k, stride=stride, padding=padding, dilation=dilation, bias=bias)
+
+class ResBlock(nn.Module):
+    def __init__(self, in_ch, out_ch, dilation=1):
+        super().__init__()
+        self.c1 = conv2d(in_ch, out_ch, 3, 1, padding=dilation, dilation=dilation, bias=True)
+        self.c2 = conv2d(out_ch, out_ch, 3, 1, padding=dilation, dilation=dilation, bias=True)
+        self.proj = None
+        if in_ch != out_ch:
+            self.proj = conv2d(in_ch, out_ch, 1, 1, padding=0, bias=False)
+
+    def forward(self, x):
+        identity = x
+        x = F.relu(x, inplace=True)
+        x = self.c1(x)
+        x = F.relu(x, inplace=True)
+        x = self.c2(x)
+        if self.proj is not None:
+            identity = self.proj(identity)
+        return x + identity
+
+class Stage(nn.Module):
+    def __init__(self, in_ch, out_ch, n_blocks, dilation, use_ckpt: bool, ckpt_segments: int):
+        super().__init__()
+        self.use_ckpt = bool(use_ckpt)
+        self.ckpt_segments = int(ckpt_segments)
+        blocks = [ResBlock(in_ch, out_ch, dilation=dilation)]
+        for _ in range(n_blocks - 1):
+            blocks.append(ResBlock(out_ch, out_ch, dilation=dilation))
+        self.blocks = nn.Sequential(*blocks)
+
+    def forward(self, x):
+        if self.use_ckpt and self.training and self.ckpt_segments > 1 and len(self.blocks) > 1:
+            seg = min(self.ckpt_segments, len(self.blocks))
+            return checkpoint_sequential(self.blocks, seg, x, use_reentrant=False)
+        return self.blocks(x)
+
+class Encoder(nn.Module):
+    def __init__(self, blocks=(2,2,4,4), dilations=(1,1,1,1), refine_blocks=1, ckpt_segments=2):
+        super().__init__()
+        b2,b3,b4,b5 = blocks
+        d2,d3,d4,d5 = dilations
+
+        self.stem = nn.Sequential(conv2d(3, 64, k=3, stride=2, padding=1, bias=True))
+        self.stage2 = Stage(64, 128, b2, d2, use_ckpt=False, ckpt_segments=1)
+        self.stage3 = Stage(128, 256, b3, d3, use_ckpt=False, ckpt_segments=1)
+        self.stage4 = Stage(256, 512, b4, d4, use_ckpt=True, ckpt_segments=ckpt_segments)
+        self.stage5 = Stage(512, OUT_DIM, b5, d5, use_ckpt=True, ckpt_segments=ckpt_segments)
+        self.refine = Stage(OUT_DIM, OUT_DIM, int(refine_blocks), 1, use_ckpt=True, ckpt_segments=ckpt_segments)
+
+        self.trunk = nn.Sequential(self.stem, self.stage2, self.stage3, self.stage4, self.stage5, self.refine)
+        self.gap = nn.AdaptiveAvgPool2d((1,1))
+
+    def forward(self, x):
+        x = self.trunk(x)
+        x = self.gap(x).flatten(1)
+        return x
+
+def build_projector(in_dim: int, embed_dim: int, proj_layers: int, proj_hidden: int,
+                    use_bn: bool, dropout: float) -> nn.Module:
+    proj_layers = int(proj_layers)
+    proj_hidden = int(proj_hidden)
+    dropout = float(dropout)
+
+    def lin(a, b):
+        return nn.Linear(a, b, bias=False)
+
+    def bn(d):
+        return nn.BatchNorm1d(d) if use_bn else nn.Identity()
+
+    def do():
+        return nn.Dropout(p=dropout) if dropout > 0 else nn.Identity()
+
+    if proj_layers <= 1:
+        return nn.Sequential(lin(in_dim, embed_dim))
+
+    if proj_layers == 2:
+        return nn.Sequential(
+            lin(in_dim, proj_hidden),
+            bn(proj_hidden),
+            nn.ReLU(inplace=False),
+            do(),
+            lin(proj_hidden, embed_dim),
+        )
+
+    if proj_layers == 3:
+        return nn.Sequential(
+            lin(in_dim, proj_hidden),
+            bn(proj_hidden),
+            nn.ReLU(inplace=False),
+            do(),
+            lin(proj_hidden, proj_hidden),
+            bn(proj_hidden),
+            nn.ReLU(inplace=False),
+            do(),
+            lin(proj_hidden, embed_dim),
+        )
+
+    raise ValueError(f"Unsupported proj_layers={proj_layers}")
+
+class SupConMoCoModel(nn.Module):
+    def __init__(
+        self,
+        embed_dim=512,
+        blocks=(2,2,4,4),
+        dilations=(1,1,1,1),
+        refine_blocks=1,
+        ckpt_segments=2,
+        proj_layers: int = 2,
+        proj_hidden: int = 2048,
+        proj_bn: bool = False,
+        proj_dropout: float = 0.0,
+    ):
+        super().__init__()
+        self.encoder = Encoder(
+            blocks=blocks,
+            dilations=dilations,
+            refine_blocks=refine_blocks,
+            ckpt_segments=ckpt_segments
+        )
+
+        self.projector = build_projector(
+            in_dim=OUT_DIM,
+            embed_dim=int(embed_dim),
+            proj_layers=int(proj_layers),
+            proj_hidden=int(proj_hidden),
+            use_bn=bool(proj_bn),
+            dropout=float(proj_dropout),
+        )
+
+    def forward(self, x):
+        pooled = self.encoder(x)
+        pooled = F.normalize(pooled, dim=1)
+        z = self.projector(pooled)
+        return F.normalize(z, dim=1)
 
 LINE_FOLDERS = [
     "Control_C4", "Control_C18", "Control_C19",
@@ -343,16 +484,30 @@ def load_weights_flex(model, weight_path, device="cpu", strict=True):
 def linear_uint16_to_uint8_rgb(img_u16: np.ndarray) -> np.ndarray:
     return (img_u16.astype(np.float32) / 65535.0 * 255.0).round().astype(np.uint8)
 
-def robust_uint16_to_uint8_rgb(img_u16: np.ndarray, p_lo=1.0, p_hi=99.0) -> np.ndarray:
+def robust_uint16_to_uint8_rgb(img_u16: np.ndarray, p_lo=10.0, p_hi=99.5) -> np.ndarray:
+    """
+    Percentile-based contrast stretching with MIN_STD threshold check.
+    Matches QC code's linear scaling logic.
+    """
+    MIN_STD_THRESHOLD = 655.0  # for uint16 input (same as QC code)
+    
     img = img_u16.astype(np.float32)
     out = np.zeros_like(img, dtype=np.uint8)
     for c in range(3):
         v = img[..., c]
-        lo = np.percentile(v, p_lo)
-        hi = np.percentile(v, p_hi)
-        if hi <= lo + 1e-6:
-            hi = lo + 1.0
-        vv = np.clip((v - lo) / (hi - lo), 0, 1)
+        raw_std = np.std(v)
+        
+        # Skip scaling if channel has very low variance (no meaningful signal)
+        if raw_std < MIN_STD_THRESHOLD:
+            # Just do simple linear conversion without percentile stretching
+            vv = v / 65535.0
+        else:
+            lo = np.percentile(v, p_lo)
+            hi = np.percentile(v, p_hi)
+            if hi <= lo + 1e-6:
+                hi = lo + 1.0
+            vv = np.clip((v - lo) / (hi - lo), 0, 1)
+        
         out[..., c] = (vv * 255.0).round().astype(np.uint8)
     return out
 
@@ -504,7 +659,7 @@ def save_topk_sets_per_channel_posneg(
 # =========================
 
 # 1) Paths
-SAVE_DIR   = "/content/drive/MyDrive/Final_paper/Model_MoCoXBM_PlateLP_LRRK2_L2 norm_hidden2048_resume"
+SAVE_DIR   = "/content/drive/MyDrive/Final_paper/Model_MoCoXBM_PlateLP_LRRK2_L2 norm_hidden2048_resume_bias=True"
 SHARD_ROOT = "/content/wds_shards"
 WEIGHTS    = os.path.join(SAVE_DIR, "best_model.pt")
 

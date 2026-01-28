@@ -1,133 +1,133 @@
 # ==============================================================================
-# Pointwise Top-K SAE
+# Pointwise Top-K SAE + AuxK (no argparse options)
+# - Decoder untied (learned independently)
+# - Tied init only: W_dec initialized as W_enc.T at init, then trained untied
+# - AuxK loss path: trains additional features beyond TopK without changing inference
+# - Decoder row norm = 1 constraint
 # ==============================================================================
-from typing import Tuple
 
+from __future__ import annotations
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 
-def topk_relu(x: torch.Tensor, k: int) -> torch.Tensor:
-    """
-    x: (N, d_sae) after ReLU
-    keep top-k per row, zero others
-    """
-    if k <= 0:
-        return torch.zeros_like(x)
-    if k >= x.size(1):
-        return x
-    vals, idx = torch.topk(x, k, dim=1, largest=True, sorted=False)
-    out = torch.zeros_like(x)
-    out.scatter_(1, idx, vals)
-    return out
-
-
 class PointwiseTopKSAE(nn.Module):
     """
-    token x in R^{d_in}
-    acts = TopK(ReLU(x W_enc + b_enc))
-    recon = acts W_dec + b_dec
-    decoder rows are unit norm enforced
+    Pointwise SAE operating on tokens of shape (N, d_in).
+    Forward returns:
+      recon_main, acts_main, recon_aux, acts_aux
+
+    Inference-time recon should use recon_main only.
+    Aux path is training-only.
     """
+
+    # ---- hardcoded defaults (no argparse bloat) ----
+    AUX_K: int = 32          # auxiliary K (must be > k)
+    AUX_COEFF: float = 0.10  # auxiliary loss coefficient
+    TIED_INIT_ONLY: bool = True
+
     def __init__(self, d_in: int, d_sae: int, k: int, init_scale: float = 0.02):
         super().__init__()
         self.d_in = int(d_in)
         self.d_sae = int(d_sae)
         self.k = int(k)
 
-        self.W_enc = nn.Parameter(torch.randn(self.d_in, self.d_sae) * init_scale)
+        # encoder/decoder weights (untied)
+        self.W_enc = nn.Parameter(torch.randn(self.d_in, self.d_sae) * float(init_scale))
         self.b_enc = nn.Parameter(torch.zeros(self.d_sae))
-        self.W_dec = nn.Parameter(torch.randn(self.d_sae, self.d_in) * init_scale)
+        self.W_dec = nn.Parameter(torch.randn(self.d_sae, self.d_in) * float(init_scale))
         self.b_dec = nn.Parameter(torch.zeros(self.d_in))
 
+        # tied init only (W_dec <- W_enc.T), then untied training
+        if self.TIED_INIT_ONLY:
+            with torch.no_grad():
+                self.W_dec.copy_(self.W_enc.t().contiguous())
+
+        # usage EMA buffer (for dead feature monitoring)
         self.register_buffer("usage_ema", torch.zeros(self.d_sae), persistent=True)
 
-    @torch.no_grad()
-    def renorm_decoder_(self, eps: float = 1e-8):
-        norms = self.W_dec.data.norm(dim=1, keepdim=True).clamp_min(eps)
-        self.W_dec.data.div_(norms)
+        # keep decoder rows unit norm at init
+        self.renorm_decoder_()
 
-    def encode(self, x: torch.Tensor) -> torch.Tensor:
-        h = x @ self.W_enc + self.b_enc
-        h = F.relu(h)
-        h = topk_relu(h, self.k)
-        return h
-
-    def decode(self, a: torch.Tensor) -> torch.Tensor:
-        return a @ self.W_dec + self.b_dec
-
-    def forward(self, x: torch.Tensor):
-        a = self.encode(x)
-        recon = self.decode(a)
-        return recon, a
+        # aux config
+        self.aux_k = int(self.AUX_K)
+        self.aux_coeff = float(self.AUX_COEFF)
+        if self.aux_k <= self.k:
+            # make aux inactive safely
+            self.aux_k = self.k
+            self.aux_coeff = 0.0
 
     @torch.no_grad()
-    def update_usage_ema_(self, a: torch.Tensor, ema: float = 0.99):
-        active = (a > 0).float().mean(dim=0)
-        self.usage_ema.mul_(ema).add_(active, alpha=(1.0 - ema))
+    def renorm_decoder_(self, eps: float = 1e-12):
+        # row-wise norm = 1  (each feature vector)
+        w = self.W_dec.data
+        n = w.norm(dim=1, keepdim=True).clamp_min(eps)
+        w.div_(n)
 
+    @torch.no_grad()
+    def update_usage_ema_(self, acts: torch.Tensor, ema: float = 0.99):
+        """
+        acts: (N, d_sae) sparse tensor.
+        We track fraction of non-zeros per feature.
+        """
+        # nonzero rate per feature
+        used = (acts != 0).float().mean(dim=0)
+        self.usage_ema.mul_(ema).add_(used, alpha=(1.0 - ema))
 
-# ==============================================================================
-# Neuron resampling (dead feature replacement)
-# ==============================================================================
-@torch.no_grad()
-def resample_dead_features_(
-    sae: PointwiseTopKSAE,
-    opt: torch.optim.Optimizer,
-    x_batch: torch.Tensor,          # (N, d_in)
-    recon_batch: torch.Tensor,      # (N, d_in)
-    dead_threshold: float,
-    max_resample_frac: float = 0.05,
-    eps: float = 1e-8,
-) -> int:
-    """
-    - Identify dead features using sae.usage_ema
-    - Replace subset with normalized residual directions
-    - Reset optimizer moments for those indices
-    """
-    usage = sae.usage_ema
-    dead = (usage < dead_threshold).nonzero(as_tuple=False).flatten()
-    if dead.numel() == 0:
-        return 0
+    @staticmethod
+    def _topk_masked(pre: torch.Tensor, k: int) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        pre: (N, d_sae)
+        Returns:
+          acts: masked sparse (N, d_sae)
+          idx: indices of selected features (N, k)
+        Selection is by |pre|, values keep original sign/magnitude.
+        """
+        # idx: (N, k)
+        idx = torch.topk(pre.abs(), k=k, dim=1, largest=True, sorted=False).indices
+        acts = torch.zeros_like(pre)
+        acts.scatter_(1, idx, pre.gather(1, idx))
+        return acts, idx
 
-    max_n = int(max(1, sae.d_sae * max_resample_frac))
-    if dead.numel() > max_n:
-        dead = dead[torch.randperm(dead.numel(), device=dead.device)[:max_n]]
+    @staticmethod
+    def _auxk_excluding_topk(pre: torch.Tensor, idx_topk: torch.Tensor, aux_k: int) -> torch.Tensor:
+        """
+        Build aux activations by taking top aux_k by |pre|,
+        then removing those already in topk, so aux uses "other" features.
+        """
+        if aux_k <= idx_topk.size(1):
+            return torch.zeros_like(pre)
 
-    resid = (x_batch - recon_batch).detach()
-    n = dead.numel()
+        idx_aux = torch.topk(pre.abs(), k=aux_k, dim=1, largest=True, sorted=False).indices
+        aux = torch.zeros_like(pre)
+        aux.scatter_(1, idx_aux, pre.gather(1, idx_aux))
 
-    if resid.size(0) < n:
-        idx = torch.randint(0, resid.size(0), (n,), device=resid.device)
-        vecs = resid[idx]
-    else:
-        idx = torch.randperm(resid.size(0), device=resid.device)[:n]
-        vecs = resid[idx]
+        # zero out topk positions (exclude topk from aux)
+        # create a mask of ones at topk positions
+        mask = torch.zeros_like(pre)
+        mask.scatter_(1, idx_topk, 1.0)
+        aux = aux * (1.0 - mask)
+        return aux
 
-    vecs = vecs / (vecs.norm(dim=1, keepdim=True).clamp_min(eps))
+    def forward(self, tokens: torch.Tensor):
+        """
+        tokens: (N, d_in)
+        returns recon_main, acts_main, recon_aux, acts_aux
+        """
+        # preactivations
+        pre = tokens @ self.W_enc + self.b_enc  # (N, d_sae)
 
-    sae.W_enc.data[:, dead] = vecs.t()
-    sae.W_dec.data[dead, :] = vecs
-    sae.b_enc.data[dead] = 0.0
+        # main top-k
+        acts_main, idx_topk = self._topk_masked(pre, self.k)
+        recon_main = acts_main @ self.W_dec + self.b_dec  # (N, d_in)
 
-    sae.renorm_decoder_()
-    sae.usage_ema[dead] = 0.0
+        # aux path (training-only)
+        if self.aux_coeff > 0.0 and self.aux_k > self.k:
+            acts_aux = self._auxk_excluding_topk(pre, idx_topk, self.aux_k)
+            recon_aux = acts_aux @ self.W_dec + self.b_dec
+        else:
+            acts_aux = torch.zeros_like(acts_main)
+            recon_aux = torch.zeros_like(recon_main)
 
-    # reset optimizer state (Adam moments)
-    for group in opt.param_groups:
-        for p in group["params"]:
-            st = opt.state.get(p, None)
-            if st is None:
-                continue
-            for key in ["exp_avg", "exp_avg_sq"]:
-                if key in st and torch.is_tensor(st[key]):
-                    buf = st[key]
-                    if p is sae.W_enc:
-                        buf[:, dead] = 0
-                    elif p is sae.W_dec:
-                        buf[dead, :] = 0
-                    elif p is sae.b_enc:
-                        buf[dead] = 0
-
-    return int(n)
+        return recon_main, acts_main, recon_aux, acts_aux

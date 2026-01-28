@@ -11,12 +11,16 @@ def get_args():
     
     parser.add_argument("--input_dir", type=str, default=r"C:\Users\admin\Desktop\cropped_image", 
                         help="Directory containing cropped patches.")
-    parser.add_argument("--output_dir", type=str, default=r"C:\Users\admin\Desktop\cropped_image\Rejected_cropped_image", 
+    parser.add_argument("--output_dir", type=str, default=r"C:\Users\admin\Desktop\cropped_image\Rejected_cropped_image6", 
                         help="Directory to move REJECTED patches to.")
     
+    # [0] 채널 표준편차 합
+    parser.add_argument("--min_std_sum", type=float, default=3500.0, 
+                        help="Reject if sum of 3 channel std is below this.")
+
     # [1] 시그널 강도
     parser.add_argument("--min_signal_sum", type=float, default=8000.0, 
-                        help="Reject if sum of top 5%% pixels is below this.")
+                        help="Reject if sum of top 15%% pixels is below this.")
 
     # [2] 라플라시안 분산
     parser.add_argument("--min_laplacian_var", type=float, default=50000.0, 
@@ -31,10 +35,10 @@ def get_args():
     parser.add_argument("--min_saturation_percent", type=float, default=10.0, 
                         help="Percentile to saturate at the bottom (e.g., 10.0 means bottom 10%% pixels are mapped to 0).")
 
-    parser.add_argument("--bg_threshold", type=float, default=3000.0, 
+    parser.add_argument("--bg_threshold", type=float, default=4000.0, 
                         help="Pixel value threshold after scaling. Below this is background.")
-    parser.add_argument("--max_bg_fraction", type=float, default=0.70, 
-                        help="Reject if background fraction is > 70%%.")
+    parser.add_argument("--max_bg_fraction", type=float, default=0.65, 
+                        help="Reject if background fraction is > 65%%.")
     
     return parser.parse_args()
 
@@ -50,8 +54,15 @@ def check_quality_combined(img, args):
     
     h, w, c = img.shape
     
+    # Step 0: Channel Std Sum Check (배경이 많은 이미지 필터링)
+    channel_stds = [np.std(img[..., i].astype(np.float32)) for i in range(c)]
+    std_sum = sum(channel_stds)
+    
+    if std_sum < args.min_std_sum:
+        return True, f"Low Variation (std_sum={std_sum:.0f})"
+    
     # Step 1: Signal Sum Check [cite: 6, 7]
-    top_5_idx = int(h * w * 0.05)
+    top_5_idx = int(h * w * 0.15)
     total_signal = 0
     for i in range(c):
         flat_c = img[..., i].flatten()
@@ -114,6 +125,7 @@ def check_quality_combined(img, args):
 
 def run_filtering(args):
     print("🚀 Starting Combined QC Pipeline...")
+    print(f"   0. Std Sum         < {args.min_std_sum}")
     print(f"   1. Signal Sum      < {args.min_signal_sum}")
     print(f"   2. Laplacian Var   < {args.min_laplacian_var}")
     print(f"   3. Background Frac > {args.max_bg_fraction*100:.0f}%")

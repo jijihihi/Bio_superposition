@@ -55,7 +55,7 @@ def analyze_channel_stats(image_path):
 path_cell = r"C:\Users\admin\Desktop\cropped_image\Control_C4\004001_r02c02f04_Composite_RGB_x512_y640.tif"
 
 # 예시 2: 거의 배경만 있는 이미지 (노이즈만 있는 경우)
-path_bg = r"C:\Users\admin\Desktop\cropped_image\PINK1\004004_r02c02f14_Composite_RGB_x384_y128.tif"
+path_bg = r"C:\Users\admin\Desktop\cropped_image\Control_C4\004001_r02c03f14_Composite_RGB_x256_y512.tif"
 
 # 실행 (경로가 실제 존재할 때만 실행)
 if os.path.exists(path_cell):
