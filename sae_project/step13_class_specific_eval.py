@@ -46,12 +46,14 @@ def get_step13_args():
                    help="Path to class-wise GAP means CSV (output from step09)")
     
     # Concept selection threshold
-    p.add_argument("--filter_mode", type=str, default="entropy", choices=["ratio", "entropy"],
-                   help="Filter mode: 'ratio' (max/min GAP) or 'entropy' (Shannon entropy)")
+    p.add_argument("--filter_mode", type=str, default="entropy", choices=["ratio", "entropy", "gini"],
+                   help="Filter mode: 'ratio' (max/min GAP), 'entropy' (Shannon entropy), or 'gini' (Gini impurity)")
     p.add_argument("--min_ratio", type=float, default=3.0,
                    help="[ratio mode] Minimum max(GAP)/min(GAP) ratio for selection")
     p.add_argument("--max_entropy", type=float, default=1.0,
                    help="[entropy mode] Maximum Shannon entropy for selection (lower = more class-specific)")
+    p.add_argument("--max_gini_impurity", type=float, default=0.5,
+                   help="[gini mode] Maximum Gini impurity for selection (lower = more class-specific, 0=pure, 0.75=uniform for 4 classes)")
     p.add_argument("--min_active_images", type=int, default=10,
                    help="Minimum number of images where concept must be active (GAP>0) in at least one class")
     p.add_argument("--eps", type=float, default=1e-8,
@@ -202,6 +204,7 @@ def load_and_filter_concepts(
     filter_mode: str,
     min_ratio: float, 
     max_entropy: float,
+    max_gini_impurity: float,
     min_active_images: int,
     eps: float
 ) -> tuple:
@@ -210,9 +213,10 @@ def load_and_filter_concepts(
     
     Args:
         gap_csv_path: Path to CSV with columns [concept_id, is_alive, Control, SNCA, GBA, LRRK2, n_Control, n_SNCA, n_GBA, n_LRRK2, entropy, ...]
-        filter_mode: 'ratio' or 'entropy'
+        filter_mode: 'ratio', 'entropy', or 'gini'
         min_ratio: Minimum max(GAP)/min(GAP) ratio for ratio mode
         max_entropy: Maximum Shannon entropy for entropy mode
+        max_gini_impurity: Maximum Gini impurity for gini mode (0=pure, 0.75=uniform)
         min_active_images: Minimum number of active images in at least one class
         eps: Small value to add to min to avoid division by zero
         
@@ -257,6 +261,12 @@ def load_and_filter_concepts(
             # Get entropy from CSV (already computed in step09)
             entropy = float(row.get("entropy", 2.0))
             
+            # Compute Gini impurity: 1 - sum(p_i^2)
+            # For 4 classes: 0 = pure (only one class), 0.75 = uniform
+            total_gap = sum(gaps) + eps
+            probs = [g / total_gap for g in gaps]
+            gini_impurity = 1.0 - sum(p * p for p in probs)
+            
             # Skip concepts not activated in enough images
             if max_active < min_active_images:
                 continue
@@ -264,6 +274,8 @@ def load_and_filter_concepts(
             # Filter based on mode
             if filter_mode == "ratio":
                 passed = ratio >= min_ratio
+            elif filter_mode == "gini":
+                passed = gini_impurity <= max_gini_impurity
             else:  # entropy
                 passed = entropy <= max_entropy
             
@@ -277,6 +289,7 @@ def load_and_filter_concepts(
                     "min_gap": min_gap,
                     "ratio": ratio,
                     "entropy": entropy,
+                    "gini_impurity": gini_impurity,
                     "gaps": gaps,
                     "active_counts": active_counts if count_cols[0] in row else None,
                     "max_active": max_active,
@@ -431,12 +444,15 @@ def main():
     logger.info(f"Filter mode: {args.filter_mode}")
     if args.filter_mode == "ratio":
         logger.info(f"Minimum ratio: {args.min_ratio}")
+    elif args.filter_mode == "gini":
+        logger.info(f"Maximum Gini impurity: {args.max_gini_impurity}")
     else:
         logger.info(f"Maximum entropy: {args.max_entropy}")
     logger.info(f"Minimum active images: {args.min_active_images}")
     
     selected_indices, concept_info = load_and_filter_concepts(
-        args.gap_csv, args.filter_mode, args.min_ratio, args.max_entropy, args.min_active_images, args.eps
+        args.gap_csv, args.filter_mode, args.min_ratio, args.max_entropy, 
+        args.max_gini_impurity, args.min_active_images, args.eps
     )
     
     logger.info(f"Selected {len(selected_indices)} class-specific concepts")
@@ -444,6 +460,8 @@ def main():
     if len(selected_indices) == 0:
         if args.filter_mode == "ratio":
             logger.error("No concepts passed the filter! Try lowering --min_ratio or --min_active_images")
+        elif args.filter_mode == "gini":
+            logger.error("No concepts passed the filter! Try increasing --max_gini_impurity or lowering --min_active_images")
         else:
             logger.error("No concepts passed the filter! Try increasing --max_entropy or lowering --min_active_images")
         return
@@ -565,6 +583,8 @@ def main():
         output_dir = os.path.dirname(args.gap_csv)
         if args.filter_mode == "ratio":
             filename = f"class_specific_eval_ratio{args.min_ratio}.csv"
+        elif args.filter_mode == "gini":
+            filename = f"class_specific_eval_gini{args.max_gini_impurity}.csv"
         else:
             filename = f"class_specific_eval_entropy{args.max_entropy}.csv"
         output_csv = os.path.join(output_dir, filename)
@@ -575,6 +595,8 @@ def main():
     if os.path.isdir(output_csv):
         if args.filter_mode == "ratio":
             filename = f"class_specific_eval_ratio{args.min_ratio}.csv"
+        elif args.filter_mode == "gini":
+            filename = f"class_specific_eval_gini{args.max_gini_impurity}.csv"
         else:
             filename = f"class_specific_eval_entropy{args.max_entropy}.csv"
         output_csv = os.path.join(output_csv, filename)
@@ -587,7 +609,12 @@ def main():
             "train_acc", "test_acc",
             "acc_control", "acc_snca", "acc_gba", "acc_lrrk2"
         ])
-        threshold = args.min_ratio if args.filter_mode == "ratio" else args.max_entropy
+        if args.filter_mode == "ratio":
+            threshold = args.min_ratio
+        elif args.filter_mode == "gini":
+            threshold = args.max_gini_impurity
+        else:
+            threshold = args.max_entropy
         w.writerow([
             os.path.basename(args.gap_csv),
             os.path.basename(args.sae_ckpt),
