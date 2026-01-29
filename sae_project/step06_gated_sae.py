@@ -291,18 +291,22 @@ def get_sparsity_coeff(
     warmup_steps: int,
     final_coeff: float,
     total_steps: int = None,
+    ramp_fraction: float = 0.1,
 ) -> float:
     """
-    Compute sparsity coefficient with warmup schedule.
+    Compute sparsity coefficient with warmup + ramp + maintain schedule.
     
+    Schedule:
     - Steps 0 to warmup_steps-1: return 0
-    - After warmup_steps: linearly ramp up to final_coeff
+    - warmup_steps to warmup_steps + (total_steps * ramp_fraction): linear ramp 0 → final_coeff
+    - After ramp: maintain final_coeff
     
     Args:
         step: Current training step
         warmup_steps: Number of steps to keep at 0
         final_coeff: Final sparsity coefficient
-        total_steps: Total training steps (for linear ramp). If None, step directly to final.
+        total_steps: Total training steps
+        ramp_fraction: Fraction of total_steps for linear ramp (default: 0.1 = 10%)
     """
     if step < warmup_steps:
         return 0.0
@@ -310,10 +314,16 @@ def get_sparsity_coeff(
     if total_steps is None:
         return final_coeff
     
-    # Linear ramp from warmup_steps to total_steps
-    ramp_steps = max(1, total_steps - warmup_steps)
-    progress = min(1.0, (step - warmup_steps) / ramp_steps)
+    # Ramp duration = ramp_fraction of total_steps
+    ramp_steps = max(1, int(total_steps * ramp_fraction))
+    ramp_end = warmup_steps + ramp_steps
     
+    if step >= ramp_end:
+        # Maintain final coefficient
+        return final_coeff
+    
+    # Linear ramp from warmup_steps to ramp_end
+    progress = (step - warmup_steps) / ramp_steps
     return final_coeff * progress
 
 

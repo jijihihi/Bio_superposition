@@ -257,32 +257,44 @@ class InMemoryTarBank:
 
 
 class InMemorySixteenBitDataset(Dataset):
-    def __init__(self, bank: InMemoryTarBank, indices_in_bank: List[int], img_size: int, augment: bool):
+    def __init__(self, bank: InMemoryTarBank, indices_in_bank: List[int], img_size: int, augment: bool, explicit_4x_augment: bool = False):
+        """
+        Args:
+            bank: InMemoryTarBank with preloaded images
+            indices_in_bank: list of indices into the bank
+            img_size: image size (e.g., 128)
+            augment: if True, apply random rot90 (1 of 4 rotations randomly)
+            explicit_4x_augment: if True, explicitly use all 4 rotations per image (4x data)
+                                 This creates 4 samples per original image (indices 0-3 for each)
+        """
         self.bank = bank
         self.ib = indices_in_bank
         self.img_size = int(img_size)
         self.augment = bool(augment)
+        self.explicit_4x_augment = bool(explicit_4x_augment)
 
-        if self.augment:
-            aug = transforms.RandomChoice([
-                transforms.Lambda(lambda x: x),
-                transforms.Lambda(lambda x: torch.rot90(x, 1, [1, 2])),
-                transforms.Lambda(lambda x: torch.rot90(x, 2, [1, 2])),
-                transforms.Lambda(lambda x: torch.rot90(x, 3, [1, 2])),
-            ])
-        else:
-            aug = transforms.Lambda(lambda x: x)
-
-        self.transform = transforms.Compose([
-            aug,
-            SafeInstanceNormalize(threshold=0.01)
-        ])
+        if self.explicit_4x_augment:
+            # Explicit 4x: each image appears 4 times with k=0,1,2,3
+            # __len__ returns 4x, __getitem__ handles rotation
+            self._base_len = len(self.ib)
+        
+        self.normalize = SafeInstanceNormalize(threshold=0.01)
 
     def __len__(self):
+        if self.explicit_4x_augment:
+            return len(self.ib) * 4
         return len(self.ib)
 
     def __getitem__(self, idx: int):
-        j = self.ib[idx]
+        if self.explicit_4x_augment:
+            # idx = base_idx * 4 + rot_k
+            base_idx = idx // 4
+            rot_k = idx % 4
+            j = self.ib[base_idx]
+        else:
+            j = self.ib[idx]
+            rot_k = None
+
         img = self.bank.images[j]
         if img is None:
             return None
@@ -294,7 +306,19 @@ class InMemorySixteenBitDataset(Dataset):
 
         x = (img.astype(np.float32) / 65535.0)
         x = torch.from_numpy(x).permute(2, 0, 1)  # C,H,W
-        x = self.transform(x)
+
+        # Apply rotation
+        if self.explicit_4x_augment:
+            # Explicit: use the specific rotation k
+            if rot_k > 0:
+                x = torch.rot90(x, rot_k, [1, 2])
+        elif self.augment:
+            # Random: pick one of 4 rotations
+            k = torch.randint(0, 4, (1,)).item()
+            if k > 0:
+                x = torch.rot90(x, k, [1, 2])
+
+        x = self.normalize(x)
         return x, y, plate, line, uid
 
 

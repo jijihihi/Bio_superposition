@@ -113,8 +113,9 @@ def extract_sae_repr_for_probe(
         # 학습과 동일하게 항상 L2 normalize
         flat_tokens = F.normalize(flat_tokens, dim=1, eps=1e-12)
         
-        # [MEM] Process tokens in chunks to avoid OOM
-        token_batch_size = 1024  # Reduced from 4096
+        # [GPU] Token batch size for SAE inference (increase for better GPU utilization)
+        # A100 40GB: 8192~16384 works well. Reduce if OOM.
+        token_batch_size = 8192
         num_flat_tokens = flat_tokens.size(0)
         
         acts_list = []
@@ -518,12 +519,57 @@ class GatedSAETrainer:
             self.token_batch = 8192
         self.shuffle_tokens = bool(getattr(args, "shuffle_tokens", True))
 
-        # Estimate total steps for sparsity schedule
-        self.total_steps = args.epochs * len(train_loader)
+        # Gradient accumulation for better GPU utilization
+        self.grad_accum_steps = int(getattr(args, "gradient_accumulation_steps", 1))
+        if self.grad_accum_steps < 1:
+            self.grad_accum_steps = 1
+
+        # Estimate total steps for sparsity schedule (after accumulation)
+        # optimizer steps = (batches per epoch) / grad_accum_steps
+        batches_per_epoch = len(train_loader)
+        self.total_steps = args.epochs * (batches_per_epoch // self.grad_accum_steps)
+
+        # LR Scheduler setup
+        self.lr_scheduler_type = getattr(args, "lr_scheduler", "cosine")
+        self.lr_warmup_fraction = getattr(args, "lr_warmup_fraction", 0.1)
+        self.lr_warmup_steps = int(self.total_steps * self.lr_warmup_fraction)
+        self.base_lr = args.sae_lr
+        
+        if self.lr_scheduler_type == "cosine":
+            # Cosine annealing with warmup
+            from torch.optim.lr_scheduler import LambdaLR
+            import math
+            
+            def lr_lambda(step):
+                if step < self.lr_warmup_steps:
+                    # Linear warmup
+                    return step / max(1, self.lr_warmup_steps)
+                else:
+                    # Cosine decay to 0
+                    progress = (step - self.lr_warmup_steps) / max(1, self.total_steps - self.lr_warmup_steps)
+                    return 0.5 * (1.0 + math.cos(math.pi * progress))
+            
+            self.scheduler = LambdaLR(self.opt, lr_lambda)
+        elif self.lr_scheduler_type == "linear":
+            # Linear decay with warmup
+            from torch.optim.lr_scheduler import LambdaLR
+            
+            def lr_lambda(step):
+                if step < self.lr_warmup_steps:
+                    return step / max(1, self.lr_warmup_steps)
+                else:
+                    progress = (step - self.lr_warmup_steps) / max(1, self.total_steps - self.lr_warmup_steps)
+                    return max(0.0, 1.0 - progress)
+            
+            self.scheduler = LambdaLR(self.opt, lr_lambda)
+        else:
+            self.scheduler = None
 
         logger.info(f"[GatedSAE] tie_weights={getattr(args, 'tie_gate_weights', False)}, "
                     f"aux_coeff={self.aux_coeff}, final_sparsity={self.final_sparsity_coeff}")
         logger.info(f"[GatedSAE] sparsity_warmup_steps={self.sparsity_warmup_steps}, total_steps={self.total_steps}")
+        logger.info(f"[GatedSAE] gradient_accumulation_steps={self.grad_accum_steps}, effective_batch={args.batch_size * self.grad_accum_steps}")
+        logger.info(f"[GatedSAE] lr_scheduler={self.lr_scheduler_type}, lr_warmup_steps={self.lr_warmup_steps}, weight_decay={args.sae_wd}")
 
     def _init_log_csv(self):
         if not os.path.exists(self.log_csv_path):
@@ -746,21 +792,20 @@ class GatedSAETrainer:
         for epoch in range(1, self.args.epochs + 1):
             self.sae.train()
             
-            # [NEW] Compute aux coefficient with cosine decay (epoch 2 -> end: decay to 0)
-            current_aux = get_aux_coeff_cosine_decay(
-                epoch=epoch,
-                total_epochs=self.args.epochs,
-                initial_aux=self.initial_aux_coeff,
-                decay_start_epoch=2,
-            )
-            self.aux_coeff = current_aux  # Update for _compute_loss
+            # Aux coefficient: constant throughout training (standard Gated SAE approach)
+            current_aux = self.aux_coeff
 
             train_recon_sum, train_sparsity_sum, train_aux_sum, train_steps = 0.0, 0.0, 0.0, 0
             train_sse_sum, train_sst_sum = 0.0, 0.0
             dead_count_epoch = 0
 
+            # Gradient accumulation state
+            accum_recon, accum_sparsity, accum_aux = 0.0, 0.0, 0.0
+            accum_count = 0
+            self.opt.zero_grad(set_to_none=True)
+
             pbar = tqdm(self.train_loader, desc=f"GatedSAE Train E{epoch}/{self.args.epochs}", leave=True)
-            for batch in pbar:
+            for batch_idx, batch in enumerate(pbar):
                 if batch is None:
                     continue
                 x_cpu, *_ = batch
@@ -775,14 +820,13 @@ class GatedSAETrainer:
                 if n == 0:
                     continue
 
-                self.opt.zero_grad(set_to_none=True)
-
-                # Get current sparsity coefficient
+                # Get current sparsity coefficient (based on optimizer steps, not batch index)
                 current_sparsity = get_sparsity_coeff(
                     self.global_step,
                     self.sparsity_warmup_steps,
                     self.final_sparsity_coeff,
-                    self.total_steps
+                    self.total_steps,
+                    ramp_fraction=getattr(self.args, 'sparsity_ramp_fraction', 0.1)
                 )
 
                 recon_acc, sparsity_acc, aux_acc = 0.0, 0.0, 0.0
@@ -798,8 +842,8 @@ class GatedSAETrainer:
                             tok, l2n, current_sparsity
                         )
 
-
-                    loss = loss / float(chunks_count)
+                    # Scale loss for both token chunks AND gradient accumulation
+                    loss = loss / float(chunks_count * self.grad_accum_steps)
 
                     if self.use_bf16:
                         loss.backward()
@@ -821,55 +865,109 @@ class GatedSAETrainer:
                         train_sse_sum += sse
                         train_sst_sum += sst
 
-                # ===== Gradient Projection + Optimizer Step =====
-                # 1. Unscale gradients if using mixed precision
+                # Accumulate batch stats
+                recon_step = recon_acc / max(1, chunks)
+                sparsity_step = sparsity_acc / max(1, chunks)
+                aux_step = aux_acc / max(1, chunks)
+                
+                accum_recon += recon_step
+                accum_sparsity += sparsity_step
+                accum_aux += aux_step
+                accum_count += 1
+
+                # ===== Optimizer Step (every grad_accum_steps batches) =====
+                if accum_count >= self.grad_accum_steps:
+                    # 1. Unscale gradients if using mixed precision
+                    if not self.use_bf16:
+                        self.scaler.unscale_(self.opt)
+                    
+                    # 2. Project decoder gradients (remove parallel component)
+                    self.sae.project_decoder_grads_()
+                    
+                    # 3. Gradient clipping
+                    if self.args.grad_clip > 0:
+                        torch.nn.utils.clip_grad_norm_(self.sae.parameters(), float(self.args.grad_clip))
+                    
+                    # 4. Optimizer step
+                    if self.use_bf16:
+                        self.opt.step()
+                    else:
+                        self.scaler.step(self.opt)
+                        self.scaler.update()
+
+                    # 5. Decoder L2 normalization constraint
+                    self.sae.renorm_decoder_()
+
+                    dead_count = int((self.sae.usage_ema < float(self.args.dead_threshold)).sum().item())
+                    dead_count_epoch = dead_count
+
+                    # 6. LR Scheduler step
+                    if self.scheduler is not None:
+                        self.scheduler.step()
+
+                    self.global_step += 1
+
+                    # Average stats over accumulated batches
+                    avg_recon = accum_recon / accum_count
+                    avg_sparsity = accum_sparsity / accum_count
+                    avg_aux = accum_aux / accum_count
+
+                    train_recon_sum += avg_recon
+                    train_sparsity_sum += avg_sparsity
+                    train_aux_sum += avg_aux
+                    train_steps += 1
+
+                    current_lr = self.opt.param_groups[0]['lr']
+                    pbar.set_postfix({
+                        "recon": f"{avg_recon:.4f}",
+                        "sp": f"{avg_sparsity:.4f}",
+                        "aux": f"{avg_aux:.4f}",
+                        "λsp": f"{current_sparsity:.2f}",
+                        "dead": dead_count,
+                        "lr": f"{current_lr:.2e}",
+                    })
+
+                    if (self.global_step % int(self.args.save_every)) == 0:
+                        self.save_ckpt(self.ckpt_path)
+
+                    # Reset accumulation state
+                    accum_recon, accum_sparsity, accum_aux = 0.0, 0.0, 0.0
+                    accum_count = 0
+                    self.opt.zero_grad(set_to_none=True)
+                else:
+                    # Update progress bar even when not stepping
+                    pbar.set_postfix({
+                        "recon": f"{recon_step:.4f}",
+                        "sp": f"{sparsity_step:.4f}",
+                        "aux": f"{aux_step:.4f}",
+                        "λsp": f"{current_sparsity:.2f}",
+                        "αaux": f"{current_aux:.4f}",
+                        "acc": f"{accum_count}/{self.grad_accum_steps}",
+                    })
+
+            # Handle any remaining accumulated gradients at epoch end
+            if accum_count > 0:
                 if not self.use_bf16:
                     self.scaler.unscale_(self.opt)
-                
-                # 2. Project decoder gradients (remove parallel component)
-                #    This prevents conflict with momentum-based optimizers (Adam)
-                #    by removing gradient components that only change norm magnitude
                 self.sae.project_decoder_grads_()
-                
-                # 3. Gradient clipping
                 if self.args.grad_clip > 0:
                     torch.nn.utils.clip_grad_norm_(self.sae.parameters(), float(self.args.grad_clip))
-                
-                # 4. Optimizer step
                 if self.use_bf16:
                     self.opt.step()
                 else:
                     self.scaler.step(self.opt)
                     self.scaler.update()
-
-                # 5. Decoder L2 normalization constraint (every step)
                 self.sae.renorm_decoder_()
-
-                dead_count = int((self.sae.usage_ema < float(self.args.dead_threshold)).sum().item())
-                dead_count_epoch = dead_count
-
                 self.global_step += 1
-
-                recon_step = recon_acc / max(1, chunks)
-                sparsity_step = sparsity_acc / max(1, chunks)
-                aux_step = aux_acc / max(1, chunks)
-
-                train_recon_sum += recon_step
-                train_sparsity_sum += sparsity_step
-                train_aux_sum += aux_step
+                
+                avg_recon = accum_recon / accum_count
+                avg_sparsity = accum_sparsity / accum_count
+                avg_aux = accum_aux / accum_count
+                train_recon_sum += avg_recon
+                train_sparsity_sum += avg_sparsity
+                train_aux_sum += avg_aux
                 train_steps += 1
-
-                pbar.set_postfix({
-                    "recon": f"{recon_step:.4f}",
-                    "sp": f"{sparsity_step:.4f}",
-                    "aux": f"{aux_step:.4f}",
-                    "λsp": f"{current_sparsity:.2f}",
-                    "αaux": f"{current_aux:.4f}",
-                    "dead": dead_count,
-                })
-
-                if (self.global_step % int(self.args.save_every)) == 0:
-                    self.save_ckpt(self.ckpt_path)
+                self.opt.zero_grad(set_to_none=True)
 
             # Epoch summaries
             if train_steps == 0:
@@ -946,7 +1044,7 @@ class GatedSAETrainer:
 
 def _make_loader_from_split(args, refs, uid_to_refidx, split_csv_path: str,
                            batch_size: int, augment: bool, shuffle: bool,
-                           strict_balance: bool, seed: int):
+                           strict_balance: bool, seed: int, explicit_4x_augment: bool = False):
     if not os.path.exists(split_csv_path):
         return None
 
@@ -958,7 +1056,10 @@ def _make_loader_from_split(args, refs, uid_to_refidx, split_csv_path: str,
 
     bank = InMemoryTarBank(refs, refidx, args.img_size)
     ib = list(range(len(refidx)))
-    ds = InMemorySixteenBitDataset(bank, ib, args.img_size, augment=augment)
+    ds = InMemorySixteenBitDataset(bank, ib, args.img_size, augment=augment, explicit_4x_augment=explicit_4x_augment)
+    
+    if explicit_4x_augment:
+        logger.info(f"[DataLoader] explicit_4x_augment=True: {len(refidx)} images → {len(ds)} samples (4x)")
 
     pin = torch.cuda.is_available()
 
@@ -1006,15 +1107,17 @@ def run_experiment(args, refs=None, uid_to_refidx=None, encoder=None):
         raise FileNotFoundError(f"train_split.csv not found: {train_csv}")
 
     strict = True  # ??Always use strict plate balance for SAE training as requested
+    use_explicit_4x = getattr(args, "explicit_4x_augment", False)
 
     train_loader = _make_loader_from_split(
         args, refs, uid_to_refidx,
         split_csv_path=train_csv,
         batch_size=int(args.batch_size),
-        augment=True,  # ??Match Backbone
+        augment=True if not use_explicit_4x else False,  # Random aug off when using explicit 4x
         shuffle=not strict,
         strict_balance=strict,
-        seed=int(args.seed)
+        seed=int(args.seed),
+        explicit_4x_augment=use_explicit_4x,
     )
     assert train_loader is not None
 
@@ -1081,12 +1184,14 @@ ALL_LAYERS = ["stage5_out", "refine_out"]
 def evaluate_concepts_for_sae(
     trainer: GatedSAETrainer,
     train_loader: DataLoader,
+    val_loader: DataLoader,
     test_loader: DataLoader,
     args,
     exp_config: dict,
 ) -> dict:
     """
     Evaluate concept metrics and linear probe accuracy (Vectorized).
+    Uses val+test combined for evaluation metrics.
     """
     device = trainer.device
     encoder = trainer.encoder
@@ -1110,6 +1215,10 @@ def evaluate_concepts_for_sae(
     class_gap_sum = torch.zeros((NUM_CLASSES, d_sae), dtype=torch.float32, device=device)
     class_img_count = torch.zeros(NUM_CLASSES, dtype=torch.long, device=device)
     
+    # [NEW] Count images where each concept has GAP > 0, per class
+    # class_active_img_count[c, i] = number of images in class c where concept i has GAP > 0
+    class_active_img_count = torch.zeros((NUM_CLASSES, d_sae), dtype=torch.long, device=device)
+    
     all_token_counts_list = []
     
     image_idx = 0
@@ -1120,110 +1229,126 @@ def evaluate_concepts_for_sae(
     if torch.cuda.is_available():
         autocast_kwargs["dtype"] = torch.bfloat16
     
-    # Use test_loader for concept metrics (faster, relevant)
+    # Combine val+test for concept metrics (more data = more stable statistics)
+    from torch.utils.data import ConcatDataset
+    eval_loaders = []
+    if val_loader is not None:
+        eval_loaders.append(val_loader)
+    if test_loader is not None:
+        eval_loaders.append(test_loader)
+    
+    total_eval_images = sum(len(loader.dataset) for loader in eval_loaders)
+    logger.info(f"[Eval] Using {len(eval_loaders)} loaders for concept metrics: {total_eval_images} images (val+test)")
+    
     # [MEM] Use no_grad only for concept evaluation, NOT for linear probe training
     with torch.no_grad():
-      for batch in tqdm(test_loader, desc="Evaluating concepts", leave=False):
-        if batch is None:
-            continue
-        x_cpu, y_cpu, *_ = batch
-        if x_cpu.numel() < 1:
-            continue
-        
-        x = x_cpu.to(device, non_blocking=True).contiguous(memory_format=torch.channels_last)
-        y = y_cpu.to(device)
-        
-        with torch.amp.autocast(**autocast_kwargs):
-            fmap = encoder.forward_feature_maps(x, which=args.which_layer)
-        
-        curr_batch_size = fmap.size(0)
-        if getattr(args, "token_norm_mode", "gap-scalar") == "gap-scalar":
-            gap = fmap.mean(dim=(2, 3))
-            gap_norm = gap.norm(dim=1, keepdim=True).view(curr_batch_size, 1, 1, 1).clamp_min(1e-12)
-            fmap = fmap / gap_norm
-
-        fmap = fmap.permute(0, 2, 3, 1).contiguous()
-        C = fmap.shape[-1]
-        
-        flat_tokens = fmap.view(-1, C)
-        flat_tokens = flat_tokens - flat_tokens.mean(dim=0, keepdim=True)
-        # 학습과 동일하게 항상 L2 normalize
-        flat_tokens = F.normalize(flat_tokens, dim=1, eps=1e-12)
+      for eval_loader in eval_loaders:
+        for batch in tqdm(eval_loader, desc="Evaluating concepts", leave=False):
+            if batch is None:
+                continue
+            x_cpu, y_cpu, *_ = batch
+            if x_cpu.numel() < 1:
+                continue
             
-        tokens = flat_tokens.view(curr_batch_size, -1, C)
-        num_tokens_per_img = tokens.shape[1]
-        
-        # [MEM] Compute metrics incrementally in chunks WITHOUT storing full acts tensor
-        token_batch_size = 1024  # Reduced from 4096 to prevent OOM
-        num_flat_tokens = flat_tokens.size(0)
-        
-        # Accumulate image-level sums per concept: (B, d_sae)
-        image_act_sums = torch.zeros((curr_batch_size, d_sae), device=device, dtype=torch.float32)
-        batch_active_token_count = 0
-        batch_total_token_count = 0
-        batch_token_counts_list = []
-        
-        for start in range(0, num_flat_tokens, token_batch_size):
-            end = min(start + token_batch_size, num_flat_tokens)
-            chunk = flat_tokens[start:end]
+            x = x_cpu.to(device, non_blocking=True).contiguous(memory_format=torch.channels_last)
+            y = y_cpu.to(device)
             
             with torch.amp.autocast(**autocast_kwargs):
-                _, chunk_acts, _, _, _ = sae(chunk)
+                fmap = encoder.forward_feature_maps(x, which=args.which_layer)
             
-            chunk_acts = chunk_acts.float()
+            curr_batch_size = fmap.size(0)
+            if getattr(args, "token_norm_mode", "gap-scalar") == "gap-scalar":
+                gap = fmap.mean(dim=(2, 3))
+                gap_norm = gap.norm(dim=1, keepdim=True).view(curr_batch_size, 1, 1, 1).clamp_min(1e-12)
+                fmap = fmap / gap_norm
+
+            fmap = fmap.permute(0, 2, 3, 1).contiguous()
+            C = fmap.shape[-1]
             
-            # Figure out which images these tokens belong to
-            # tokens are flattened as [img0_tok0, img0_tok1, ..., img1_tok0, ...]
-            token_start_idx = start
-            token_end_idx = end
-            
-            # Compute per-token active concept counts for this chunk
-            chunk_active = (chunk_acts > 0).sum(dim=1)  # (chunk_size,)
-            batch_token_counts_list.append(chunk_active.cpu())
-            batch_active_token_count += (chunk_active > 0).sum().item()
-            batch_total_token_count += chunk_active.size(0)
-            
-            # Accumulate to per-image sums
-            # Reshape chunk to assign to images
-            for i in range(curr_batch_size):
-                img_start = i * num_tokens_per_img
-                img_end = (i + 1) * num_tokens_per_img
+            flat_tokens = fmap.view(-1, C)
+            flat_tokens = flat_tokens - flat_tokens.mean(dim=0, keepdim=True)
+            # 학습과 동일하게 항상 L2 normalize
+            flat_tokens = F.normalize(flat_tokens, dim=1, eps=1e-12)
                 
-                # Find overlap with current chunk
-                chunk_img_start = max(0, img_start - token_start_idx)
-                chunk_img_end = min(end - start, img_end - token_start_idx)
-                
-                if chunk_img_start < chunk_img_end and img_start < token_end_idx and img_end > token_start_idx:
-                    local_start = max(0, token_start_idx - img_start)
-                    local_end = min(num_tokens_per_img, token_end_idx - img_start)
-                    
-                    # Get the relevant portion of chunk_acts
-                    rel_start = max(0, img_start - token_start_idx)
-                    rel_end = min(end - start, img_end - token_start_idx)
-                    
-                    if rel_start < rel_end:
-                        image_act_sums[i] += chunk_acts[rel_start:rel_end].sum(dim=0)
+            tokens = flat_tokens.view(curr_batch_size, -1, C)
+            num_tokens_per_img = tokens.shape[1]
             
-            del chunk_acts  # Free immediately
-        
-        total_tokens += batch_total_token_count
-        active_tokens += batch_active_token_count
-        
-        if batch_token_counts_list:
-            all_token_counts_list.append(torch.cat(batch_token_counts_list))
-        
-        # Now image_act_sums: (B, d_sae) - activation strength per concept per image
-        for c in range(NUM_CLASSES):
-            class_mask = (y == c)
-            if class_mask.any():
-                class_act_sums = image_act_sums[class_mask].sum(dim=0)
-                concept_class_counts[:, c] += class_act_sums
-                class_gap_sum[c] += image_act_sums[class_mask].sum(dim=0)
-                class_img_count[c] += class_mask.sum()
-        
-        del image_act_sums, flat_tokens, fmap
-        
-        image_idx += curr_batch_size
+            # [GPU] Token batch size for SAE inference (A100: 8192~16384)
+            token_batch_size = 8192
+            num_flat_tokens = flat_tokens.size(0)
+            
+            # Accumulate image-level sums per concept: (B, d_sae)
+            image_act_sums = torch.zeros((curr_batch_size, d_sae), device=device, dtype=torch.float32)
+            batch_active_token_count = 0
+            batch_total_token_count = 0
+            batch_token_counts_list = []
+            
+            for start in range(0, num_flat_tokens, token_batch_size):
+                end = min(start + token_batch_size, num_flat_tokens)
+                chunk = flat_tokens[start:end]
+                
+                with torch.amp.autocast(**autocast_kwargs):
+                    _, chunk_acts, _, _, _ = sae(chunk)
+                
+                chunk_acts = chunk_acts.float()
+                
+                # Figure out which images these tokens belong to
+                # tokens are flattened as [img0_tok0, img0_tok1, ..., img1_tok0, ...]
+                token_start_idx = start
+                token_end_idx = end
+                
+                # Compute per-token active concept counts for this chunk
+                chunk_active = (chunk_acts > 0).sum(dim=1)  # (chunk_size,)
+                batch_token_counts_list.append(chunk_active.cpu())
+                batch_active_token_count += (chunk_active > 0).sum().item()
+                batch_total_token_count += chunk_active.size(0)
+                
+                # Accumulate to per-image sums
+                # Reshape chunk to assign to images
+                for i in range(curr_batch_size):
+                    img_start = i * num_tokens_per_img
+                    img_end = (i + 1) * num_tokens_per_img
+                    
+                    # Find overlap with current chunk
+                    chunk_img_start = max(0, img_start - token_start_idx)
+                    chunk_img_end = min(end - start, img_end - token_start_idx)
+                    
+                    if chunk_img_start < chunk_img_end and img_start < token_end_idx and img_end > token_start_idx:
+                        local_start = max(0, token_start_idx - img_start)
+                        local_end = min(num_tokens_per_img, token_end_idx - img_start)
+                        
+                        # Get the relevant portion of chunk_acts
+                        rel_start = max(0, img_start - token_start_idx)
+                        rel_end = min(end - start, img_end - token_start_idx)
+                        
+                        if rel_start < rel_end:
+                            image_act_sums[i] += chunk_acts[rel_start:rel_end].sum(dim=0)
+                
+                del chunk_acts  # Free immediately
+            
+            total_tokens += batch_total_token_count
+            active_tokens += batch_active_token_count
+            
+            if batch_token_counts_list:
+                all_token_counts_list.append(torch.cat(batch_token_counts_list))
+            
+            # Now image_act_sums: (B, d_sae) - activation strength per concept per image
+            for c in range(NUM_CLASSES):
+                class_mask = (y == c)
+                if class_mask.any():
+                    class_act_sums = image_act_sums[class_mask].sum(dim=0)
+                    concept_class_counts[:, c] += class_act_sums
+                    class_gap_sum[c] += image_act_sums[class_mask].sum(dim=0)
+                    class_img_count[c] += class_mask.sum()
+                    
+                    # Count images where each concept has GAP > 0
+                    # image_act_sums[class_mask] is (n_class_images, d_sae)
+                    active_per_concept = (image_act_sums[class_mask] > 0).long().sum(dim=0)
+                    class_active_img_count[c] += active_per_concept
+            
+            del image_act_sums, flat_tokens, fmap
+            
+            image_idx += curr_batch_size
     # END of torch.no_grad() block for concept evaluation
     
     # Process Concept Metrics (on CPU)
@@ -1309,7 +1434,21 @@ def evaluate_concepts_for_sae(
         max_concepts = 0
     
     # ===== Dual Mode Linear Probe Evaluation =====
+    # Train on train_loader, evaluate on val+test combined
     import gc
+    
+    # Collect eval loaders (val + test)
+    eval_loaders = []
+    eval_sizes = []
+    if val_loader is not None:
+        eval_loaders.append(("val", val_loader))
+        eval_sizes.append(len(val_loader.dataset))
+    if test_loader is not None:
+        eval_loaders.append(("test", test_loader))
+        eval_sizes.append(len(test_loader.dataset))
+    
+    total_eval_images = sum(eval_sizes)
+    logger.info(f"  Linear Probe eval using {len(eval_loaders)} loaders: {total_eval_images} images")
     
     logger.info("  Extracting SAE representations (Standard)...")
     X_train_std, y_train, _ = extract_sae_repr_for_probe(
@@ -1320,24 +1459,34 @@ def evaluate_concepts_for_sae(
     )
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-        
-    X_test_std, y_test, _ = extract_sae_repr_for_probe(
-        encoder, sae, test_loader, device, args.which_layer,
-        token_l2_norm=args.token_l2_norm,
-        strength_weighting=False,
-        dead_threshold=float(args.dead_threshold),
-    )
+    
+    # Extract from each eval loader separately and concatenate
+    X_eval_std_parts = []
+    y_eval_parts = []
+    for name, loader in eval_loaders:
+        X_part, y_part, _ = extract_sae_repr_for_probe(
+            encoder, sae, loader, device, args.which_layer,
+            token_l2_norm=args.token_l2_norm,
+            strength_weighting=False,
+            dead_threshold=float(args.dead_threshold),
+        )
+        X_eval_std_parts.append(X_part)
+        y_eval_parts.append(y_part)
+    
+    X_eval_std = np.concatenate(X_eval_std_parts, axis=0) if X_eval_std_parts else np.zeros((0, X_train_std.shape[1]), dtype=np.float32)
+    y_eval = np.concatenate(y_eval_parts, axis=0) if y_eval_parts else np.zeros(0, dtype=np.int64)
+    del X_eval_std_parts, y_eval_parts
     
     # [MEM] Train Standard probe FIRST, then delete unused repr
     logger.info("  Training Linear Probe (Standard)...")
     probe_std = train_linear_probe(
-        X_train_std, y_train, X_test_std, y_test,
+        X_train_std, y_train, X_eval_std, y_eval,
         num_classes=NUM_CLASSES, epochs=50, lr=0.1, batch_size=256,
         normalize_repr=False, device=device, verbose=False
     )
     
     # [MEM] Delete standard repr before extracting strength repr
-    del X_train_std, X_test_std
+    del X_train_std, X_eval_std
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
@@ -1351,28 +1500,39 @@ def evaluate_concepts_for_sae(
     )
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-        
-    X_test_str, y_test_str, _ = extract_sae_repr_for_probe(
-        encoder, sae, test_loader, device, args.which_layer,
-        token_l2_norm=args.token_l2_norm,
-        strength_weighting=True,
-        dead_threshold=float(args.dead_threshold),
-    )
+    
+    # Extract strength-weighted from each eval loader separately
+    X_eval_str_parts = []
+    y_eval_str_parts = []
+    for name, loader in eval_loaders:
+        X_part, y_part, _ = extract_sae_repr_for_probe(
+            encoder, sae, loader, device, args.which_layer,
+            token_l2_norm=args.token_l2_norm,
+            strength_weighting=True,
+            dead_threshold=float(args.dead_threshold),
+        )
+        X_eval_str_parts.append(X_part)
+        y_eval_str_parts.append(y_part)
+    
+    X_eval_str = np.concatenate(X_eval_str_parts, axis=0) if X_eval_str_parts else np.zeros((0, X_train_str.shape[1]), dtype=np.float32)
+    y_eval_str = np.concatenate(y_eval_str_parts, axis=0) if y_eval_str_parts else np.zeros(0, dtype=np.int64)
+    del X_eval_str_parts, y_eval_str_parts
+    
     
     logger.info("  Training Linear Probe (Strength-weighted)...")
     probe_str = train_linear_probe(
-        X_train_str, y_train_str, X_test_str, y_test_str,
+        X_train_str, y_train_str, X_eval_str, y_eval_str,
         num_classes=NUM_CLASSES, epochs=50, lr=0.1, batch_size=256,
         normalize_repr=False, device=device, verbose=False
     )
     
     # [MEM] Cleanup strength repr
-    del X_train_str, X_test_str
+    del X_train_str, X_eval_str
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
     
-    logger.info(f"  Probe: std={probe_std['test_acc']:.3f}, str={probe_str['test_acc']:.3f} (test set)")
+    logger.info(f"  Probe: std={probe_std['test_acc']:.3f}, str={probe_str['test_acc']:.3f} (val+test combined)")
 
     
     # Get FVU from trainer (if available)
@@ -1454,13 +1614,20 @@ def evaluate_concepts_for_sae(
     gap_csv_filename = f"gated_sae_{args.which_layer}_d{d_sae}_sp{sparsity_val}_aux{aux_val}_{tie_str}_class_gap_means.csv"
     gap_csv_path = os.path.join(args.sae_save_dir, gap_csv_filename)
     
+    # Move class_active_img_count to CPU for saving
+    class_active_img_count_cpu = class_active_img_count.cpu()
+    
     with open(gap_csv_path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        w.writerow(["concept_id", "is_alive"] + class_names + ["max_class", "class_diff", "entropy"])
+        # Header: GAP means + active image counts per class
+        active_count_cols = [f"n_{name}" for name in class_names]  # n_Control, n_SNCA, n_GBA, n_LRRK2
+        w.writerow(["concept_id", "is_alive"] + class_names + active_count_cols + ["max_class", "class_diff", "entropy", "total_active_imgs"])
         
         for i in range(d_sae):
             is_alive = int(i in alive_indices)
             gaps = [float(class_gap_mean[c, i]) for c in range(NUM_CLASSES)]
+            active_counts = [int(class_active_img_count_cpu[c, i]) for c in range(NUM_CLASSES)]
+            total_active = sum(active_counts)
             
             max_class = class_names[np.argmax(gaps)] if max(gaps) > 0 else "None"
             class_diff = max(gaps) - min(gaps)  # Difference between max and min class
@@ -1470,10 +1637,10 @@ def evaluate_concepts_for_sae(
             probs = [g / total for g in gaps]
             ent = -sum(p * np.log2(max(p, 1e-10)) for p in probs)
             
-            w.writerow([i, is_alive] + gaps + [max_class, f"{class_diff:.4f}", f"{ent:.4f}"])
+            w.writerow([i, is_alive] + gaps + active_counts + [max_class, f"{class_diff:.4f}", f"{ent:.4f}", total_active])
     
     logger.info(f"[NEW] Saved class-wise GAP means to: {gap_csv_path}")
-    logger.info(f"      Alive concepts: {len(alive_indices)}/{d_sae}, Columns: {class_names}")
+    logger.info(f"      Alive concepts: {len(alive_indices)}/{d_sae}, Columns: {class_names + active_count_cols}")
         
     return results
 
@@ -1498,7 +1665,7 @@ def main(args_list=None):
     args.augment = True  # ??Enable rot90 to match backbone training
     
     # Linear Probe HP (Match Backbone exactly)
-    args.probe_epochs = 50
+    args.probe_epochs = 20
     args.probe_lr = 0.1
     args.probe_batch_size = 256
     
@@ -1593,12 +1760,19 @@ def main(args_list=None):
         
         # Setup evaluation loaders
         train_csv = os.path.join(args.save_dir, "train_split.csv")
+        val_csv = os.path.join(args.save_dir, "val_split.csv")
         test_csv = os.path.join(args.save_dir, "test_split.csv")
         
         train_eval_loader = _make_loader_from_split(
             args, refs, uid_to_refidx, split_csv_path=train_csv,
             batch_size=args.batch_size, augment=False, shuffle=False, strict_balance=False, seed=args.seed
         )
+        val_eval_loader = None
+        if os.path.exists(val_csv):
+            val_eval_loader = _make_loader_from_split(
+                args, refs, uid_to_refidx, split_csv_path=val_csv,
+                batch_size=args.batch_size, augment=False, shuffle=False, strict_balance=False, seed=args.seed
+            )
         test_eval_loader = _make_loader_from_split(
             args, refs, uid_to_refidx, split_csv_path=test_csv,
             batch_size=args.batch_size, augment=False, shuffle=False, strict_balance=False, seed=args.seed
@@ -1617,7 +1791,7 @@ def main(args_list=None):
         args.which_layer = exp_config["layer"]
         
         logger.info("Starting evaluation...")
-        results = evaluate_concepts_for_sae(trainer, train_eval_loader, test_eval_loader, args, exp_config)
+        results = evaluate_concepts_for_sae(trainer, train_eval_loader, val_eval_loader, test_eval_loader, args, exp_config)
         
         logger.info(f"\nEvaluation Results for {ckpt_path}:")
         logger.info(f"  Weighted Purity: mean={results['purity_mean']:.3f}, high(>0.9)={results['high_purity_concepts']}")
@@ -1689,8 +1863,9 @@ def main(args_list=None):
                     # [MEM] Clear trainer state to free VRAM before evaluation
                     trainer.cleanup_for_eval()
                     
-                    # Evaluate concepts + probe on train/test sets
+                    # Evaluate concepts + probe on train/val/test sets
                     train_csv = os.path.join(args.save_dir, "train_split.csv")
+                    val_csv = os.path.join(args.save_dir, "val_split.csv")
                     test_csv = os.path.join(args.save_dir, "test_split.csv")
                     if os.path.exists(test_csv) and os.path.exists(train_csv):
                         train_eval_loader = _make_loader_from_split(
@@ -1702,6 +1877,17 @@ def main(args_list=None):
                             strict_balance=True,  # ??Ensure balanced evaluation
                             seed=args.seed + 100
                         )
+                        val_eval_loader = None
+                        if os.path.exists(val_csv):
+                            val_eval_loader = _make_loader_from_split(
+                                exp_args, refs, uid_to_refidx,
+                                split_csv_path=val_csv,
+                                batch_size=args.batch_size,
+                                augment=False,
+                                shuffle=False,
+                                strict_balance=True,
+                                seed=args.seed + 102
+                            )
                         test_eval_loader = _make_loader_from_split(
                             exp_args, refs, uid_to_refidx,
                             split_csv_path=test_csv,
@@ -1713,7 +1899,7 @@ def main(args_list=None):
                         )
                         
                         logger.info("Evaluating concept metrics + probe...")
-                        results = evaluate_concepts_for_sae(trainer, train_eval_loader, test_eval_loader, exp_args, exp_config)
+                        results = evaluate_concepts_for_sae(trainer, train_eval_loader, val_eval_loader, test_eval_loader, exp_args, exp_config)
                         summary_rows.append(results)
                         
                         # Print summary
@@ -1755,6 +1941,7 @@ def main(args_list=None):
                 
                 # Evaluate concepts + probe
                 train_csv = os.path.join(args.save_dir, "train_split.csv")
+                val_csv = os.path.join(args.save_dir, "val_split.csv")
                 test_csv = os.path.join(args.save_dir, "test_split.csv")
                 if os.path.exists(test_csv) and os.path.exists(train_csv):
                     train_eval_loader = _make_loader_from_split(
@@ -1766,6 +1953,17 @@ def main(args_list=None):
                         strict_balance=True,
                         seed=args.seed + 100
                     )
+                    val_eval_loader = None
+                    if os.path.exists(val_csv):
+                        val_eval_loader = _make_loader_from_split(
+                            exp_args, refs, uid_to_refidx,
+                            split_csv_path=val_csv,
+                            batch_size=args.batch_size,
+                            augment=False,
+                            shuffle=False,
+                            strict_balance=True,
+                            seed=args.seed + 102
+                        )
                     test_eval_loader = _make_loader_from_split(
                         exp_args, refs, uid_to_refidx,
                         split_csv_path=test_csv,
@@ -1777,7 +1975,7 @@ def main(args_list=None):
                     )
                     
                     logger.info("Evaluating concept metrics + probe...")
-                    results = evaluate_concepts_for_sae(trainer, train_eval_loader, test_eval_loader, exp_args, exp_config)
+                    results = evaluate_concepts_for_sae(trainer, train_eval_loader, val_eval_loader, test_eval_loader, exp_args, exp_config)
                     summary_rows.append(results)
                     
                     logger.info(f"  Weighted Purity: mean={results['purity_mean']:.3f}, high(>0.9)={results['high_purity_concepts']}")

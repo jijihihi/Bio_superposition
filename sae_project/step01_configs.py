@@ -41,16 +41,20 @@ def get_args(args_list=None):
     # dataset / loader
     p.add_argument("--img_size", type=int, default=128)
     p.add_argument("--batch_size", type=int, default=32)
-    p.add_argument("--num_workers", type=int, default=0)
+    p.add_argument("--num_workers", type=int, default=4)
+    p.add_argument("--gradient_accumulation_steps", type=int, default=1,
+                   help="Accumulate gradients over N batches before optimizer step (effective batch = batch_size * N)")
     p.add_argument("--augment", type=lambda x: x.lower() in ('true', '1', 'yes'), default=True,
                    help="apply rot90 aug before encoder (default: True)")
+    p.add_argument("--explicit_4x_augment", action="store_true",
+                   help="Use all 4 rotations explicitly (4x data) instead of random rotation")
     
     # --- strict balanced batching for SAE ---
     p.add_argument("--strict_plate_balance", action="store_true",
                 help="use StrictPlateBalancedBatchSamplerOnBank for train loader")
 
     # --- token sampling ---
-    p.add_argument("--tokens_per_image", type=int, default=2048,
+    p.add_argument("--tokens_per_image", type=int, default=4096,
                help="0 => use all H*W tokens per image, else sample this many per image")
     
     # --- token chunking ---
@@ -67,9 +71,17 @@ def get_args(args_list=None):
     p.add_argument("--k", type=int, default=5)
     p.add_argument("--sae_init_scale", type=float, default=0.02)
     p.add_argument("--sae_lr", type=float, default=3e-4)
-    p.add_argument("--sae_wd", type=float, default=0.0)
+    p.add_argument("--sae_wd", type=float, default=1e-4,
+                   help="Weight decay for SAE optimizer (default: 1e-4)")
     p.add_argument("--epochs", type=int, default=30)
     p.add_argument("--grad_clip", type=float, default=1.0)
+    
+    # LR scheduling
+    p.add_argument("--lr_scheduler", type=str, default="cosine", 
+                   choices=["none", "cosine", "linear"],
+                   help="LR scheduler: none, cosine (warmup + cosine decay), linear (warmup + linear decay)")
+    p.add_argument("--lr_warmup_fraction", type=float, default=0.1,
+                   help="Fraction of total steps for LR warmup (default: 0.1 = 10%)")
 
     # optional token normalization
     p.add_argument("--token_l2_norm", action="store_true",
@@ -87,10 +99,12 @@ def get_args(args_list=None):
                    help="Use Gated SAE instead of Top-K SAE")
     
     # Sparsity warmup
-    p.add_argument("--sparsity_warmup_steps", type=int, default=400,
+    p.add_argument("--sparsity_warmup_steps", type=int, default=100,
                    help="Steps to keep sparsity coeff at 0 (warmup)")
     p.add_argument("--final_sparsity_coeff", type=float, default=5.0,
                    help="Final sparsity coefficient after warmup")
+    p.add_argument("--sparsity_ramp_fraction", type=float, default=0.1,
+                   help="Fraction of total_steps for sparsity ramp (default: 0.1 = 10%)")
     
     # Gated SAE weight tying
     p.add_argument("--tie_gate_weights", action="store_true",
@@ -111,7 +125,7 @@ def get_args(args_list=None):
 
     # neuron resampling
     p.add_argument("--usage_ema", type=float, default=0.99)
-    p.add_argument("--dead_threshold", type=float, default=1e-4,
+    p.add_argument("--dead_threshold", type=float, default=5e-4,
                    help="usage_ema below this => dead")
     p.add_argument("--resample_every", type=int, default=500,
                    help="steps interval for resampling")

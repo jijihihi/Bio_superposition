@@ -64,7 +64,7 @@ def parse_args():
         "--folders",
         type=str,
         nargs="+",
-        default=["Control_C18", "control_C18", "Control_GBA_C19", "Control_SNCA_C19", "SNCA", "GBA", "LRRK2", "PINK1"],  # 원하는 폴더 이름으로 수정
+        default=["Control_C4", "Control_GBA_C19", "Control_SNCA_C19", "SNCA", "GBA", "LRRK2", "PINK1"],  # 원하는 폴더 이름으로 수정
         help="List of folder names to process (e.g., Control_C18 SNCA GBA)"
     )
     parser.add_argument(
