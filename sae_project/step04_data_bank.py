@@ -47,9 +47,34 @@ def seed_worker(worker_id: int):
 
 
 def collate_skip_none(batch):
+    """
+    Collate function that:
+    1. Skips None samples
+    2. Handles mixed tensor/string tuples from InMemorySixteenBitDataset
+       Dataset returns: (x, y, plate, line, uid) where plate/line/uid are strings
+    """
     batch = [b for b in batch if b is not None]
     if len(batch) == 0:
         return None
+    
+    # Check if batch contains tuples with strings (from InMemorySixteenBitDataset)
+    # Dataset returns: (x, y, plate, line, uid)
+    first = batch[0]
+    if isinstance(first, (tuple, list)) and len(first) >= 3:
+        # Check if element 2 is a string (plate field)
+        if isinstance(first[2], str):
+            # Separate tensor fields (x, y) from string fields (plate, line, uid)
+            tensors = [(b[0], b[1]) for b in batch]  # (x, y)
+            collated_tensors = default_collate(tensors)
+            
+            # String fields as lists
+            plates = [b[2] for b in batch]
+            lines = [b[3] for b in batch]
+            uids = [b[4] for b in batch]
+            
+            return (*collated_tensors, plates, lines, uids)
+    
+    # Default: standard collate for tensor-only batches
     return default_collate(batch)
 
 

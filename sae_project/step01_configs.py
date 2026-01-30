@@ -180,6 +180,56 @@ def get_args(args_list=None):
     return p.parse_args()
 
 
+# ==============================================================================
+# Step15: Filter Concepts by Gini Coefficient
+# ==============================================================================
+def get_step15_args(args_list=None):
+    """
+    Arguments for step15_filter_concepts.py
+    - CSV 경로 입력 → Gini 계수 기준 필터링 → class-specific concepts만 포함된 새 CSV 생성
+    """
+    p = argparse.ArgumentParser(
+        description="Filter SAE concepts by Gini impurity to extract class-specific concepts",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Gini impurity <= 0.5인 class-specific concepts만 추출
+  python -m sae_project.step15_filter_concepts --input_csv gap_means.csv --max_gini 0.5
+  
+  # Gini <= 0.3 (더 엄격한 필터), 최소 50개 이미지에서 활성화된 concept만
+  python -m sae_project.step15_filter_concepts --input_csv gap_means.csv --max_gini 0.3 --min_active 50
+"""
+    )
+    
+    # Required inputs
+    p.add_argument("--input_csv", type=str, required=True,
+                   help="Path to input CSV with class-wise GAP means (output from step09)")
+    
+    # Filtering options
+    p.add_argument("--max_gini", type=float, default=0.5,
+                   help="Maximum Gini impurity threshold (0=pure, 0.75=uniform for 4 classes). Default: 0.5")
+    p.add_argument("--min_active", type=int, default=10,
+                   help="Minimum number of images where concept must be active in at least one class. Default: 10")
+    p.add_argument("--alive_only", type=lambda x: x.lower() in ('true', '1', 'yes'), default=True,
+                   help="Only include alive (non-dead) concepts. Default: True")
+    
+    # Output
+    p.add_argument("--output_csv", type=str, default="",
+                   help="Output CSV path. Default: <input_dir>/filtered_gini<max_gini>.csv")
+    p.add_argument("--include_all_columns", action="store_true",
+                   help="Include all original columns in output. Default: only key columns")
+    
+    # Additional filtering options (optional)
+    p.add_argument("--min_max_gap", type=float, default=0.0,
+                   help="Minimum max(GAP) value to consider concept significant. Default: 0.0")
+    p.add_argument("--sort_by", type=str, default="gini", choices=["gini", "max_gap", "concept_id"],
+                   help="Sort output by: gini (ascending), max_gap (descending), concept_id. Default: gini")
+    
+    if "ipykernel" in sys.modules:
+        return p.parse_args(args_list if args_list is not None else [])
+    return p.parse_args()
+
+
 def resolve_paths(args):
     # default sae_save_dir
     if args.sae_save_dir == "":
