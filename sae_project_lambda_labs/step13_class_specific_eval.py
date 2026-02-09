@@ -611,11 +611,11 @@ def main():
     if args.output_csv == "":
         output_dir = os.path.dirname(args.gap_csv)
         if args.filter_mode == "ratio":
-            filename = f"class_specific_eval_ratio{args.min_ratio}.csv"
+            filename = f"class_specific_eval_{which_layer}_ratio{args.min_ratio}.csv"
         elif args.filter_mode == "gini":
-            filename = f"class_specific_eval_gini{args.max_gini_impurity}.csv"
+            filename = f"class_specific_eval_{which_layer}_gini{args.max_gini_impurity}.csv"
         else:
-            filename = f"class_specific_eval_entropy{args.max_entropy}.csv"
+            filename = f"class_specific_eval_{which_layer}_entropy{args.max_entropy}.csv"
         output_csv = os.path.join(output_dir, filename)
     else:
         output_csv = args.output_csv
@@ -623,11 +623,11 @@ def main():
     # If output_csv is a directory, append filename
     if os.path.isdir(output_csv):
         if args.filter_mode == "ratio":
-            filename = f"class_specific_eval_ratio{args.min_ratio}.csv"
+            filename = f"class_specific_eval_{which_layer}_ratio{args.min_ratio}.csv"
         elif args.filter_mode == "gini":
-            filename = f"class_specific_eval_gini{args.max_gini_impurity}.csv"
+            filename = f"class_specific_eval_{which_layer}_gini{args.max_gini_impurity}.csv"
         else:
-            filename = f"class_specific_eval_entropy{args.max_entropy}.csv"
+            filename = f"class_specific_eval_{which_layer}_entropy{args.max_entropy}.csv"
         output_csv = os.path.join(output_csv, filename)
     
     with open(output_csv, "w", newline="", encoding="utf-8") as f:

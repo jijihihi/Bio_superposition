@@ -1,4 +1,4 @@
-﻿# ==============================================================================
+# ==============================================================================
 # Gated SAE Trainer with Hyperparameter Optimization
 # - L2-weighted reconstruction loss
 # - Sparsity warmup schedule
