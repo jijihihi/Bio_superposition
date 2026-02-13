@@ -50,14 +50,14 @@ class GatedSAE(nn.Module):
 
         # Magnitude encoder (W_mag, b_mag)
         self.W_mag = nn.Parameter(torch.randn(self.d_in, self.d_sae) * float(init_scale))
-        self.b_mag = nn.Parameter(torch.zeros(self.d_sae))
+        self.b_mag = nn.Parameter(torch.zeros(self.d_sae)) # 일반적인 bias ReLU에 들어가는.
 
         # Gating encoder (W_gate, b_gate)
         # We initialize b_gate to 1.0 (positive) to prevent neurons from being dead 
         # at the beginning of training when L1 penalty is not yet active.
         if self.tie_weights:
             # W_gate shares with W_mag (handled by property W_gate_effective)
-            self.b_gate = nn.Parameter(torch.ones(self.d_sae) * 0.1)
+            self.b_gate = nn.Parameter(torch.ones(self.d_sae) * 0.1) # 이 gate를 켤지 말지 결정. 
             # Register dummy so state_dict knows we're tying
             self.register_buffer("_tied_weights_flag", torch.tensor(1))
         else:
@@ -88,9 +88,8 @@ class GatedSAE(nn.Module):
     @torch.no_grad()
     def renorm_decoder_(self, eps: float = 1e-12):
         """Normalize decoder rows to unit L2 norm."""
-        w = self.W_dec.data
-        n = w.norm(dim=1, keepdim=True).clamp_min(eps)
-        w.div_(n)
+        n = self.W_dec.norm(dim=1, keepdim=True).clamp_min(eps)
+        self.W_dec.div_(n)
 
     @torch.no_grad()
     def update_usage_ema_(self, acts: torch.Tensor, ema: float = 0.99):
@@ -118,7 +117,7 @@ class GatedSAE(nn.Module):
             return
         
         with torch.no_grad():
-            W = self.W_dec.data  # (d_sae, d_in)
+            W = self.W_dec       # (d_sae, d_in)
             G = self.W_dec.grad  # (d_sae, d_in)
             
             # Normalize each row to get unit vectors

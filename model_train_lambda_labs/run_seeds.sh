@@ -4,13 +4,13 @@
 # 또는:   nohup bash /home/ubuntu/run_seeds.sh > /home/ubuntu/run_seeds.log 2>&1 &
 #         (SSH 끊겨도 계속 실행됨)
 
-SCRIPT="/home/ubuntu/train.py"
+SCRIPT="/home/ubuntu/model-east3/train.py"
 BASE_DIR="/home/ubuntu/model-east3/outputs"
 
-SEEDS=(42 45 123 125 150)
+SEEDS=(42 45 123)
 
 for SEED in "${SEEDS[@]}"; do
-    SAVE_DIR="${BASE_DIR}/MoCo_seed${SEED}"
+    SAVE_DIR="${BASE_DIR}/MoCo_seed${SEED}_no_GAPL2norm"
     echo ""
     echo "============================================"
     echo "  Starting seed=${SEED}  ->  ${SAVE_DIR}"

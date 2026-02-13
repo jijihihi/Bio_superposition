@@ -36,13 +36,13 @@ def get_args():
     )
     parser.add_argument(
         "--output_csv", type=str,
-        default=r"C:\Users\admin\Desktop\이미지별_세포사멸율_7200_핵제외비율_0.25.csv",
+        default=r"C:\Users\admin\Desktop\이미지별_세포사멸율_7200_핵제외비율_2.13",
         help="Output CSV file path"
     )
     
     # Fixed threshold from Multi-Otsu
     parser.add_argument(
-        "--threshold", type=float, default=38448.78338,
+        "--threshold", type=float, default=39217.8199851941,
         help="Fixed threshold value (Multi-Otsu result)"
     )
     
