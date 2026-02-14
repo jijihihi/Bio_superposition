@@ -37,6 +37,10 @@ from sklearn.metrics import (
 from collections import Counter
 
 import io, pickle
+import tarfile
+import json
+import re
+import glob
 import tifffile
 from torch.utils.data.dataloader import default_collate
 
@@ -48,17 +52,21 @@ cv2.setNumThreads(0)
 # -------------------------
 @dataclass
 class CFG:
+    # 체크포인트 경로 (Google Drive)
     SAVE_DIR: str = "/content/drive/MyDrive/Final_paper/Model_MoCoXBM_PlateLP_LRRK2_L2 norm_hidden2048_resume"
     CKPT_NAME: str = "best_model.pt"
 
+    # Colab에서 zip 풀어놓은 tar shard 경로
+    WDS_ROOT: str = "/content/wds_shards"
+
     IMG_SIZE: int = 128
     NUM_CLASSES: int = 4
-    CLASS_NAMES = ["Control", "SNCA", "GBA", "PINK1"]
+    CLASS_NAMES = ["Control", "SNCA", "GBA", "LRRK2"]
 
-    # MUST match training encoder
+    # MUST match training encoder (moco only - 02.07이코드결정)
     FEAT_DIM: int = 512
-    BLOCKS: Tuple[int, int, int, int] = (2, 2, 3, 3)
-    DILATIONS: Tuple[int, int, int, int] = (1, 2, 3, 2)
+    BLOCKS: Tuple[int, int, int, int] = (2, 2, 2, 3)
+    DILATIONS: Tuple[int, int, int, int] = (1, 1, 1, 1)
     REFINE_BLOCKS: int = 1
 
     # extraction (encoder forward)
@@ -68,35 +76,33 @@ class CFG:
     USE_BF16_EXTRACT: bool = True
     USE_CHANNELS_LAST: bool = True
 
-    # head training (not used here)
-    FEAT_BATCH_SIZE: int = 65536
-    EPOCHS: int = 80
-    LR: float = 1e-3
-    WD: float = 0.0
-    RENORM_EVERY: int = 1
-
     SEED: int = 42
 
     # -------------------------
-    # NEW: Plate mixing quantitative tests
+    # Plate mixing quantitative tests
     # -------------------------
     RUN_PLATE_MIXING_TEST: bool = True
-
-    # Plate가 너무 적게 등장하면 지표가 흔들리므로 제외
     MIN_SAMPLES_PER_PLATE: int = 5
-
-    # 클래스별 샘플이 너무 많으면 permutation이 느리므로 제한(무작위 서브샘플)
     MAX_SAMPLES_PER_CLASS_METRIC: int = 20000
-
-    # permutation 횟수 (R2는 비교적 싸서 200 추천, silhouette는 비싸서 50 정도)
     PLATE_R2_N_PERM: int = 200
     PLATE_SIL_N_PERM: int = 50
-
-    # silhouette는 O(N^2) 성격이라 sample_size로 근사 (sklearn 제공)
     SILHOUETTE_SAMPLE_SIZE: int = 5000
-
-    # metric 계산용 seed
     METRIC_SEED: int = 123
+
+
+# 디렉토리명 -> superclass 매핑
+SUPERCLASS_MAP = {
+    "Control_C4":  "Control",
+    "Control_C18": "Control",
+    "Control_C19": "Control",
+    "SNCA":  "SNCA",
+    "GBA":   "GBA",
+    "LRRK2": "LRRK2",
+}
+LABEL_MAP = {"Control": 0, "SNCA": 1, "GBA": 2, "LRRK2": 3}
+
+# plate 디렉토리 패턴: plate=003001
+PLATE_DIR_RE = re.compile(r"plate=(\d{6})")
 
 
 # -------------------------
@@ -146,82 +152,93 @@ class SafeInstanceNormalize:
         std = tensor.std(dim=[1, 2], keepdim=True).clamp_min(self.threshold)
         return (tensor - mean) / std
 
-class TarCsvDataset(Dataset):
+class TarShardDataset(Dataset):
     """
-    train/val/test_split.csv (tar_path, prefix, plate, label ...) 기반으로
-    tar에서 tif bytes를 offset read 해서 복원.
-    - tif bytes는 원본 그대로 (손상/변형 없음)
-    - plate는 csv의 plate 컬럼을 그대로 사용 (파일명 파싱 X)
+    Colab에서 zip -> tar shard 구조를 직접 읽는 Dataset.
+    디렉토리 구조: {wds_root}/{class_name}/plate={plate}/{class_name}_plate={plate}-{shard}.tar
+    tar 안: {key}.tif + {key}.json
+    pkl 인덱스 불필요 — tarfile로 직접 스캔해서 offset 기반 인덱스 생성.
     """
-    def __init__(self, csv_path: str, img_size: int):
-        self.data = pd.read_csv(csv_path)
+    def __init__(self, wds_root: str, img_size: int):
         self.img_size = int(img_size)
         self.transform = SafeInstanceNormalize(0.01)
-
-        # 필요한 컬럼 체크 (없으면 여기서 바로 터지게)
-        needed = ["tar_path", "prefix", "label", "plate"]
-        for col in needed:
-            if col not in self.data.columns:
-                raise ValueError(f"[TarCsvDataset] CSV missing column: '{col}'")
-
-        # tar_path 별로 index(.pkl) 로드: prefix -> (tif_off, tif_size)
-        self._tar_maps = {}
-        for tp in self.data["tar_path"].unique():
-            idx_path = tp + ".pkl"
-            if not os.path.exists(idx_path):
-                raise FileNotFoundError(f"Missing tar index: {idx_path}")
-
-            pairs = pickle.load(open(idx_path, "rb"))
-            # pairs: (pref, tif_off, tif_size, js_off, js_size)
-            mp = {}
-            for row in pairs:
-                pref = row[0]
-                tif_off = int(row[1])
-                tif_size = int(row[2])
-                mp[pref] = (tif_off, tif_size)
-            self._tar_maps[tp] = mp
-
         self._fhs = {}  # tar file handles (lazy open)
 
+        # 인덱스 빌드: (tar_path, tif_member_name, offset_data, size, label, plate) 목록
+        self.samples = []
+        print(f"[TarShardDataset] Scanning {wds_root} ...")
+
+        for class_dir in sorted(os.listdir(wds_root)):
+            class_path = os.path.join(wds_root, class_dir)
+            if not os.path.isdir(class_path):
+                continue
+
+            superclass = SUPERCLASS_MAP.get(class_dir, None)
+            if superclass is None:
+                print(f"  [skip] Unknown class dir: {class_dir}")
+                continue
+            label = LABEL_MAP[superclass]
+
+            for plate_dir in sorted(os.listdir(class_path)):
+                plate_path = os.path.join(class_path, plate_dir)
+                if not os.path.isdir(plate_path):
+                    continue
+
+                m = PLATE_DIR_RE.search(plate_dir)
+                plate = m.group(1) if m else plate_dir
+
+                tar_files = sorted(glob.glob(os.path.join(plate_path, "*.tar")))
+                for tar_path in tar_files:
+                    try:
+                        with tarfile.open(tar_path, "r") as tf:
+                            for member in tf.getmembers():
+                                if member.name.endswith(".tif"):
+                                    self.samples.append((
+                                        tar_path,
+                                        member.name,
+                                        member.offset_data,
+                                        member.size,
+                                        label,
+                                        plate,
+                                    ))
+                    except Exception as e:
+                        print(f"  [warn] Failed to scan {tar_path}: {e}")
+
+        print(f"[TarShardDataset] Total samples: {len(self.samples)}")
+
+        # 클래스별 통계
+        from collections import Counter
+        label_cnt = Counter(s[4] for s in self.samples)
+        inv_label = {v: k for k, v in LABEL_MAP.items()}
+        for lb, cnt in sorted(label_cnt.items()):
+            print(f"  {inv_label.get(lb, lb)}: {cnt}")
+
     def __len__(self):
-        return len(self.data)
-
-    def _read_tif_bytes(self, tar_path: str, prefix: str) -> bytes:
-        # prefix가 없으면 바로 오류 (데이터/인덱스 mismatch)
-        if prefix not in self._tar_maps[tar_path]:
-            raise KeyError(f"prefix not found in index: {tar_path} :: {prefix}")
-
-        off, size = self._tar_maps[tar_path][prefix]
-        fh = self._fhs.get(tar_path, None)
-        if fh is None:
-            fh = open(tar_path, "rb", buffering=0)
-            self._fhs[tar_path] = fh
-        fh.seek(off)
-        return fh.read(size)
+        return len(self.samples)
 
     def __getitem__(self, idx: int):
-        row = self.data.iloc[idx]
-        tar_path = row["tar_path"]
-        prefix = row["prefix"]
-        label = int(row["label"])
-        plate_id = str(row["plate"])  # csv plate column 그대로
+        tar_path, member_name, offset, size, label, plate = self.samples[idx]
 
         try:
-            tif_bytes = self._read_tif_bytes(tar_path, prefix)
-            img = tifffile.imread(io.BytesIO(tif_bytes))
+            fh = self._fhs.get(tar_path, None)
+            if fh is None:
+                fh = open(tar_path, "rb", buffering=0)
+                self._fhs[tar_path] = fh
+            fh.seek(offset)
+            tif_bytes = fh.read(size)
 
-            validate_uint16_rgb_128(img, filepath=f"{tar_path}:{prefix}", img_size=self.img_size)
+            img = tifffile.imread(io.BytesIO(tif_bytes))
+            validate_uint16_rgb_128(img, filepath=f"{tar_path}:{member_name}", img_size=self.img_size)
 
             img = img.astype(np.float32) / 65535.0
             x = torch.from_numpy(img).permute(2, 0, 1)
             x = self.transform(x)
 
-            # paths는 "uid" 비슷하게 추적용으로 tar:prefix를 넣는 게 깔끔
-            uid = f"{tar_path}:{prefix}"
-            return x, torch.tensor(label, dtype=torch.long), plate_id, uid
+            uid = f"{tar_path}:{member_name}"
+            return x, torch.tensor(label, dtype=torch.long), plate, uid
 
         except Exception as e:
-            log_skip(f"{tar_path}:{prefix}", e)
+            log_skip(f"{tar_path}:{member_name}", e)
             return None
 
     def __del__(self):
@@ -288,23 +305,23 @@ def extract_features(
 # -------------------------
 # Encoder definition (MUST match training architecture)
 # -------------------------
-def conv2d(in_ch, out_ch, k=3, stride=1, padding=1, dilation=1, bias=False):
+def conv2d(in_ch, out_ch, k=3, stride=1, padding=1, dilation=1, bias=True):
     return nn.Conv2d(in_ch, out_ch, kernel_size=k, stride=stride, padding=padding, dilation=dilation, bias=bias)
 
 class ResBlock(nn.Module):
     def __init__(self, in_ch, out_ch, dilation=1):
         super().__init__()
-        self.c1 = conv2d(in_ch, out_ch, k=3, stride=1, padding=dilation, dilation=dilation, bias=False)
-        self.c2 = conv2d(out_ch, out_ch, k=3, stride=1, padding=dilation, dilation=dilation, bias=False)
+        self.c1 = conv2d(in_ch, out_ch, 3, 1, padding=dilation, dilation=dilation, bias=True)
+        self.c2 = conv2d(out_ch, out_ch, 3, 1, padding=dilation, dilation=dilation, bias=True)
         self.proj = None
         if in_ch != out_ch:
-            self.proj = conv2d(in_ch, out_ch, k=1, stride=1, padding=0, dilation=1, bias=False)
+            self.proj = conv2d(in_ch, out_ch, 1, 1, padding=0, bias=False)
 
     def forward(self, x):
         identity = x
-        x = F.relu(x, inplace=False)
+        x = F.relu(x, inplace=True)
         x = self.c1(x)
-        x = F.relu(x, inplace=False)
+        x = F.relu(x, inplace=True)
         x = self.c2(x)
         if self.proj is not None:
             identity = self.proj(identity)
@@ -326,21 +343,6 @@ class Stage(nn.Module):
             return checkpoint_sequential(self.blocks, seg, x, use_reentrant=False)
         return self.blocks(x)
 
-class SupConMoCoModel(nn.Module):
-    def __init__(self, embed_dim=512, blocks=(2,2,3,3), dilations=(1,2,3,2), refine_blocks=1, ckpt_segments=2):
-        super().__init__()
-        self.encoder = Encoder(blocks=blocks, dilations=dilations, refine_blocks=refine_blocks, ckpt_segments=ckpt_segments)
-        self.projector = nn.Sequential(
-            nn.Linear(OUT_DIM, OUT_DIM, bias=False),
-            nn.ReLU(inplace=False),
-            nn.Linear(OUT_DIM, embed_dim, bias=False),
-        )
-
-    def forward(self, x):
-        pooled = self.encoder(x)          # (B, OUT_DIM)
-        pooled = F.normalize(pooled, dim=1)  # L2 정규화해서. amount만을 보고 학습하게끔.
-        z = self.projector(pooled)        # (B, embed_dim)
-        return F.normalize(z, dim=1)      # loss 계산할때는 L2 정규화
 
 
 OUT_DIM = 512
@@ -352,7 +354,7 @@ class Encoder(nn.Module):
         b2,b3,b4,b5 = blocks
         d2,d3,d4,d5 = dilations
 
-        self.stem = nn.Sequential(conv2d(3, 64, k=3, stride=2, padding=1, bias=False))  # 128->64
+        self.stem = nn.Sequential(conv2d(3, 64, k=3, stride=2, padding=1, bias=True))  # 128->64
         self.stage2 = Stage(64, 128, b2, d2, use_ckpt=False, ckpt_segments=1)
         self.stage3 = Stage(128, 256, b3, d3, use_ckpt=False, ckpt_segments=1)
         self.stage4 = Stage(256, 512, b4, d4, use_ckpt=True, ckpt_segments=ckpt_segments)
@@ -732,39 +734,34 @@ def evaluate_plate_mixing(
 # -------------------------
 # Main
 # -------------------------
-def run_linear_eval(cfg: CFG):
+def run_plate_eval(cfg: CFG):
     set_seed(cfg.SEED)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Device:", device, "| GPU:", torch.cuda.get_device_name(0) if device.type == "cuda" else "CPU")
 
-    # load splits
-    train_csv = os.path.join(cfg.SAVE_DIR, "train_split.csv")
-    val_csv   = os.path.join(cfg.SAVE_DIR, "val_split.csv")
-    test_csv  = os.path.join(cfg.SAVE_DIR, "test_split.csv")
-
-    train_ds = TarCsvDataset(train_csv, cfg.IMG_SIZE)
-    val_ds   = TarCsvDataset(val_csv,   cfg.IMG_SIZE)
-    test_ds  = TarCsvDataset(test_csv,  cfg.IMG_SIZE)
+    # ---- 1) tar shard에서 전체 데이터 로드 ----
+    ds = TarShardDataset(cfg.WDS_ROOT, cfg.IMG_SIZE)
+    if len(ds) == 0:
+        raise RuntimeError(f"No samples found in {cfg.WDS_ROOT}")
 
     pin = (device.type == "cuda") and cfg.PIN_MEMORY
     nw = int(cfg.IMG_NUM_WORKERS)
+    loader = DataLoader(ds, batch_size=cfg.IMG_BATCH_SIZE, shuffle=False,
+                        num_workers=nw, pin_memory=pin, collate_fn=collate_skip_none_with_meta)
 
-    train_img_loader = DataLoader(train_ds, batch_size=cfg.IMG_BATCH_SIZE, shuffle=False,
-                                  num_workers=nw, pin_memory=pin, collate_fn=collate_skip_none_with_meta)
-    val_img_loader   = DataLoader(val_ds,   batch_size=cfg.IMG_BATCH_SIZE, shuffle=False,
-                                  num_workers=nw, pin_memory=pin, collate_fn=collate_skip_none_with_meta)
-    test_img_loader  = DataLoader(test_ds,  batch_size=cfg.IMG_BATCH_SIZE, shuffle=False,
-                                  num_workers=nw, pin_memory=pin, collate_fn=collate_skip_none_with_meta)
-
-    # load checkpoint
+    # ---- 2) 체크포인트 로드 ----
     ckpt_path = os.path.join(cfg.SAVE_DIR, cfg.CKPT_NAME)
+    print(f"Loading checkpoint: {ckpt_path}")
     full_sd = load_state_dict(ckpt_path, map_location="cpu")
     enc_sd = extract_encoder_sd(full_sd)
 
-    # build encoder and load
     encoder = Encoder(blocks=cfg.BLOCKS, dilations=cfg.DILATIONS, refine_blocks=cfg.REFINE_BLOCKS)
     missing, unexpected = encoder.load_state_dict(enc_sd, strict=False)
     print(f"Encoder loaded. missing={len(missing)}, unexpected={len(unexpected)}")
+    if len(missing) > 0:
+        print(f"  ⚠️ Missing keys: {missing[:10]}")
+    if len(unexpected) > 0:
+        print(f"  ⚠️ Unexpected keys: {unexpected[:10]}")
 
     # enforce unit-norm weights once
     renorm_unit_per_out_channel_(encoder)
@@ -773,75 +770,38 @@ def run_linear_eval(cfg: CFG):
     if cfg.USE_CHANNELS_LAST and device.type == "cuda":
         encoder = encoder.to(memory_format=torch.channels_last)
 
-    # cache paths
-    cache_dir = os.path.join(cfg.SAVE_DIR, "linear_eval_cache")
+    # ---- 3) feature 캐시 (같은 모델로 재실행 시 빠르게) ----
+    cache_dir = os.path.join(cfg.SAVE_DIR, "plate_eval_cache")
     os.makedirs(cache_dir, exist_ok=True)
 
-    def cache_key(cfg: CFG) -> str:
-        return f"{cfg.CKPT_NAME}__feat{cfg.FEAT_DIM}__blocks{cfg.BLOCKS}__dil{cfg.DILATIONS}__ref{cfg.REFINE_BLOCKS}__meta1".replace(" ", "")
+    cache_key = f"{cfg.CKPT_NAME}__feat{cfg.FEAT_DIM}__blocks{cfg.BLOCKS}__dil{cfg.DILATIONS}__ref{cfg.REFINE_BLOCKS}".replace(" ", "")
+    cache_path = os.path.join(cache_dir, f"Xy_all__{cache_key}.pt")
 
-    key = cache_key(cfg)
-    p_train = os.path.join(cache_dir, f"Xy_train__{key}.pt")
-    p_val   = os.path.join(cache_dir, f"Xy_val__{key}.pt")
-    p_test  = os.path.join(cache_dir, f"Xy_test__{key}.pt")
-
-    def load_cache(path: str):
-        if not os.path.exists(path):
-            return None
-        obj = torch.load(path, map_location="cpu")
-        return obj.get("X"), obj.get("Y"), obj.get("plate"), obj.get("path")
-
-    # ---- train cache ----
-    cached = load_cache(p_train)
-    if (cached is None) or (cached[2] is None):
-        Xtr, Ytr, Ptr, Str = extract_features(
-            encoder, train_img_loader, device, "Extract Train Features",
+    if os.path.exists(cache_path):
+        print(f"[cache] Loading cached features: {cache_path}")
+        obj = torch.load(cache_path, map_location="cpu")
+        Xall, Yall, Pall = obj["X"], obj["Y"], obj["plate"]
+    else:
+        print("[extract] Extracting features ...")
+        Xall, Yall, Pall, _ = extract_features(
+            encoder, loader, device, "Extract ALL Features",
             cfg.USE_BF16_EXTRACT, cfg.USE_CHANNELS_LAST
         )
-        torch.save({"X": Xtr, "Y": Ytr, "plate": Ptr, "path": Str}, p_train)
-    else:
-        Xtr, Ytr, Ptr, Str = cached
+        torch.save({"X": Xall, "Y": Yall, "plate": Pall}, cache_path)
+        print(f"[cache] Saved -> {cache_path}")
 
-    # ---- val cache ----
-    cached = load_cache(p_val)
-    if (cached is None) or (cached[2] is None):
-        Xva, Yva, Pva, Sva = extract_features(
-            encoder, val_img_loader, device, "Extract Val Features",
-            cfg.USE_BF16_EXTRACT, cfg.USE_CHANNELS_LAST
-        )
-        torch.save({"X": Xva, "Y": Yva, "plate": Pva, "path": Sva}, p_val)
-    else:
-        Xva, Yva, Pva, Sva = cached
+    print(f"\nTotal features: {Xall.shape[0]} x {Xall.shape[1]}")
+    inv_label = {v: k for k, v in LABEL_MAP.items()}
+    for lb in sorted(LABEL_MAP.values()):
+        cnt = int((Yall == lb).sum())
+        print(f"  {inv_label[lb]}: {cnt}")
 
-    # ---- test cache ----
-    cached = load_cache(p_test)
-    if (cached is None) or (cached[2] is None):
-        Xte, Yte, Pte, Ste = extract_features(
-            encoder, test_img_loader, device, "Extract Test Features",
-            cfg.USE_BF16_EXTRACT, cfg.USE_CHANNELS_LAST
-        )
-        torch.save({"X": Xte, "Y": Yte, "plate": Pte, "path": Ste}, p_test)
-    else:
-        Xte, Yte, Pte, Ste = cached
-
-    # ---- NEW: Plate mixing quantitative tests ----
+    # ---- 4) Plate mixing tests ----
     if cfg.RUN_PLATE_MIXING_TEST:
         metric_dir = os.path.join(cfg.SAVE_DIR, "plate_mixing_metrics")
-        evaluate_plate_mixing(Xtr, Ytr, Ptr, cfg, split_name="train", save_dir=metric_dir)
-        evaluate_plate_mixing(Xva, Yva, Pva, cfg, split_name="val", save_dir=metric_dir)
-        evaluate_plate_mixing(Xte, Yte, Pte, cfg, split_name="test", save_dir=metric_dir)
-
-        # all combined
-        Xall = torch.cat([Xtr, Xva, Xte], dim=0)
-        Yall = torch.cat([Ytr, Yva, Yte], dim=0)
-        Pall = Ptr + Pva + Pte
         evaluate_plate_mixing(Xall, Yall, Pall, cfg, split_name="all", save_dir=metric_dir)
-    else:
-        Xall = torch.cat([Xtr, Xva, Xte], dim=0)
-        Yall = torch.cat([Ytr, Yva, Yte], dim=0)
-        Pall = Ptr + Pva + Pte
 
-    # ---- UMAP (train+val+test 합쳐서) ----
+    # ---- 5) UMAP ----
     plot_dir = os.path.join(cfg.SAVE_DIR, "umap_plate_viz")
     plot_umap_by_plate_within_class(
         X=Xall, Y=Yall, plates=Pall,
@@ -856,6 +816,10 @@ def run_linear_eval(cfg: CFG):
         save_dir=plot_dir,
     )
 
-if __name__ == "__main__":
-    run_linear_eval(CFG())
+    print("\n" + "=" * 40)
+    print("✅ Plate artifact evaluation 완료!")
+    print("=" * 40)
 
+
+if __name__ == "__main__":
+    run_plate_eval(CFG())
