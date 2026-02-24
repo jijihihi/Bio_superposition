@@ -816,7 +816,7 @@ def run_experiment(args, refs=None, uid_to_refidx=None, encoder=None):
     return trainer, trainer.ckpt_path
 
 
-ALL_LAYERS = ["stage5_out", "refine_out"]
+ALL_LAYERS = ["stage5_mid", "stage5_out", "refine_out"]
 
 
 def _make_eval_loaders(args, refs, uid_to_refidx):
@@ -870,7 +870,7 @@ def main(args_list=None):
         pass
 
     run_grid_search = bool(getattr(args, "grid_search", False))
-    train_all_layers = bool(getattr(args, "train_all_layers", True))
+    train_all_layers = bool(getattr(args, "train_all_layers", False))
     
     layers_to_train = ALL_LAYERS if train_all_layers else [args.which_layer]
     

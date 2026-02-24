@@ -644,7 +644,7 @@ def get_args():
                    help="Directory to save results")
     
     # Sampling
-    p.add_argument("--num_samples", type=int, default=1000,
+    p.add_argument("--num_samples", type=int, default=4000,
                    help="Total samples (num_samples/4 per class), 0=use all validation data")
     p.add_argument("--seed", type=int, default=42)
     

@@ -12,6 +12,7 @@ def get_args(args_list=None):
     # data/model paths
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--shard_root", type=str, default=None, help="default uses DEFAULT_SHARD_ROOT from logging_utils")
+    # default 에 아무것도 안들어오면 DEFAULT_SHARD_ROOT 로 실행되게 내부 알고리즘으로 구현이 되어 있는데 이는 "/content/wds_shards" 즉 코랩 기반. 근데 안 적어주면 오류뜨네. 뭐지. 람다랩스에서 쓸거면 항상 경로 적어줘야해
     p.add_argument("--save_dir", type=str, default="/content/drive/MyDrive/Final_paper/Model_MoCoXBM_PlateLP_LRRK2_L2 norm_hidden2048_resume_bias=True_clean_image",
                    help="same save_dir used in contrastive training (contains train_split.csv)")
     p.add_argument("--model_state_path", type=str, default="/content/drive/MyDrive/Final_paper/Model_MoCoXBM_PlateLP_LRRK2_L2 norm_hidden2048_resume_bias=True_clean_image/best_model.pt",
@@ -23,7 +24,7 @@ def get_args(args_list=None):
 
     # which feature map
     p.add_argument("--which_layer", type=str, default="refine_out",
-                   choices=["stage5_out", "refine_out"])
+                   choices=["stage5_mid", "stage5_out", "refine_out"])
 
     # encoder architecture (must match training)
     p.add_argument("--blocks", type=str, default="2,2,2,3")

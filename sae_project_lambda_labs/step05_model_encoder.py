@@ -102,13 +102,20 @@ class Encoder(nn.Module):
     @torch.no_grad()
     def forward_feature_maps(self, x, which: str):
         """
-        which in {"stage5_out", "refine_out"}
-        returns feature map (B, C=512, H, W)
+        which in {"stage5_mid", "stage5_out", "refine_out"}
+        - stage5_mid: after stage5 blocks[:-1] (penultimate ResBlock in stage5)
+        - stage5_out: after all stage5 blocks
+        - refine_out: after refine block
+        returns feature map (B, C, H, W)
         """
         x = self.stem(x)
         x = self.stage2(x)
         x = self.stage3(x)
         x = self.stage4(x)
+        if which == "stage5_mid":
+            for block in list(self.stage5.blocks)[:-1]:
+                x = block(x)
+            return x
         x = self.stage5(x)
         if which == "stage5_out":
             return x

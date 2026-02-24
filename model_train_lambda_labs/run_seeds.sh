@@ -4,13 +4,19 @@
 # 또는:   nohup bash /home/ubuntu/run_seeds.sh > /home/ubuntu/run_seeds.log 2>&1 &
 #         (SSH 끊겨도 계속 실행됨)
 
-SCRIPT="/home/ubuntu/model-east3/train.py"
+pip install numpy==1.26.4
+pip install tifffile tqdm scanpy
+
+SCRIPT="/home/ubuntu/model-east3/train_yes_encoder_GAP_L2norm.py"
 BASE_DIR="/home/ubuntu/model-east3/outputs"
 
-SEEDS=(42 45 123)
+#SEEDS=(124 256 397)
+#SEEDS=(42 45 123)
+#SEEDS=(87 95 457)
+SEEDS=(124 445)
 
 for SEED in "${SEEDS[@]}"; do
-    SAVE_DIR="${BASE_DIR}/MoCo_seed${SEED}_no_GAPL2norm"
+    SAVE_DIR="${BASE_DIR}/MoCo_seed${SEED}"  ## 이게 어떻게 되어있는지 잘 확인해야해.
     echo ""
     echo "============================================"
     echo "  Starting seed=${SEED}  ->  ${SAVE_DIR}"
