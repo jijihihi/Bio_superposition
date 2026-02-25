@@ -7,16 +7,17 @@
 pip install numpy==1.26.4
 pip install tifffile tqdm scanpy
 
-SCRIPT="/home/ubuntu/model-east3/train_yes_encoder_GAP_L2norm.py"
+SCRIPT="/home/ubuntu/model-east3/train_GAP_encoder_GAP_L2norm.py"  #train_yes_encoder_GAP_L2norm
 BASE_DIR="/home/ubuntu/model-east3/outputs"
 
 #SEEDS=(124 256 397)
 #SEEDS=(42 45 123)
 #SEEDS=(87 95 457)
-SEEDS=(124 445)
+#SEEDS=(124 445)
+SEEDS=(87 95)
 
 for SEED in "${SEEDS[@]}"; do
-    SAVE_DIR="${BASE_DIR}/MoCo_seed${SEED}"  ## 이게 어떻게 되어있는지 잘 확인해야해.
+    SAVE_DIR="${BASE_DIR}/MoCo_seed${SEED}_no_GAPL2norm"  ## 이게 어떻게 되어있는지 잘 확인해야해.
     echo ""
     echo "============================================"
     echo "  Starting seed=${SEED}  ->  ${SAVE_DIR}"
