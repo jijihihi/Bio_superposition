@@ -22,6 +22,9 @@
 #       --shard_root /path/to/wds_shards_tar
 # ==============================================================================
 
+
+# CNN gap L2 norm 해서 평가한다. ####
+
 import os
 import sys
 import csv

@@ -67,37 +67,36 @@ logger = get_logger("global_shape_suppression")
 # ==============================================================================
 # Spatial perturbations (applied to input image tensor)
 # ==============================================================================
-def patch_shuffle_2x2(x: torch.Tensor, seed: int = None) -> torch.Tensor:
+def patch_shuffle_2x2(x: torch.Tensor, seed: int = None) -> Tuple[torch.Tensor, Dict]:
     """
     Shuffle image into 2x2 grid patches.
-    x: (B, C, H, W) or (C, H, W)
-    Preserves local texture, destroys global shape.
+    Returns (perturbed_image, perm_info) for unshuffling activation maps.
     """
     if x.dim() == 3:
         x = x.unsqueeze(0)
     B, C, H, W = x.shape
     h2, w2 = H // 2, W // 2
 
-    # Split into 4 patches
     patches = [
-        x[:, :, :h2, :w2],       # top-left
-        x[:, :, :h2, w2:],       # top-right
-        x[:, :, h2:, :w2],       # bottom-left
-        x[:, :, h2:, w2:],       # bottom-right
+        x[:, :, :h2, :w2],
+        x[:, :, :h2, w2:],
+        x[:, :, h2:, :w2],
+        x[:, :, h2:, w2:],
     ]
 
     rng = random.Random(seed)
-    indices = list(range(4))
-    rng.shuffle(indices)
+    perm = list(range(4))
+    rng.shuffle(perm)
 
-    # Reassemble in shuffled order
-    top = torch.cat([patches[indices[0]], patches[indices[1]]], dim=3)
-    bot = torch.cat([patches[indices[2]], patches[indices[3]]], dim=3)
-    return torch.cat([top, bot], dim=2)
+    top = torch.cat([patches[perm[0]], patches[perm[1]]], dim=3)
+    bot = torch.cat([patches[perm[2]], patches[perm[3]]], dim=3)
+    out = torch.cat([top, bot], dim=2)
+
+    return out, {"type": "grid", "grid": 2, "perm": perm}
 
 
-def patch_shuffle_4x4(x: torch.Tensor, seed: int = None) -> torch.Tensor:
-    """Shuffle image into 4x4 grid patches (finer perturbation)."""
+def patch_shuffle_4x4(x: torch.Tensor, seed: int = None) -> Tuple[torch.Tensor, Dict]:
+    """Shuffle image into 4x4 grid patches. Returns (perturbed, perm_info)."""
     if x.dim() == 3:
         x = x.unsqueeze(0)
     B, C, H, W = x.shape
@@ -109,25 +108,28 @@ def patch_shuffle_4x4(x: torch.Tensor, seed: int = None) -> torch.Tensor:
             patches.append(x[:, :, i*ph:(i+1)*ph, j*pw:(j+1)*pw])
 
     rng = random.Random(seed)
-    indices = list(range(16))
-    rng.shuffle(indices)
+    perm = list(range(16))
+    rng.shuffle(perm)
 
     rows = []
     for i in range(4):
-        row_patches = [patches[indices[i*4 + j]] for j in range(4)]
+        row_patches = [patches[perm[i*4 + j]] for j in range(4)]
         rows.append(torch.cat(row_patches, dim=3))
-    return torch.cat(rows, dim=2)
+    out = torch.cat(rows, dim=2)
+
+    return out, {"type": "grid", "grid": 4, "perm": perm}
 
 
-def left_right_swap(x: torch.Tensor) -> torch.Tensor:
-    """Swap left and right halves of the image."""
+def left_right_swap(x: torch.Tensor, seed: int = None) -> Tuple[torch.Tensor, Dict]:
+    """Swap left and right halves. Returns (perturbed, perm_info)."""
     if x.dim() == 3:
         x = x.unsqueeze(0)
     B, C, H, W = x.shape
     w2 = W // 2
     left = x[:, :, :, :w2]
     right = x[:, :, :, w2:]
-    return torch.cat([right, left], dim=3)
+    out = torch.cat([right, left], dim=3)
+    return out, {"type": "lr_swap"}
 
 
 PERTURBATION_FNS = {
@@ -135,6 +137,53 @@ PERTURBATION_FNS = {
     "patch_4x4": patch_shuffle_4x4,
     "lr_swap": left_right_swap,
 }
+
+
+# ==============================================================================
+# Unshuffle activation map back to original spatial layout
+# ==============================================================================
+def unshuffle_activation_map(
+    act_map: torch.Tensor, perm_info: Dict
+) -> torch.Tensor:
+    """
+    Reverse the spatial perturbation on an activation map.
+    act_map: (B, d_sae, H, W)
+
+    For grid shuffle: we know which patch went where, so we put them back.
+    For lr_swap: swap left/right back.
+    """
+    B, D, H, W = act_map.shape
+
+    if perm_info["type"] == "lr_swap":
+        w2 = W // 2
+        left = act_map[:, :, :, :w2]
+        right = act_map[:, :, :, w2:]
+        return torch.cat([right, left], dim=3)
+
+    elif perm_info["type"] == "grid":
+        g = perm_info["grid"]
+        perm = perm_info["perm"]
+        ph, pw = H // g, W // g
+
+        # Build inverse permutation
+        inv_perm = [0] * len(perm)
+        for new_pos, old_pos in enumerate(perm):
+            inv_perm[old_pos] = new_pos
+
+        # Extract patches from perturbed activation map
+        pert_patches = []
+        for i in range(g):
+            for j in range(g):
+                pert_patches.append(act_map[:, :, i*ph:(i+1)*ph, j*pw:(j+1)*pw])
+
+        # Reassemble in original order
+        rows = []
+        for i in range(g):
+            row_patches = [pert_patches[inv_perm[i*g + j]] for j in range(g)]
+            rows.append(torch.cat(row_patches, dim=3))
+        return torch.cat(rows, dim=2)
+
+    return act_map  # fallback
 
 
 # ==============================================================================
@@ -208,9 +257,11 @@ def compute_suppression_metrics(
     gap_orig: torch.Tensor,
     act_maps_pert: torch.Tensor,
     gap_pert: torch.Tensor,
+    perm_info: Dict = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Compare original vs perturbed per-neuron.
+    Unshuffles perturbed activation maps before cosine similarity.
 
     Returns:
         cos_sim: (d_sae,) mean cosine similarity across batch
@@ -218,15 +269,19 @@ def compute_suppression_metrics(
     """
     B, d_sae, H, W = act_maps_orig.shape
 
+    # Unshuffle perturbed activation map back to original layout
+    if perm_info is not None:
+        act_maps_pert = unshuffle_activation_map(act_maps_pert, perm_info)
+
     # Flatten spatial: (B, d_sae, H*W)
     flat_orig = act_maps_orig.view(B, d_sae, -1)
     flat_pert = act_maps_pert.view(B, d_sae, -1)
 
     # Cosine similarity per neuron per image: (B, d_sae)
-    cos = F.cosine_similarity(flat_orig, flat_pert, dim=2)  # (B, d_sae)
+    cos = F.cosine_similarity(flat_orig, flat_pert, dim=2)
 
-    # GAP relative change: (GAP_pert - GAP_orig) / |GAP_orig|
-    gap_change = (gap_pert - gap_orig) / (gap_orig.abs() + 1e-12)
+    # GAP relative change: (GAP_pert - GAP_orig) / (|GAP_orig| + 1)
+    gap_change = (gap_pert - gap_orig) / (gap_orig.abs() + 1.0)
 
     return cos.mean(dim=0).cpu().numpy(), gap_change.mean(dim=0).cpu().numpy()
 
@@ -491,7 +546,7 @@ def main():
                 memory_format=torch.channels_last)
 
             # Apply perturbation
-            x_pert = perturb_fn(x_orig, seed=args.seed)
+            x_pert, perm_info = perturb_fn(x_orig, seed=args.seed)
             x_pert = x_pert.contiguous(memory_format=torch.channels_last)
 
             # Get SAE activation maps
@@ -502,7 +557,7 @@ def main():
                     encoder, sae, x_pert, which_layer, args.pool_size)
 
             cos, gap_ch = compute_suppression_metrics(
-                act_orig, gap_orig, act_pert, gap_pert)
+                act_orig, gap_orig, act_pert, gap_pert, perm_info)
             all_cos.append(cos)
             all_gap_change.append(gap_ch)
 

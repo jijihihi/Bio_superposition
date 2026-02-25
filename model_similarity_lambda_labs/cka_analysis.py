@@ -35,17 +35,18 @@ from sae_project.step03_data_shards import (
     build_uid_to_refidx
 )
 from sae_project.step04_data_bank import (
-    SafeInstanceNormalize,
-    validate_uint16_rgb_128,
+    InMemoryTarBank, InMemorySixteenBitDataset,
+    seed_worker, collate_skip_none,
+    load_split_csv,
 )
 from sae_project.step05_model_encoder import (
     Encoder,
-    SupConMoCoModel,
+    SupMoCoModel,
     parse_int_list,
-    robust_load_state_dict
+    robust_load_state_dict,
+    renorm_unit_per_out_channel_,
 )
 
-# For image loading
 import io
 try:
     import tifffile
@@ -59,99 +60,25 @@ logger = get_logger("CKA_Analysis")
 
 
 # ==============================================================================
-# Helper Functions
+# Collate for CKA (handles InMemorySixteenBitDataset 5-element tuples)
 # ==============================================================================
 def collate_cka(batch):
-    """
-    Custom collate function for CKA dataset.
-    Handles 3-element tuples: (x, y, uid)
-    Skips None samples.
-    """
+    """Custom collate: skip None, return (x, y, uids)."""
     batch = [b for b in batch if b is not None]
     if len(batch) == 0:
         return None
-    
+    # InMemorySixteenBitDataset returns (x, y, plate, line, uid)
     xs = torch.stack([b[0] for b in batch])
-    ys = torch.tensor([b[1] for b in batch], dtype=torch.long)
-    uids = [b[2] for b in batch]
-    
+    ys = torch.tensor([b[1] for b in batch])
+    uids = [b[4] for b in batch]  # uid is the 5th element
     return xs, ys, uids
 
 
-def load_val_split_csv(csv_path: str) -> List[str]:
-    """Load UIDs from validation split CSV"""
-    import csv
-    uids = []
-    with open(csv_path, "r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            uids.append(row["uid"])
-    return uids
-
-
 # ==============================================================================
-# Dataset for feature extraction
+# Dataset for feature extraction (REMOVED - using InMemorySixteenBitDataset)
 # ==============================================================================
-class FeatureExtractionDataset(Dataset):
-    """Dataset for extracting features from validation images"""
-    def __init__(self, refs: List[SampleRef], ref_indices: List[int], img_size: int):
-        self.refs = refs
-        self.ref_indices = ref_indices
-        self.img_size = int(img_size)
-        self.normalize = SafeInstanceNormalize(threshold=0.01)
-        
-        # Preload images
-        logger.info(f"Preloading {len(ref_indices)} images for feature extraction...")
-        self.images: List = [None] * len(ref_indices)
-        self.labels: List[int] = [0] * len(ref_indices)
-        self.uids: List[str] = [""] * len(ref_indices)
-        
-        tar_to_fh = {}
-        def read_bytes(tp: str, off: int, size: int) -> bytes:
-            fh = tar_to_fh.get(tp, None)
-            if fh is None:
-                fh = open(tp, "rb", buffering=0)
-                tar_to_fh[tp] = fh
-            fh.seek(off)
-            return fh.read(size)
-
-        bad = 0
-        for j, ridx in enumerate(tqdm(ref_indices, desc="preload", leave=True)):
-            r = refs[ridx]
-            try:
-                tif_bytes = read_bytes(r.tar_path, r.tif_off, r.tif_size)
-                img = tifffile.imread(io.BytesIO(tif_bytes))
-                validate_uint16_rgb_128(img, self.img_size)
-
-                self.images[j] = img
-                self.labels[j] = int(r.label)
-                self.uids[j] = f"{r.tar_path}:{r.prefix}"
-            except Exception:
-                bad += 1
-                self.images[j] = None
-
-        for fh in tar_to_fh.values():
-            try: fh.close()
-            except: pass
-
-        logger.info(f"Preload done. bad={bad}/{len(ref_indices)}")
-
-    def __len__(self):
-        return len(self.ref_indices)
-
-    def __getitem__(self, idx: int):
-        img = self.images[idx]
-        if img is None:
-            return None
-        
-        y = self.labels[idx]
-        uid = self.uids[idx]
-        
-        x = (img.astype(np.float32) / 65535.0)
-        x = torch.from_numpy(x).permute(2,0,1)
-        x = self.normalize(x)
-        
-        return x, y, uid
+# The original FeatureExtractionDataset and load_val_split_csv are removed
+# as InMemoryTarBank and InMemorySixteenBitDataset are used directly.
 
 
 # ==============================================================================
@@ -159,9 +86,10 @@ class FeatureExtractionDataset(Dataset):
 # ==============================================================================
 class EncoderWithCKAHook(Encoder):
     """Encoder that can extract stage5 features with GAP L2 normalization, Gaussian blur, and L2 weighting for CKA"""
-    def __init__(self, *args, use_l2_weighting=True, use_gaussian_blur=True, 
+    def __init__(self, *args, which_layer="stage5_out", use_l2_weighting=True, use_gaussian_blur=True, 
                  blur_sigma=2.0, pooling_size=8, **kwargs):
         super().__init__(*args, **kwargs)
+        self.which_layer = which_layer
         self.use_l2_weighting = use_l2_weighting
         self.use_gaussian_blur = use_gaussian_blur
         self.blur_sigma = blur_sigma
@@ -195,8 +123,8 @@ class EncoderWithCKAHook(Encoder):
         5. Adaptive Pooling (8x8)
         6. Flatten
         """
-        # Get stage5 feature map: (B, 512, 64, 64)
-        fmap = self.forward_feature_maps(x, which="stage5_out")
+        # Get feature map from selected layer
+        fmap = self.forward_feature_maps(x, which=self.which_layer)
         B, C, H, W = fmap.shape
         
         # GAP L2 normalization (same as training/SAE)
@@ -232,6 +160,7 @@ class EncoderWithCKAHook(Encoder):
 class SupConMoCoModelForCKA(nn.Module):
     """Model wrapper for CKA analysis with GAP L2 normalized + Gaussian blurred + L2 weighted features"""
     def __init__(self, blocks, dilations, refine_blocks, ckpt_segments, 
+                 which_layer="stage5_out",
                  use_l2_weighting=True, use_gaussian_blur=True, blur_sigma=2.0, pooling_size=8):
         super().__init__()
         self.encoder = EncoderWithCKAHook(
@@ -239,6 +168,7 @@ class SupConMoCoModelForCKA(nn.Module):
             dilations=dilations,
             refine_blocks=refine_blocks,
             ckpt_segments=ckpt_segments,
+            which_layer=which_layer,
             use_l2_weighting=use_l2_weighting,
             use_gaussian_blur=use_gaussian_blur,
             blur_sigma=blur_sigma,
@@ -330,8 +260,8 @@ def load_model_for_cka(ckpt_path: str, args) -> SupConMoCoModelForCKA:
     blocks = parse_int_list(args.blocks, 4)
     dilations = parse_int_list(args.dilations, 4)
     
-    # First load into full SupConMoCoModel to handle checkpoint format
-    temp_model = SupConMoCoModel(
+    # First load into full SupMoCoModel to handle checkpoint format
+    temp_model = SupMoCoModel(
         embed_dim=512,
         blocks=blocks,
         dilations=dilations,
@@ -356,6 +286,7 @@ def load_model_for_cka(ckpt_path: str, args) -> SupConMoCoModelForCKA:
         dilations=dilations,
         refine_blocks=args.refine_blocks,
         ckpt_segments=args.ckpt_segments,
+        which_layer=args.which_layer,
         use_l2_weighting=args.use_l2_weighting,
         use_gaussian_blur=args.use_gaussian_blur,
         blur_sigma=args.blur_sigma,
@@ -365,6 +296,9 @@ def load_model_for_cka(ckpt_path: str, args) -> SupConMoCoModelForCKA:
     # Copy encoder state dict (excluding adapt_pool which is new)
     encoder_sd = temp_model.encoder.state_dict()
     model.encoder.load_state_dict(encoder_sd, strict=False)
+    
+    # Apply unit-norm per output channel (same as training)
+    renorm_unit_per_out_channel_(model.encoder)
     
     # Cleanup temp model
     del temp_model
@@ -466,12 +400,12 @@ def run_cka_analysis(args):
     all_eval_uids = []
     
     if os.path.exists(val_csv_path):
-        val_uids = load_val_split_csv(val_csv_path)
+        val_uids = load_split_csv(val_csv_path)
         all_eval_uids.extend(val_uids)
         logger.info(f"Loaded {len(val_uids)} validation images from val_split.csv")
     
     if os.path.exists(test_csv_path):
-        test_uids = load_val_split_csv(test_csv_path)
+        test_uids = load_split_csv(test_csv_path)
         all_eval_uids.extend(test_uids)
         logger.info(f"Loaded {len(test_uids)} test images from test_split.csv")
     
@@ -507,15 +441,18 @@ def run_cka_analysis(args):
     
     logger.info(f"Using {len(ref_indices)} images for CKA analysis")
     
-    # Create dataset
-    dataset = FeatureExtractionDataset(refs, ref_indices, args.img_size)
+    # Create dataset using InMemoryTarBank (same as training)
+    bank = InMemoryTarBank(refs, ref_indices, args.img_size)
+    ib = list(range(len(ref_indices)))
+    dataset = InMemorySixteenBitDataset(bank, ib, args.img_size, augment=False)
     dataloader = DataLoader(
         dataset,
         batch_size=args.batch_size,
         shuffle=False,
         num_workers=args.num_workers,
         collate_fn=collate_cka,
-        pin_memory=True
+        pin_memory=True,
+        worker_init_fn=seed_worker,
     )
     
     # Load models
@@ -644,7 +581,7 @@ def get_args():
                    help="Directory to save results")
     
     # Sampling
-    p.add_argument("--num_samples", type=int, default=4000,
+    p.add_argument("--num_samples", type=int, default=2000,
                    help="Total samples (num_samples/4 per class), 0=use all validation data")
     p.add_argument("--seed", type=int, default=42)
     
@@ -654,12 +591,16 @@ def get_args():
     p.add_argument("--refine_blocks", type=int, default=1)
     p.add_argument("--ckpt_segments", type=int, default=0)
     
+    p.add_argument("--which_layer", type=str, default="stage5_out",
+                   choices=["stage5_mid", "stage5_out", "refine_out"],
+                   help="Which CNN layer to extract features from")
+    
     # CKA feature extraction settings
-    p.add_argument("--use_l2_weighting", action="store_true", default=True,
+    p.add_argument("--use_l2_weighting", action="store_true", default=False,
                    help="Use L2 norm weighting for spatial positions (default: True)")
     p.add_argument("--no_l2_weighting", action="store_false", dest="use_l2_weighting",
                    help="Disable L2 norm weighting")
-    p.add_argument("--use_gaussian_blur", action="store_true", default=True,
+    p.add_argument("--use_gaussian_blur", action="store_true", default=False,
                    help="Apply Gaussian blur to smooth spatial differences (default: True)")
     p.add_argument("--no_gaussian_blur", action="store_false", dest="use_gaussian_blur",
                    help="Disable Gaussian blur")
