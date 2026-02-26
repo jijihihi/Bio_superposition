@@ -27,6 +27,10 @@
 #       --samples_per_class 500
 # ==============================================================================
 
+## GAP값 높은 이미지만 선택. 그 뉴런이 보는 이미지를 선택해야 좋다.abs
+## lr swap과 patch shuffling할때. 그 edge에서 가까이 있는 픽셀들 제외할수록 코사인 유사도가 증가한다 -> global shape 본다.
+
+
 import os
 import sys
 import csv
@@ -281,7 +285,7 @@ def compute_suppression_metrics(
     cos = F.cosine_similarity(flat_orig, flat_pert, dim=2)
 
     # GAP relative change: (GAP_pert - GAP_orig) / (|GAP_orig| + 1)
-    gap_change = (gap_pert - gap_orig) / (gap_orig.abs() + 1.0)
+    gap_change = (gap_pert - gap_orig) / (gap_orig.abs() + 1e-12)
 
     return cos.mean(dim=0).cpu().numpy(), gap_change.mean(dim=0).cpu().numpy()
 
@@ -409,6 +413,10 @@ def get_args():
     p.add_argument("--pool_size", type=int, default=16,
                    help="Adaptive pool size for activation maps (default: 16)")
     p.add_argument("--dead_threshold", type=float, default=5e-5)
+    p.add_argument("--top_k_per_neuron", type=int, default=100,
+                   help="Per neuron, use only top-K most-activated images (default: 100)")
+    p.add_argument("--seam_margin", type=int, default=3,
+                   help="Pixels to mask on each side of patch seams (default: 3)")
     p.add_argument("--perturbations", type=str, nargs="+",
                    default=["patch_2x2", "lr_swap"],
                    choices=["patch_2x2", "patch_4x4", "lr_swap"])
@@ -525,6 +533,9 @@ def main():
     if torch.cuda.is_available():
         autocast_kwargs["dtype"] = torch.bfloat16
 
+    top_k = args.top_k_per_neuron
+    logger.info(f"Top-K per neuron: {top_k}")
+
     for perturb_name in args.perturbations:
         logger.info(f"\n{'='*60}")
         logger.info(f"Perturbation: {perturb_name}")
@@ -532,8 +543,10 @@ def main():
 
         perturb_fn = PERTURBATION_FNS[perturb_name]
 
-        all_cos = []
-        all_gap_change = []
+        # Collect per-image per-neuron values: lists of (N_images, d_sae)
+        all_gap_orig = []   # GAP of original (for top-K selection)
+        all_cos = []        # cosine similarity per image per neuron
+        all_gap_change = [] # GAP change per image per neuron
 
         for batch in tqdm(loader, desc=f"{perturb_name}", leave=True):
             if batch is None:
@@ -545,35 +558,105 @@ def main():
             x_orig = x.to(device, non_blocking=True).contiguous(
                 memory_format=torch.channels_last)
 
-            # Apply perturbation
             x_pert, perm_info = perturb_fn(x_orig, seed=args.seed)
             x_pert = x_pert.contiguous(memory_format=torch.channels_last)
 
-            # Get SAE activation maps
             with torch.amp.autocast(**autocast_kwargs):
                 act_orig, gap_orig = get_sae_activation_maps(
                     encoder, sae, x_orig, which_layer, args.pool_size)
                 act_pert, gap_pert = get_sae_activation_maps(
                     encoder, sae, x_pert, which_layer, args.pool_size)
 
-            cos, gap_ch = compute_suppression_metrics(
-                act_orig, gap_orig, act_pert, gap_pert, perm_info)
-            all_cos.append(cos)
-            all_gap_change.append(gap_ch)
+            # Unshuffle perturbed activation maps
+            if perm_info is not None:
+                act_pert_unshuf = unshuffle_activation_map(act_pert, perm_info)
+            else:
+                act_pert_unshuf = act_pert
 
-        # Average across batches
-        cos_sim = np.stack(all_cos).mean(axis=0)      # (d_sae,)
-        gap_change = np.stack(all_gap_change).mean(axis=0)  # (d_sae,)
+            B, d_sae_b, H, W = act_orig.shape
+
+            # Per-image per-neuron cosine similarity: (B, d_sae)
+            # Mask seam artifact regions (±3 pixels at every cut boundary)
+            act_o = act_orig
+            act_p = act_pert_unshuf
+            if perm_info is not None:
+                margin = args.seam_margin
+                mask_h = torch.ones(H, device=act_o.device)
+                mask_w = torch.ones(W, device=act_o.device)
+
+                if perm_info["type"] == "grid":
+                    g = perm_info["grid"]
+                    # Mask every grid boundary + outer edges
+                    for k in range(g + 1):
+                        # Vertical boundaries (along W)
+                        cx = k * (W // g)
+                        mask_w[max(0, cx - margin):min(W, cx + margin)] = 0
+                        # Horizontal boundaries (along H)
+                        cy = k * (H // g)
+                        mask_h[max(0, cy - margin):min(H, cy + margin)] = 0
+
+                elif perm_info["type"] == "lr_swap":
+                    center = W // 2
+                    mask_w[max(0, center - margin):min(W, center + margin)] = 0
+                    mask_w[:margin] = 0
+                    mask_w[W - margin:] = 0
+
+                # 2D mask: (1, 1, H, W)
+                spatial_mask = (mask_h.view(1, 1, H, 1) * mask_w.view(1, 1, 1, W))
+                act_o = act_o * spatial_mask
+                act_p = act_p * spatial_mask
+
+            flat_orig = act_o.view(B, d_sae_b, -1)
+            flat_pert = act_p.view(B, d_sae_b, -1)
+            cos = F.cosine_similarity(flat_orig, flat_pert, dim=2)  # (B, d_sae)
+
+            # Per-image per-neuron GAP change (using same seam mask)
+            if perm_info is not None and args.seam_margin > 0:
+                # Masked GAP: average only over non-seam pixels
+                # spatial_mask is (1,1,H,W), act_orig/act_pert_unshuf are (B,d_sae,H,W)
+                n_valid = spatial_mask.sum()  # scalar: number of non-zero pixels
+                gap_orig_masked = (act_orig * spatial_mask).sum(dim=(2, 3)) / n_valid
+                gap_pert_masked = (act_pert_unshuf * spatial_mask).sum(dim=(2, 3)) / n_valid
+                gap_ch = (gap_pert_masked - gap_orig_masked) / (gap_orig_masked.abs() + 1.0)
+            else:
+                gap_ch = (gap_pert - gap_orig) / (gap_orig.abs() + 1e-12)
+
+            all_gap_orig.append(gap_orig.cpu().float().numpy())   # (B, d_sae)
+            all_cos.append(cos.cpu().float().numpy())             # (B, d_sae)
+            all_gap_change.append(gap_ch.cpu().float().numpy())   # (B, d_sae)
+
+        # Stack across all batches: (N_total, d_sae)
+        gap_orig_all = np.concatenate(all_gap_orig, axis=0)   # (N, d_sae)
+        cos_all = np.concatenate(all_cos, axis=0)             # (N, d_sae)
+        gap_change_all = np.concatenate(all_gap_change, axis=0)  # (N, d_sae)
+        N_total = gap_orig_all.shape[0]
+
+        logger.info(f"Total images: {N_total}, selecting top-{top_k} per neuron")
+
+        # ── Per-neuron top-K selection ──
+        # For each neuron, select top-K images by GAP_orig
+        cos_topk = np.zeros(d_sae)
+        gap_change_topk = np.zeros(d_sae)
+
+        k_actual = min(top_k, N_total)
+        for n_i in range(d_sae):
+            if not alive_mask[n_i]:
+                continue
+            gap_col = gap_orig_all[:, n_i]
+            # Top-K indices by GAP value (highest activation)
+            topk_idx = np.argpartition(gap_col, -k_actual)[-k_actual:]
+            cos_topk[n_i] = cos_all[topk_idx, n_i].mean()
+            gap_change_topk[n_i] = gap_change_all[topk_idx, n_i].mean()
 
         # ── Log summary ──
-        cos_alive = cos_sim[alive_mask]
-        gap_alive = gap_change[alive_mask]
-        logger.info(f"\nResults ({perturb_name}, {n_alive} alive neurons):")
+        cos_alive = cos_topk[alive_mask]
+        gap_alive = gap_change_topk[alive_mask]
+        logger.info(f"\nResults ({perturb_name}, {n_alive} alive neurons, top-{k_actual} images):")
         logger.info(f"  Cosine sim: mean={cos_alive.mean():.4f}, "
                     f"std={cos_alive.std():.4f}, "
                     f"min={cos_alive.min():.4f}, max={cos_alive.max():.4f}")
-        logger.info(f"  GAP change: mean={gap_alive.mean():.4f}, "
-                    f"std={gap_alive.std():.4f}")
+        logger.info(f"  GAP change: mean={gap_alive.mean():.8f}, "
+                    f"std={gap_alive.std():.8f}")
 
         n_shape_dep = (cos_alive < 0.8).sum()
         logger.info(f"  Shape-dependent (cos<0.8): {n_shape_dep}/{n_alive} "
@@ -582,28 +665,29 @@ def main():
         # ── Save results ──
         npz_path = os.path.join(out_dir, f"results_{perturb_name}.npz")
         np.savez_compressed(npz_path,
-                            cos_sim=cos_sim, gap_change=gap_change,
+                            cos_sim=cos_topk, gap_change=gap_change_topk,
                             alive_mask=alive_mask, usage_ema=usage_ema,
-                            perturbation=perturb_name)
+                            perturbation=perturb_name,
+                            top_k=k_actual)
         logger.info(f"Saved: {npz_path}")
 
         # ── Plots ──
         plot_histogram(
-            cos_sim,
-            f"Cosine Similarity – {perturb_name}",
+            cos_topk,
+            f"Cosine Similarity (top-{k_actual} images) – {perturb_name}",
             "Cosine Similarity (1.0 = no change)",
             os.path.join(out_dir, f"hist_cos_{perturb_name}.png"),
             alive_mask=alive_mask, vline=0.8, dpi=args.dpi)
 
         plot_histogram(
-            np.abs(gap_change),
-            f"|GAP Change Ratio| – {perturb_name}",
+            np.abs(gap_change_topk),
+            f"|GAP Change Ratio| (top-{k_actual} images) – {perturb_name}",
             "|ΔG/G| (0 = no change)",
             os.path.join(out_dir, f"hist_gap_{perturb_name}.png"),
             alive_mask=alive_mask, dpi=args.dpi)
 
         plot_scatter_cos_vs_gap(
-            cos_sim, gap_change, perturb_name,
+            cos_topk, gap_change_topk, perturb_name,
             os.path.join(out_dir, f"scatter_{perturb_name}.png"),
             alive_mask=alive_mask, dpi=args.dpi)
 

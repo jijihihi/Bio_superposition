@@ -11,6 +11,12 @@
 #       --samples_per_class 5000
 # ==============================================================================
 
+# python -m model_test.umap_gap \
+#     --ckpt_path /home/ubuntu/model-east3/outputs/MoCo_seed45/best_model.pt \
+#     --save_dir /home/ubuntu/model-east3/outputs/MoCo_seed45 \
+#     --shard_root /home/ubuntu/model-east3/wds_shards_tar \
+#     --samples_per_class 5000
+
 import os
 import sys
 import random
@@ -166,9 +172,9 @@ def get_args():
     p.add_argument("--ckpt_segments", type=int, default=0)
 
     # UMAP
-    p.add_argument("--n_neighbors", type=int, default=30)
+    p.add_argument("--n_neighbors", type=int, default=15)
     p.add_argument("--min_dist", type=float, default=0.3)
-    p.add_argument("--metric", type=str, default="euclidean",
+    p.add_argument("--metric", type=str, default="cosine",
                    choices=["euclidean", "cosine", "correlation"])
     p.add_argument("--n_components", type=int, default=2)
 

@@ -248,6 +248,8 @@ class GatedSAETrainer:
 
         logger.info(f"[GatedSAE] tie_weights={getattr(args, 'tie_gate_weights', False)}, "
                     f"aux_coeff={self.aux_coeff}, final_sparsity={self.final_sparsity_coeff}")
+        logger.info(f"[GatedSAE] token_l2_norm_weighting={getattr(args, 'token_l2_norm', False)} "
+                    f"(loss에서 CNN 토큰 L2 norm으로 가중)")
         logger.info(f"[GatedSAE] sparsity_warmup_steps={self.sparsity_warmup_steps}, total_steps={self.total_steps}")
         logger.info(f"[GatedSAE] gradient_accumulation_steps={self.grad_accum_steps}, effective_batch={args.batch_size * self.grad_accum_steps}")
         logger.info(f"[GatedSAE] lr_scheduler={self.lr_scheduler_type}, lr_warmup_steps={self.lr_warmup_steps}, weight_decay={args.sae_wd}")
@@ -306,23 +308,32 @@ class GatedSAETrainer:
     def _compute_loss(
         self, tokens: torch.Tensor, l2_norms: torch.Tensor, sparsity_coeff: float
     ):
-        """Compute Gated SAE loss with L2-weighted MSE."""
+        """Compute Gated SAE loss, optionally weighted by per-token L2 norms."""
         recon, acts, gate_pre, recon_aux, acts_aux = self.sae(tokens)
 
         tok_f = tokens.float()
         rec_f = recon.float()
-        l2_f = l2_norms.float()
 
         mse = (rec_f - tok_f).pow(2).sum(dim=1)
-        weights = l2_f / (l2_f.mean() + 1e-8)
-        L_recon = (mse * weights).mean()
+
+        use_l2_weight = getattr(self.args, "token_l2_norm", False)
+
+        if use_l2_weight:
+            l2_f = l2_norms.float()
+            weights = l2_f / (l2_f.mean() + 1e-8)
+            L_recon = (mse * weights).mean()
+        else:
+            L_recon = mse.mean()
 
         L_sparsity = self.sae.compute_sparsity_loss(gate_pre)
 
         if self.aux_coeff > 0 and recon_aux.abs().sum() > 0:
             residual = tok_f - rec_f.detach()
             aux_error = (recon_aux.float() - residual).pow(2).sum(dim=1)
-            L_aux = (aux_error * weights).mean()
+            if use_l2_weight:
+                L_aux = (aux_error * weights).mean()
+            else:
+                L_aux = aux_error.mean()
         else:
             L_aux = torch.tensor(0.0, device=tokens.device)
 
@@ -853,7 +864,8 @@ def main(args_list=None):
     args.log_fvu = True
     args.use_val = True
     args.use_test = True
-    args.token_l2_norm = True
+    # args.token_l2_norm is now controlled via --token_l2_norm CLI flag
+    # (default: False if not passed, True if --token_l2_norm is specified)
     args.save_best = True
     args.augment = True
     

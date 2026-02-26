@@ -536,7 +536,8 @@ def run_cka_analysis(args):
     print(f"Model 1: {os.path.basename(args.ckpt_path_1)}")
     print(f"Model 2: {os.path.basename(args.ckpt_path_2)}")
     print(f"Number of samples: {len(ref_indices)}")
-    print(f"Feature dimension: {features1.shape[1]} (8x8x512)")
+    ps = args.pooling_size
+    print(f"Feature dimension: {features1.shape[1]} ({ps}x{ps}x512)")
     print("-"*60)
     print(f"Linear CKA:  {linear_cka:.4f}")
     if kernel_cka is not None:
