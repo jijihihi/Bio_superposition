@@ -218,6 +218,202 @@ def filter_concepts_by_gini(
 
 
 # ==============================================================================
+# DE-based Concept Selection (from features_cache.npz)
+# ==============================================================================
+
+def compute_cv_per_neuron(X, superclasses):
+    """Coefficient of variation per neuron (across-class std / global mean)."""
+    sc_arr = np.array(superclasses)
+    classes = sorted(set(sc_arr))
+    class_means = np.array([X[sc_arr == c].mean(axis=0) for c in classes])
+    cv = class_means.std(axis=0) / (class_means.mean(axis=0) + 1e-10)
+    return cv
+
+
+def compute_de_neurons_local(
+    X: np.ndarray,
+    superclasses: list,
+    mutation: str,
+    adj_p_threshold: float = 0.05,
+    min_log2fc: float = 0.0,
+):
+    """
+    DEG-like neuron selection: Wilcoxon rank-sum test + BH correction.
+    Compares Control vs Mutation. Returns dict with mask, adj_pvalues, log2fc.
+    """
+    from scipy.stats import mannwhitneyu
+    from statsmodels.stats.multitest import multipletests
+
+    sc_arr = np.array(superclasses)
+    ctrl_mask = sc_arr == "Control"
+    mut_mask = sc_arr == mutation
+
+    if ctrl_mask.sum() == 0 or mut_mask.sum() == 0:
+        return {"mask": np.zeros(X.shape[1], dtype=bool),
+                "adj_pvalues": np.ones(X.shape[1]),
+                "log2fc": np.zeros(X.shape[1]),
+                "n_selected": 0}
+
+    X_ctrl = X[ctrl_mask]
+    X_mut = X[mut_mask]
+    d = X.shape[1]
+    pvals = np.ones(d)
+
+    eps = 1e-10
+    log2fc = np.log2((X_mut.mean(0) + eps) / (X_ctrl.mean(0) + eps))
+
+    for j in range(d):
+        if X_ctrl[:, j].std() == 0 and X_mut[:, j].std() == 0:
+            continue
+        try:
+            _, p = mannwhitneyu(X_ctrl[:, j], X_mut[:, j], alternative="two-sided")
+            pvals[j] = p
+        except ValueError:
+            pass
+
+    reject, adj_p, _, _ = multipletests(pvals, method="fdr_bh")
+    mask = (adj_p < adj_p_threshold)
+    if min_log2fc > 0:
+        mask &= (np.abs(log2fc) >= min_log2fc)
+
+    return {"mask": mask, "adj_pvalues": adj_p, "log2fc": log2fc,
+            "n_selected": int(mask.sum())}
+
+
+def select_concepts_by_de(
+    features_cache_path: str,
+    apoptosis_csv_path: str,
+    min_cv: float = 0.2,
+    de_adj_p: float = 0.05,
+    de_min_log2fc: float = 1.5,
+    dead_threshold: float = 1e-5,
+):
+    """
+    Select class-specific concepts using DE analysis.
+    Returns list of (concept_id, dominant_class, log2fc_value, direction).
+    """
+    from sae_project.step02_logging_utils import SUPERCLASS_MAP
+
+    # Load features
+    data = np.load(features_cache_path, allow_pickle=True)
+    X = data["X_all"].astype(np.float32)
+    uids = list(data["uids"])
+
+    # Dead neuron filter
+    if "usage_ema" in data:
+        usage = data["usage_ema"]
+        alive = usage >= dead_threshold
+        alive_indices = np.where(alive)[0]
+        X = X[:, alive]
+        logger.info(f"  Alive neurons: {len(alive_indices)}/{len(usage)}")
+    else:
+        alive_indices = np.arange(X.shape[1])
+
+    # Load superclasses from apoptosis CSV (same matching logic as dpt_kendall.py)
+    import csv as csv_mod
+
+    # Build uid_to_superclass from apoptosis CSV
+    uid_to_sc = {}
+    with open(apoptosis_csv_path, "r", encoding="utf-8") as f:
+        reader = csv_mod.DictReader(f)
+        for row in reader:
+            # Get filename and normalize (strip _mask, extension)
+            fn = row.get("filename") or row.get("uid") or row.get("UID") or ""
+            fn = fn.replace("_mask", "")
+            fn = os.path.splitext(fn)[0]
+
+            # Get class/line info for superclass mapping
+            line_val = (row.get("folder") or row.get("class") or
+                        row.get("line") or row.get("Line") or "")
+            sc = SUPERCLASS_MAP.get(line_val, None)
+            if fn and sc:
+                uid_to_sc[fn] = sc
+
+    logger.info(f"  Apoptosis CSV entries: {len(uid_to_sc)}")
+    if uid_to_sc:
+        sample_keys = list(uid_to_sc.keys())[:3]
+        logger.info(f"  Sample CSV keys: {sample_keys}")
+
+    # Normalize cache UIDs: 'path/to.tar:IMAGE_NAME' → 'IMAGE_NAME'
+    def _norm_uid(u):
+        u = str(u)
+        if ":" in u:
+            u = u.split(":")[-1]
+        u = os.path.splitext(u)[0]
+        u = u.replace("_mask", "")
+        return u
+
+    cache_uids_norm = [_norm_uid(u) for u in uids]
+    logger.info(f"  Sample cache UIDs (normalized): {cache_uids_norm[:3]}")
+
+    # Match UIDs (using normalized keys)
+    superclasses = []
+    valid_mask = []
+    for i, norm_uid in enumerate(cache_uids_norm):
+        if norm_uid in uid_to_sc:
+            superclasses.append(uid_to_sc[norm_uid])
+            valid_mask.append(True)
+        else:
+            valid_mask.append(False)
+    valid_mask = np.array(valid_mask)
+    X = X[valid_mask]
+    logger.info(f"  Matched images: {len(superclasses)}")
+
+    # CV filter
+    cv = compute_cv_per_neuron(X, superclasses)
+    cv_mask = cv >= min_cv
+    logger.info(f"  CV >= {min_cv}: {cv_mask.sum()}/{len(cv)} neurons")
+
+    # DE: per-mutation (mutation-high)
+    selected = []  # (original_concept_id, class, log2fc, direction)
+    mutations = ["SNCA", "GBA", "LRRK2"]
+
+    for mut in mutations:
+        de = compute_de_neurons_local(
+            X, superclasses, mut,
+            adj_p_threshold=de_adj_p, min_log2fc=de_min_log2fc)
+        # Mutation-high: log2fc > 0 (higher in mutation)
+        mut_high = de["mask"] & (de["log2fc"] > 0) & cv_mask
+        n = int(mut_high.sum())
+        logger.info(f"    {mut}-high: {n} neurons")
+        for local_idx in np.where(mut_high)[0]:
+            orig_id = int(alive_indices[local_idx])
+            selected.append((orig_id, mut, float(de["log2fc"][local_idx]), "mut_high"))
+
+    # DE: Control vs AllMut (control-high)
+    sc_allm = [("AllMut" if s != "Control" else "Control") for s in superclasses]
+    de_ctrl = compute_de_neurons_local(
+        X, sc_allm, "AllMut",
+        adj_p_threshold=de_adj_p, min_log2fc=de_min_log2fc)
+    ctrl_high = de_ctrl["mask"] & (de_ctrl["log2fc"] < 0) & cv_mask
+    n_ctrl = int(ctrl_high.sum())
+    logger.info(f"    Control-high: {n_ctrl} neurons")
+    for local_idx in np.where(ctrl_high)[0]:
+        orig_id = int(alive_indices[local_idx])
+        selected.append((orig_id, "Control", float(de_ctrl["log2fc"][local_idx]), "ctrl_high"))
+
+    # Merge classes per concept (same neuron can be DE in multiple mutations)
+    from collections import defaultdict as _ddict
+    concept_classes = _ddict(list)  # concept_id -> [(class, log2fc, direction), ...]
+    for cid, cls, fc, direction in selected:
+        concept_classes[cid].append((cls, fc, direction))
+
+    deduped = []
+    for cid, entries in concept_classes.items():
+        classes = sorted(set(e[0] for e in entries))
+        max_fc = max(abs(e[1]) for e in entries)
+        label = "_".join(classes)  # e.g. "GBA_SNCA"
+        direction = entries[0][2]
+        deduped.append((cid, label, max_fc, direction))
+
+    # Sort by |log2fc| descending
+    deduped.sort(key=lambda x: abs(x[2]), reverse=True)
+    logger.info(f"  Total DE-selected concepts: {len(deduped)}")
+
+    return deduped
+
+
+# ==============================================================================
 # SAE Activation Extraction
 # ==============================================================================
 
@@ -275,34 +471,167 @@ def compute_concept_activations_for_images(
         with torch.amp.autocast(**autocast_kwargs):
             fmap = encoder.forward_feature_maps(xb, which=which_layer)
         
-        # Normalize same as training
+        # Normalize same as training: GAP-scalar norm 
+        # config 1에서 dfualt로 지정한 --token_norm_mode", type=str, default="gap-scalar" 이렇게 되서 상관없다. 즉 양 보정하는 효과.
         B = fmap.size(0)
         gap = fmap.mean(dim=(2, 3))
         gap_norm = gap.norm(dim=1, keepdim=True).view(B, 1, 1, 1).clamp_min(1e-12)
         fmap = fmap / gap_norm
         
-        fmap = fmap.permute(0, 2, 3, 1).contiguous()
+        fmap = fmap.permute(0, 2, 3, 1).contiguous()  # (B, H, W, C)
         C = fmap.shape[-1]
         _, Hf, Wf, _ = fmap.shape
         
-        flat_tokens = fmap.view(-1, C)
-        flat_tokens = flat_tokens - flat_tokens.mean(dim=0, keepdim=True)
-        flat_tokens = F.normalize(flat_tokens, dim=1, eps=1e-12)
-        
-        # SAE forward
-        with torch.amp.autocast(**autocast_kwargs):
-            _, acts, _, _, _ = sae(flat_tokens)
-        
-        acts = acts.float().view(B, Hf * Wf, -1)
-        
-        # Get GAP for specific concept
-        concept_acts = acts[:, :, concept_id]  # (B, H*W)
-        concept_gap = concept_acts.mean(dim=1)  # (B,)
-        
-        gap_values.extend(concept_gap.cpu().numpy().tolist())
-        valid_indices.extend(batch_valid)
+        # Per-image centering + normalize (must match get_concept_activation_map)
+        for b_idx in range(B):
+            img_tokens = fmap[b_idx].view(Hf * Wf, C)  # (H*W, C)
+            img_tokens = img_tokens - img_tokens.mean(dim=0, keepdim=True)
+            img_tokens = F.normalize(img_tokens, dim=1, eps=1e-12)
+            
+            # SAE forward for this image
+            with torch.amp.autocast(**autocast_kwargs):
+                _, acts, _, _, _ = sae(img_tokens)
+            
+            acts = acts.float()  # (H*W, d_sae)
+            concept_gap = acts[:, concept_id].mean()  # scalar GAP
+            
+            gap_values.append(concept_gap.cpu().item())
+            valid_indices.append(batch_valid[b_idx])
     
     return np.array(gap_values), valid_indices
+
+
+@torch.inference_mode()
+def precompute_all_gap_values(
+    encoder: nn.Module,
+    sae: GatedSAE,
+    bank: InMemoryTarBank,
+    indices: List[int],
+    device: torch.device,
+    which_layer: str = "stage5_out",
+    batch_size: int = 32,
+) -> Tuple[np.ndarray, List[int]]:
+    """
+    Single pass: compute GAP values for ALL SAE concepts x ALL images.
+    Returns:
+        gap_all: (N_valid, d_sae) array
+        valid_indices: list of bank indices
+    """
+    encoder.eval()
+    sae.eval()
+    normalize = SafeInstanceNormalize(threshold=0.01)
+    autocast_kwargs = dict(device_type="cuda", enabled=torch.cuda.is_available())
+    if torch.cuda.is_available():
+        autocast_kwargs["dtype"] = torch.bfloat16
+
+    gap_list = []
+    valid_indices = []
+
+    for start in tqdm(range(0, len(indices), batch_size), desc="Precompute GAP (all concepts)"):
+        end = min(start + batch_size, len(indices))
+        batch_indices = indices[start:end]
+        xs = []
+        batch_valid = []
+        for bi in batch_indices:
+            img = bank.images[bi]
+            if img is None:
+                continue
+            x = (img.astype(np.float32) / 65535.0)
+            x = torch.from_numpy(x).permute(2, 0, 1)
+            x = normalize(x)
+            xs.append(x)
+            batch_valid.append(bi)
+        if len(xs) == 0:
+            continue
+        xb = torch.stack(xs, 0).to(device, non_blocking=True).contiguous(memory_format=torch.channels_last)
+        with torch.amp.autocast(**autocast_kwargs):
+            fmap = encoder.forward_feature_maps(xb, which=which_layer)
+        B = fmap.size(0)
+        gap = fmap.mean(dim=(2, 3))
+        gap_norm = gap.norm(dim=1, keepdim=True).view(B, 1, 1, 1).clamp_min(1e-12)
+        fmap = fmap / gap_norm
+        fmap = fmap.permute(0, 2, 3, 1).contiguous()
+        C = fmap.shape[-1]
+        _, Hf, Wf, _ = fmap.shape
+        for b_idx in range(B):
+            img_tokens = fmap[b_idx].view(Hf * Wf, C)
+            img_tokens = img_tokens - img_tokens.mean(dim=0, keepdim=True)
+            token_l2 = img_tokens.norm(dim=1, keepdim=True).clamp_min(1e-12)
+            img_tokens = F.normalize(img_tokens, dim=1, eps=1e-12)
+            with torch.amp.autocast(**autocast_kwargs):
+                _, acts, _, _, _ = sae(img_tokens)
+            acts = acts.float() * token_l2  # restore token norm
+            gap_list.append(acts.mean(dim=0).cpu().numpy())  # (d_sae,)
+            valid_indices.append(batch_valid[b_idx])
+
+    return np.stack(gap_list, axis=0), valid_indices
+
+
+@torch.inference_mode()
+def batch_compute_activation_maps(
+    encoder: nn.Module,
+    sae: GatedSAE,
+    bank: InMemoryTarBank,
+    image_concept_map: Dict[int, List[int]],
+    device: torch.device,
+    which_layer: str = "stage5_out",
+    batch_size: int = 32,
+) -> Dict[Tuple[int, int], np.ndarray]:
+    """
+    Batch compute spatial activation maps for specific (image, concept) pairs.
+    Args:
+        image_concept_map: bank_index -> list of concept IDs to extract
+    Returns:
+        act_cache: (bank_index, concept_id) -> (Hf, Wf) activation map
+    """
+    encoder.eval()
+    sae.eval()
+    normalize = SafeInstanceNormalize(threshold=0.01)
+    autocast_kwargs = dict(device_type="cuda", enabled=torch.cuda.is_available())
+    if torch.cuda.is_available():
+        autocast_kwargs["dtype"] = torch.bfloat16
+
+    act_cache = {}
+    bank_indices = list(image_concept_map.keys())
+
+    for start in tqdm(range(0, len(bank_indices), batch_size), desc="Computing activation maps"):
+        end = min(start + batch_size, len(bank_indices))
+        batch_bi = bank_indices[start:end]
+        xs = []
+        batch_valid = []
+        for bi in batch_bi:
+            img = bank.images[bi]
+            if img is None:
+                continue
+            x = (img.astype(np.float32) / 65535.0)
+            x = torch.from_numpy(x).permute(2, 0, 1)
+            x = normalize(x)
+            xs.append(x)
+            batch_valid.append(bi)
+        if len(xs) == 0:
+            continue
+        xb = torch.stack(xs, 0).to(device, non_blocking=True).contiguous(memory_format=torch.channels_last)
+        with torch.amp.autocast(**autocast_kwargs):
+            fmap = encoder.forward_feature_maps(xb, which=which_layer)
+        B = fmap.size(0)
+        gap = fmap.mean(dim=(2, 3))
+        gap_norm = gap.norm(dim=1, keepdim=True).view(B, 1, 1, 1).clamp_min(1e-12)
+        fmap = fmap / gap_norm
+        fmap = fmap.permute(0, 2, 3, 1).contiguous()
+        _, Hf, Wf, C = fmap.shape
+        for b_idx in range(B):
+            bi = batch_valid[b_idx]
+            img_tokens = fmap[b_idx].view(Hf * Wf, C)
+            img_tokens = img_tokens - img_tokens.mean(dim=0, keepdim=True)
+            token_l2 = img_tokens.norm(dim=1, keepdim=True).clamp_min(1e-12)
+            img_tokens = F.normalize(img_tokens, dim=1, eps=1e-12)
+            with torch.amp.autocast(**autocast_kwargs):
+                _, acts, _, _, _ = sae(img_tokens)
+            acts = (acts.float() * token_l2).view(Hf, Wf, -1)  # restore token norm
+            for cid in image_concept_map[bi]:
+                act_cache[(bi, cid)] = acts[:, :, cid].cpu().numpy()
+
+    return act_cache
 
 
 @torch.inference_mode()
@@ -347,13 +676,14 @@ def get_concept_activation_map(
     
     flat_tokens = fmap.view(-1, C)
     flat_tokens = flat_tokens - flat_tokens.mean(dim=0, keepdim=True)
+    token_l2 = flat_tokens.norm(dim=1, keepdim=True).clamp_min(1e-12)
     flat_tokens = F.normalize(flat_tokens, dim=1, eps=1e-12)
     
     # SAE forward
     with torch.amp.autocast(**autocast_kwargs):
         _, acts, _, _, _ = sae(flat_tokens)
     
-    acts = acts.float().view(Hf, Wf, -1)
+    acts = (acts.float() * token_l2).view(Hf, Wf, -1)  # restore token norm
     act_hw = acts[:, :, concept_id].cpu().numpy()
     
     return act_hw
@@ -377,16 +707,36 @@ def visualize_concept(
     img_size: int = 128,
     cmap_name: str = "jet",
     overlay_alpha: float = 0.5,
+    act_cache: Dict[Tuple[int, int], np.ndarray] = None,
+    **kwargs,
 ):
     """
     Visualize top-K images for a specific concept.
     """
-    concept_dir = os.path.join(output_dir, f"concept_{concept_id:04d}")
+    # Include dominant class in directory name if provided
+    class_label = kwargs.get("class_label", "")
+    if class_label:
+        concept_dir = os.path.join(output_dir, f"concept_{concept_id:04d}_{class_label}")
+    else:
+        concept_dir = os.path.join(output_dir, f"concept_{concept_id:04d}")
     os.makedirs(concept_dir, exist_ok=True)
     
     # Sort by GAP and take top-K
     sorted_idx = np.argsort(gap_values)[::-1]
+    
+    # DEBUG: log GAP distribution
+    top_gaps = gap_values[sorted_idx[:min(20, len(sorted_idx))]]
+    nonzero = (gap_values > 1e-6).sum()
+    logger.info(f"  Concept {concept_id}: nonzero GAP = {nonzero}/{len(gap_values)}, "
+                f"top-5 GAP = {top_gaps[:5].tolist()}")
+    
+    # Only keep images with nonzero GAP
+    sorted_idx = sorted_idx[gap_values[sorted_idx] > 1e-6]
     top_indices = sorted_idx[:top_k]
+    
+    if len(top_indices) == 0:
+        logger.warning(f"  Concept {concept_id}: no images with nonzero GAP!")
+        return
     
     for rank, idx in enumerate(top_indices, start=1):
         bi = valid_indices[idx]
@@ -399,10 +749,13 @@ def visualize_concept(
         line = bank.lines[bi]
         label = bank.labels[bi]
         
-        # Get activation map
-        act_hw = get_concept_activation_map(
-            encoder, sae, img_u16, concept_id, device, which_layer
-        )
+        # Get activation map (use cache if available)
+        if act_cache is not None and (bi, concept_id) in act_cache:
+            act_hw = act_cache[(bi, concept_id)]
+        else:
+            act_hw = get_concept_activation_map(
+                encoder, sae, img_u16, concept_id, device, which_layer
+            )
         
         # Upsample to image size
         act_t = torch.from_numpy(act_hw).unsqueeze(0).unsqueeze(0).float()
@@ -439,6 +792,25 @@ def visualize_concept(
         heatmap_rgb = apply_colormap_01(act_norm, cmap_name=cmap_name)
         overlay_rgb = create_overlay(bright_rgb, heatmap_rgb, alpha=overlay_alpha)
         
+        # CNN input view: SafeInstanceNormalize → global scale to uint8
+        # Key: scale all 3 channels together (not per-channel) to show
+        # how InstanceNorm equalizes channel intensities — THIS is what CNN sees
+        # 채널별로 safenormalization 후 채널별로 percnetile해서 linear scaling을 하면, IN해도 각 채널별로 밝기 순위는 남는데 여기서 linear scaling을 하면 가장 밝은애는 255 가장 어두운 애는 0으로 만들어 버리기때문에 IN 없이 lienar scaling하는 것과 아무런 의미가 없어.
+        # 대신 global percentil로 scaling을 하면. 많이 밝은 애는 최대값에 많이 포함된다. 이 percentil에 많이 포함 안되는 채널도 있겠지. 걔는 가장 밝은 픽셀은 없겠지
+        # p99에 포함되지 않을 정도로만 밝은 애들만 있는 채널의 경우에는 global percentil하면 포함이 안된다. 따라서 그렇게 밝은 애는 없다.
+        # 이게 IN 한 CNN에 넣어주는 이미지와 비슷하다. 왜냐하면 채널별로 IN했을때 평균 0 표준편차 1 되지나 tail은 다 다르다. 근데 이걸 단순히 linear scaling하면 tail이 손상되는 효과가 있기 때문이다.
+        normalize = SafeInstanceNormalize(threshold=0.01)
+        cnn_float = (img_u16.astype(np.float32) / 65535.0)
+        cnn_tensor = torch.from_numpy(cnn_float).permute(2, 0, 1)  # (3, H, W)
+        cnn_tensor = normalize(cnn_tensor)  # per-channel instance norm
+        cnn_np = cnn_tensor.permute(1, 2, 0).numpy()  # (H, W, 3)
+        # Global scale across ALL channels (preserves cross-channel balance)
+        lo, hi = np.percentile(cnn_np, [1, 99])
+        if hi - lo < 1e-6:
+            hi = lo + 1e-6
+        cnn_rgb = np.clip((cnn_np - lo) / (hi - lo) * 255, 0, 255).astype(np.uint8)
+        cnn_overlay_rgb = create_overlay(cnn_rgb, heatmap_rgb, alpha=overlay_alpha)
+        
         # Base filename (include max activation value for debugging)
         base = f"rank{rank:02d}_{line}_gap{gap_val:.4f}_max{max_act:.4f}"
         
@@ -455,6 +827,12 @@ def visualize_concept(
         Image.fromarray(overlay_rgb, mode="RGB").save(
             os.path.join(concept_dir, f"{base}_04_overlay.png")
         )
+        Image.fromarray(cnn_rgb, mode="RGB").save(
+            os.path.join(concept_dir, f"{base}_05_cnn_input.png")
+        )
+        Image.fromarray(cnn_overlay_rgb, mode="RGB").save(
+            os.path.join(concept_dir, f"{base}_06_cnn_overlay.png")
+        )
     
     logger.info(f"  Concept {concept_id}: saved {min(top_k, len(gap_values))} images to {concept_dir}")
 
@@ -467,8 +845,8 @@ def get_visualization_args():
     parser = argparse.ArgumentParser(description="SAE Concept Activation Visualization")
     
     # Required paths
-    parser.add_argument("--gap_csv", type=str, required=True,
-                        help="Path to class-wise GAP means CSV")
+    parser.add_argument("--gap_csv", type=str, default="",
+                        help="Path to class-wise GAP means CSV (optional if --features_cache used)")
     parser.add_argument("--sae_ckpt", type=str, required=True,
                         help="Path to trained SAE checkpoint")
     parser.add_argument("--model_state_path", type=str, required=True,
@@ -481,12 +859,24 @@ def get_visualization_args():
                         help="Output directory for visualizations")
     
     # Concept selection
-    parser.add_argument("--concept_ids", type=str, default="gini_filter",
-                        help="Comma-separated concept IDs, 'all_alive', or 'gini_filter'")
+    parser.add_argument("--concept_ids", type=str, default="de_filter",
+                        help="Comma-separated concept IDs, 'all_alive', 'gini_filter', or 'de_filter'")
     parser.add_argument("--max_gini", type=float, default=0.3,
                         help="Max Gini coefficient for class-specific filtering (lower = more specific)")
     parser.add_argument("--max_concepts", type=int, default=100,
                         help="Maximum number of concepts to visualize")
+    
+    # DE filter options
+    parser.add_argument("--features_cache", type=str, default="",
+                        help="Path to features_cache.npz (required for de_filter)")
+    parser.add_argument("--apoptosis_csv", type=str, default="",
+                        help="Path to apoptosis CSV with line/UID info (required for de_filter)")
+    parser.add_argument("--min_cv", type=float, default=0.2,
+                        help="Min CV for neuron filtering in de_filter mode")
+    parser.add_argument("--de_min_log2fc", type=float, default=1.5,
+                        help="Min |log2FC| for DE filtering")
+    parser.add_argument("--de_adj_p", type=float, default=0.05,
+                        help="Adjusted p-value threshold for DE")
     
     # Visualization options
     parser.add_argument("--top_k", type=int, default=20,
@@ -522,15 +912,25 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"Device: {device}")
     
-    # ===== Load GAP CSV =====
-    logger.info(f"Loading GAP CSV: {args.gap_csv}")
-    gap_info = load_gap_csv(args.gap_csv)
-    logger.info(f"  Total concepts: {len(gap_info)}")
-    
-    alive_concepts = [cid for cid, info in gap_info.items() if info["is_alive"]]
-    logger.info(f"  Alive concepts: {len(alive_concepts)}")
+    # ===== Load GAP CSV (optional) =====
+    gap_info = {}
+    alive_concepts = []
+    if args.gap_csv and os.path.exists(args.gap_csv):
+        logger.info(f"Loading GAP CSV: {args.gap_csv}")
+        gap_info = load_gap_csv(args.gap_csv)
+        logger.info(f"  Total concepts: {len(gap_info)}")
+        alive_concepts = [cid for cid, info in gap_info.items() if info["is_alive"]]
+        logger.info(f"  Alive concepts: {len(alive_concepts)}")
+    else:
+        logger.info("No GAP CSV provided")
+        if args.features_cache:
+            logger.info("  → Using features_cache for DE-based concept selection")
+            if args.concept_ids not in ("de_filter",):
+                logger.info("  → Auto-switching concept_ids to 'de_filter'")
+                args.concept_ids = "de_filter"
     
     # ===== Parse concept IDs =====
+    concept_class_labels = {}  # concept_id -> dominant class label (for DE mode)
     if args.concept_ids == "all_alive":
         concept_ids = alive_concepts[:args.max_concepts]
         logger.info(f"  Using first {len(concept_ids)} alive concepts")
@@ -550,6 +950,31 @@ def main():
             logger.info(f"    ... and {len(filtered) - 10} more")
         
         concept_ids = [x[0] for x in filtered[:args.max_concepts]]
+    elif args.concept_ids == "de_filter":
+        # DE-based class-specific concept selection
+        if not args.features_cache or not args.apoptosis_csv:
+            logger.error("de_filter requires --features_cache and --apoptosis_csv")
+            return
+        de_concepts = select_concepts_by_de(
+            args.features_cache, args.apoptosis_csv,
+            min_cv=args.min_cv, de_adj_p=args.de_adj_p,
+            de_min_log2fc=args.de_min_log2fc,
+        )
+        if len(de_concepts) == 0:
+            logger.warning("No concepts pass DE filter!")
+            return
+        
+        # Log selected concepts
+        for cid, cls, fc, direction in de_concepts[:20]:
+            logger.info(f"    Concept {cid}: {cls} (log2fc={fc:.2f}, {direction})")
+        if len(de_concepts) > 20:
+            logger.info(f"    ... and {len(de_concepts) - 20} more")
+        
+        # Build concept_ids and class_labels mapping
+        de_concepts = de_concepts[:args.max_concepts]
+        concept_ids = [x[0] for x in de_concepts]
+        concept_class_labels = {x[0]: x[1] for x in de_concepts}
+        logger.info(f"  DE filter: {len(concept_ids)} concepts selected")
     else:
         concept_ids = [int(x.strip()) for x in args.concept_ids.split(",")]
         logger.info(f"  Using specified concepts: {concept_ids}")
@@ -599,6 +1024,15 @@ def main():
     refs = load_all_sample_refs(args.shard_root)
     uid_to_refidx = build_uid_to_refidx(refs)
     
+    # Build image-name → refidx mapping (handles path mismatches between machines)
+    # UID format: '/path/to.tar:IMAGE_NAME' — match by IMAGE_NAME only
+    name_to_refidx = {}
+    for full_uid, ridx in uid_to_refidx.items():
+        if ":" in full_uid:
+            img_name = full_uid.split(":")[-1]
+            name_to_refidx[img_name] = ridx
+        name_to_refidx[full_uid] = ridx  # also keep full path match
+    
     # Load val + test UIDs
     eval_uids = []
     for split_name in ["val_split.csv", "test_split.csv"]:
@@ -608,31 +1042,105 @@ def main():
     
     logger.info(f"  Eval images (val+test): {len(eval_uids)}")
     
-    # Build bank
-    eval_refidx = [uid_to_refidx[u] for u in eval_uids if u in uid_to_refidx]
+    # Build bank — match by image name if full path fails
+    eval_refidx = []
+    for u in eval_uids:
+        if u in uid_to_refidx:
+            eval_refidx.append(uid_to_refidx[u])
+        elif ":" in u:
+            img_name = u.split(":")[-1]
+            if img_name in name_to_refidx:
+                eval_refidx.append(name_to_refidx[img_name])
+    
+    logger.info(f"  Matched eval images: {len(eval_refidx)}/{len(eval_uids)}")
     bank = InMemoryTarBank(refs, eval_refidx, args.img_size)
     bank_indices = list(range(len(eval_refidx)))
     
-    # ===== Visualize Each Concept =====
+    # DEBUG: check label mapping
+    from collections import Counter
+    if len(bank.labels) > 0:
+        sample_labels = bank.labels[:min(100, len(bank.labels))]
+        from sae_project.step02_logging_utils import SUPERCLASS_MAP
+        label_counts = Counter(sample_labels)
+        mapped = Counter(SUPERCLASS_MAP.get(l, f"UNMAPPED:{l}") for l in sample_labels)
+        logger.info(f"  DEBUG bank.labels sample: {dict(label_counts)}")
+        logger.info(f"  DEBUG mapped superclasses: {dict(mapped)}")
+    else:
+        logger.warning("  DEBUG bank.labels is EMPTY!")
+    
+    # ===== Phase 1: Precompute ALL GAP values in a single pass =====
     os.makedirs(args.output_dir, exist_ok=True)
-    
-    logger.info(f"\nVisualizing {len(concept_ids)} concepts...")
-    
-    for cid in tqdm(concept_ids, desc="Concepts"):
-        # Compute GAP for all images for this concept
-        gap_values, valid_indices = compute_concept_activations_for_images(
-            encoder, sae, bank, bank_indices, cid, device,
-            which_layer=args.which_layer,
-            batch_size=args.batch_size,
-        )
-        
-        if len(gap_values) == 0:
-            logger.warning(f"  Concept {cid}: no valid images")
+
+    logger.info(f"\nPhase 1: Precomputing GAP for ALL concepts ({len(concept_ids)} selected)...")
+    gap_all, valid_indices = precompute_all_gap_values(
+        encoder, sae, bank, bank_indices, device,
+        which_layer=args.which_layer, batch_size=args.batch_size,
+    )
+    logger.info(f"  GAP matrix: {gap_all.shape} (images x concepts)")
+
+    # ===== Phase 2: Determine top-K per concept & collect unique images =====
+    logger.info("Phase 2: Selecting top-K images per concept...")
+    LABEL_TO_CLASS = {0: "Control", 1: "SNCA", 2: "GBA", 3: "LRRK2"}
+    image_concept_map = {}   # bank_index -> set of concept_ids
+    per_concept_data = {}    # cid -> (gap_1d, filtered_valid)
+
+    for cid in concept_ids:
+        cls_label = concept_class_labels.get(cid, "")
+        cid_gap = gap_all[:, cid].copy()
+        cid_valid = list(valid_indices)
+
+        # Class filtering
+        filter_classes = []
+        if cls_label and cls_label != "Control":
+            filter_classes = cls_label.split("_")
+        if filter_classes:
+            class_mask = np.array([
+                LABEL_TO_CLASS.get(bank.labels[cid_valid[i]], "") in filter_classes
+                for i in range(len(cid_valid))
+            ])
+            if class_mask.sum() == 0:
+                logger.warning(f"  Concept {cid} ({cls_label}): no images from {filter_classes}")
+                continue
+            cid_gap = cid_gap[class_mask]
+            cid_valid = [cid_valid[i] for i in range(len(class_mask)) if class_mask[i]]
+            logger.info(f"  Concept {cid} ({cls_label}): filtered to {len(cid_valid)} images")
+
+        # Determine top-K
+        sorted_idx = np.argsort(cid_gap)[::-1]
+        sorted_idx = sorted_idx[cid_gap[sorted_idx] > 1e-6]
+        top_indices = sorted_idx[:args.top_k]
+        if len(top_indices) == 0:
+            logger.warning(f"  Concept {cid}: no images with nonzero GAP")
             continue
-        
-        # Visualize top-K
+
+        per_concept_data[cid] = (cid_gap, cid_valid)
+        for idx in top_indices:
+            bi = cid_valid[idx]
+            if bi not in image_concept_map:
+                image_concept_map[bi] = set()
+            image_concept_map[bi].add(cid)
+
+    image_concept_map = {bi: list(cids) for bi, cids in image_concept_map.items()}
+    logger.info(f"  Concepts with data: {len(per_concept_data)}, "
+                f"unique images for heatmaps: {len(image_concept_map)}")
+
+    # ===== Phase 3: Batch compute activation maps for top-K images =====
+    logger.info("Phase 3: Batch computing activation maps...")
+    act_cache = batch_compute_activation_maps(
+        encoder, sae, bank, image_concept_map, device,
+        which_layer=args.which_layer, batch_size=args.batch_size,
+    )
+    logger.info(f"  Cached {len(act_cache)} activation maps")
+
+    # ===== Phase 4: Visualize =====
+    logger.info(f"\nPhase 4: Generating visualizations for {len(per_concept_data)} concepts...")
+    for cid in tqdm(concept_ids, desc="Visualizing"):
+        if cid not in per_concept_data:
+            continue
+        cid_gap, cid_valid = per_concept_data[cid]
+        cls_label = concept_class_labels.get(cid, "")
         visualize_concept(
-            encoder, sae, bank, cid, valid_indices, gap_values,
+            encoder, sae, bank, cid, cid_valid, cid_gap,
             top_k=args.top_k,
             output_dir=args.output_dir,
             device=device,
@@ -640,12 +1148,10 @@ def main():
             img_size=args.img_size,
             cmap_name=args.cmap,
             overlay_alpha=args.overlay_alpha,
+            act_cache=act_cache,
+            class_label=cls_label,
         )
-        
-        # Clear cache
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-    
+
     logger.info(f"\nDone! Output -> {args.output_dir}")
 
 
