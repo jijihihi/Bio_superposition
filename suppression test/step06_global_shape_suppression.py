@@ -8,7 +8,7 @@
 #   2. Perturbed image (global shape destroyed) → same pipeline
 #   3. Compare per-neuron:
 #      a) Cosine similarity of 16x16 flattened activation maps (spatial pattern)
-#      b) GAP change ratio: (GAP_perturbed - GAP_original) / |GAP_original|
+#      b) GAP change: GAP_perturbed - GAP_original  (raw absolute difference)
 #
 # Perturbation types:
 #   - patch_shuffle_2x2: cut image into 2x2 patches, randomly shuffle
@@ -26,6 +26,8 @@
 #       --shard_root /path/to/wds_shards_tar \
 #       --samples_per_class 500
 # ==============================================================================
+
+
 
 ## GAP값 높은 이미지만 선택. 그 뉴런이 보는 이미지를 선택해야 좋다.abs
 ## lr swap과 patch shuffling할때. 그 edge에서 가까이 있는 픽셀들 제외할수록 코사인 유사도가 증가한다 -> global shape 본다.
@@ -201,6 +203,7 @@ def get_sae_activation_maps(
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Run encoder + SAE, return per-neuron spatial activation maps.
+    Token L2 norms are restored (consistent with step08).
 
     Returns:
         act_maps: (B, d_sae, pool_size, pool_size) — spatial activation maps
@@ -222,6 +225,9 @@ def get_sae_activation_maps(
     # Center (same as SAE training)
     flat_tokens = flat_tokens - flat_tokens.mean(dim=0, keepdim=True)
 
+    # Save per-token L2 norms before normalization
+    token_l2_norms = flat_tokens.norm(dim=1, keepdim=True).clamp_min(1e-12)
+
     # L2 normalize tokens (same as SAE training)
     flat_tokens = F.normalize(flat_tokens, dim=1, eps=1e-12)
 
@@ -234,6 +240,9 @@ def get_sae_activation_maps(
         _, chunk_acts, _, _, _ = sae(chunk)
         acts_list.append(chunk_acts.float())
     acts = torch.cat(acts_list, dim=0)  # (B*H*W, d_sae)
+
+    # Restore per-token L2 norms (consistent with step08)
+    acts = acts * token_l2_norms
 
     d_sae = acts.shape[1]
 
@@ -269,7 +278,7 @@ def compute_suppression_metrics(
 
     Returns:
         cos_sim: (d_sae,) mean cosine similarity across batch
-        gap_change: (d_sae,) mean relative GAP change across batch
+        gap_change: (d_sae,) mean raw GAP difference (pert - orig) across batch
     """
     B, d_sae, H, W = act_maps_orig.shape
 
@@ -284,8 +293,8 @@ def compute_suppression_metrics(
     # Cosine similarity per neuron per image: (B, d_sae)
     cos = F.cosine_similarity(flat_orig, flat_pert, dim=2)
 
-    # GAP relative change: (GAP_pert - GAP_orig) / (|GAP_orig| + 1)
-    gap_change = (gap_pert - gap_orig) / (gap_orig.abs() + 1e-12)
+    # Raw GAP difference: GAP_pert - GAP_orig  (consistent with step08)
+    gap_change = gap_pert - gap_orig
 
     return cos.mean(dim=0).cpu().numpy(), gap_change.mean(dim=0).cpu().numpy()
 
@@ -366,7 +375,7 @@ def plot_scatter_cos_vs_gap(cos_sim: np.ndarray, gap_change: np.ndarray,
     fig, ax = plt.subplots(figsize=(8, 6))
     ax.scatter(cos_sim, gap_change, s=5, alpha=0.4, c="#4C72B0", edgecolors="none")
     ax.set_xlabel("Cosine Similarity (spatial pattern)", fontsize=12)
-    ax.set_ylabel("GAP Change Ratio", fontsize=12)
+    ax.set_ylabel("GAP Difference (pert − orig)", fontsize=12)
     ax.set_title(f"Global Shape Sensitivity – {perturb_name}\n"
                  f"(n={len(cos_sim)} alive neurons)",
                  fontsize=13, fontweight="bold")
@@ -410,7 +419,7 @@ def get_args():
     p.add_argument("--ckpt_segments", type=int, default=0)
 
     # Analysis
-    p.add_argument("--pool_size", type=int, default=16,
+    p.add_argument("--pool_size", type=int, default=64,
                    help="Adaptive pool size for activation maps (default: 16)")
     p.add_argument("--dead_threshold", type=float, default=5e-5)
     p.add_argument("--top_k_per_neuron", type=int, default=100,
@@ -610,16 +619,15 @@ def main():
             flat_pert = act_p.view(B, d_sae_b, -1)
             cos = F.cosine_similarity(flat_orig, flat_pert, dim=2)  # (B, d_sae)
 
-            # Per-image per-neuron GAP change (using same seam mask)
+            # Per-image per-neuron GAP change — raw difference (consistent with step08)
             if perm_info is not None and args.seam_margin > 0:
                 # Masked GAP: average only over non-seam pixels
-                # spatial_mask is (1,1,H,W), act_orig/act_pert_unshuf are (B,d_sae,H,W)
-                n_valid = spatial_mask.sum()  # scalar: number of non-zero pixels
+                n_valid = spatial_mask.sum()
                 gap_orig_masked = (act_orig * spatial_mask).sum(dim=(2, 3)) / n_valid
                 gap_pert_masked = (act_pert_unshuf * spatial_mask).sum(dim=(2, 3)) / n_valid
-                gap_ch = (gap_pert_masked - gap_orig_masked) / (gap_orig_masked.abs() + 1.0)
+                gap_ch = gap_pert_masked - gap_orig_masked
             else:
-                gap_ch = (gap_pert - gap_orig) / (gap_orig.abs() + 1e-12)
+                gap_ch = gap_pert - gap_orig
 
             all_gap_orig.append(gap_orig.cpu().float().numpy())   # (B, d_sae)
             all_cos.append(cos.cpu().float().numpy())             # (B, d_sae)
@@ -655,7 +663,7 @@ def main():
         logger.info(f"  Cosine sim: mean={cos_alive.mean():.4f}, "
                     f"std={cos_alive.std():.4f}, "
                     f"min={cos_alive.min():.4f}, max={cos_alive.max():.4f}")
-        logger.info(f"  GAP change: mean={gap_alive.mean():.8f}, "
+        logger.info(f"  GAP diff (pert-orig): mean={gap_alive.mean():.8f}, "
                     f"std={gap_alive.std():.8f}")
 
         n_shape_dep = (cos_alive < 0.8).sum()
@@ -681,8 +689,8 @@ def main():
 
         plot_histogram(
             np.abs(gap_change_topk),
-            f"|GAP Change Ratio| (top-{k_actual} images) – {perturb_name}",
-            "|ΔG/G| (0 = no change)",
+            f"|GAP Difference| (top-{k_actual} images) – {perturb_name}",
+            "|GAP_pert − GAP_orig| (0 = no change)",
             os.path.join(out_dir, f"hist_gap_{perturb_name}.png"),
             alive_mask=alive_mask, dpi=args.dpi)
 

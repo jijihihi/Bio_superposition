@@ -10,14 +10,14 @@ OUTPUT_DIR="${BASE_DIR}/cka_results_pooling1"
 mkdir -p "${OUTPUT_DIR}"
 
 # ── MoCo seeds (GAP L2 norm 적용) ──
-MOCO_SEEDS=(42 45 87 95 123 124 125 256 445 457)
+MOCO_SEEDS=(42 87 95 123 124 256 445 457)
 
 # ── MoCo seeds (no GAP L2 norm) ──
-NO_NORM_SEEDS=(42 45 123 87)
+NO_NORM_SEEDS=(42 123 87)
 
 # ── 비교할 모델 체크포인트 목록 생성 ──
-declare -a CKPT_PATHS
-declare -a CKPT_NAMES
+CKPT_PATHS=()
+CKPT_NAMES=()
 
 for SEED in "${MOCO_SEEDS[@]}"; do
     CKPT="${BASE_DIR}/MoCo_seed${SEED}/best_model.pt"

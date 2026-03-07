@@ -45,6 +45,38 @@ from sae_project.step06_gated_sae import GatedSAE
 logger = get_logger("visualize_concept")
 
 
+
+'''
+concept 선별(DE)과 heatmap 시각화는 분리해서 생각해야 합니다:
+
+1. Concept 선별 (DE filter) → normrestored + L2 norm ✅
+features_cache에 normrestored + L2 norm된 것을 넣으면 dpt_kendall과 동일한 기준으로 DE가 뽑힙니다. step14에 --features_cache로 해당 cache를 넣으면 됩니다. 이건 이미 된 겁니다.
+
+2. 이미지 랭킹 (top-K 선택) → normrestored만, L2 norm은 안 하는게 좋음
+step14의 
+
+precompute_all_gap_values
+에서 이미지를 정렬할 때:
+
+Image A: concept_j GAP = 5.0, 전체 벡터 norm = 100  
+Image B: concept_j GAP = 3.0, 전체 벡터 norm = 20
+L2 norm 전: A가 상위 (5.0 > 3.0) → "이 concept이 강하게 나타난 이미지"
+L2 norm 후: A=0.05, B=0.15 → B가 상위 → "다른 concept 대비 비율이 높은 이미지"
+시각화 목적으로는 **"이 concept이 실제로 강하게 나타난 이미지"**를 보고 싶으므로 L2 norm 없이 normrestored GAP으로 정렬하는 게 맞습니다.
+
+3. Heatmap → normrestored만 ✅ (이미 적용됨)
+spatial activation map에 L2 norm을 적용하는 것은 의미가 없습니다. 어디에서 강하게 fire하는지를 보여줘야 하므로 normrestored 그대로가 맞습니다.
+
+토큰 centering per imgae로 하고 있다.
+
+'''
+
+## 시각화할때 control vs mutation 각 쌍으로 해서 mutation이 더 많이 나타난면, 그 거 선택 DE filter
+# 이 떄 bilinear interpolation할때 그 mutation에서 많이 나타난다고 하면, 그 mutation만 bilinear interpolation해서 필터링 함.
+# 이떄 SNCA와 GBA 모두에서 control보다 많이 나타나는거라고 하면, 둘 다 나오게끔. Top-20에서 순위대로 했을때 SNAC GBA 순서대로 해서 다 보이게끔.
+# control - high인 경우에는, 모든 class 에서 top-k를 뽑느다. control vs all mutation이어서 정확하지 않을 수 있다.
+
+
 # ==============================================================================
 # Visualization Utilities
 # ==============================================================================
@@ -215,6 +247,83 @@ def filter_concepts_by_gini(
     # Sort by Gini (most class-specific first)
     filtered.sort(key=lambda x: x[1])
     return filtered
+
+
+def compute_gap_info_from_cache(
+    features_cache_path: str,
+    dead_threshold: float = 1e-5,
+) -> Dict[int, Dict]:
+    """
+    Build gap_info dict (same format as load_gap_csv) from features_cache.
+    Computes per-class GAP means directly from the cache.
+    
+    Returns: dict concept_id -> {
+        'is_alive': bool,
+        'Control': float, 'SNCA': float, 'GBA': float, 'LRRK2': float,
+        'max_class': str, 'class_diff': float, 'entropy': float
+    }
+    """
+    from sae_project.step02_logging_utils import SUPERCLASS_MAP
+    
+    data = np.load(features_cache_path, allow_pickle=True)
+    X_all = data["X_all"]         # (N, d_sae)
+    lines = data["lines"]          # (N,) string line names
+    usage_ema = data["usage_ema"]   # (d_sae,)
+    
+    d_sae = len(usage_ema)
+    class_names = ["Control", "SNCA", "GBA", "LRRK2"]
+    
+    # Map lines → superclasses
+    superclasses = np.array([
+        SUPERCLASS_MAP.get(str(ln), str(ln)) for ln in lines
+    ])
+    
+    # If X_all has all d_sae columns, use as is; if alive-only, need mapping
+    alive_mask = usage_ema >= dead_threshold
+    n_alive = int(alive_mask.sum())
+    
+    if X_all.shape[1] == d_sae:
+        # All neurons present
+        pass
+    elif X_all.shape[1] == n_alive:
+        # Alive only — expand back to full d_sae
+        X_full = np.zeros((X_all.shape[0], d_sae), dtype=X_all.dtype)
+        X_full[:, alive_mask] = X_all
+        X_all = X_full
+    else:
+        logger.warning(f"  Cache X_all.shape[1]={X_all.shape[1]} != d_sae={d_sae} "
+                        f"and != n_alive={n_alive}")
+    
+    # Compute per-class means for ALL neurons
+    class_means = {}
+    for cn in class_names:
+        mask = superclasses == cn
+        if mask.sum() > 0:
+            class_means[cn] = X_all[mask].mean(axis=0)  # (d_sae,)
+        else:
+            class_means[cn] = np.zeros(d_sae)
+    
+    # Build gap_info dict
+    gap_info = {}
+    for i in range(d_sae):
+        is_alive = bool(alive_mask[i])
+        gaps = [float(class_means[cn][i]) for cn in class_names]
+        max_class = class_names[np.argmax(gaps)] if max(gaps) > 0 else "None"
+        class_diff = max(gaps) - min(gaps)
+        total = sum(gaps) + 1e-10
+        probs = [g / total for g in gaps]
+        ent = -sum(p * np.log2(max(p, 1e-10)) for p in probs)
+        gap_info[i] = {
+            "is_alive": is_alive,
+            "Control": gaps[0], "SNCA": gaps[1],
+            "GBA": gaps[2], "LRRK2": gaps[3],
+            "max_class": max_class, "class_diff": class_diff,
+            "entropy": ent,
+        }
+    
+    n_alive_count = sum(1 for v in gap_info.values() if v["is_alive"])
+    logger.info(f"  Computed GAP info from cache: {d_sae} neurons, {n_alive_count} alive")
+    return gap_info
 
 
 # ==============================================================================
@@ -410,6 +519,66 @@ def select_concepts_by_de(
     deduped.sort(key=lambda x: abs(x[2]), reverse=True)
     logger.info(f"  Total DE-selected concepts: {len(deduped)}")
 
+    return deduped
+
+
+def select_concepts_by_gap_csv_de(
+    gap_info: Dict[int, Dict],
+    max_gini: float = 0.74,
+    de_min_log2fc: float = 1.0,
+) -> list:
+    """
+    Select class-specific concepts using gap_csv per-class means.
+    Uses log2FC (no Wilcoxon — gap_csv only has means, not per-image values).
+    Optionally pre-filters by Gini impurity.
+
+    Returns list of (concept_id, dominant_class, log2fc_value, direction).
+    """
+    class_names = ["Control", "SNCA", "GBA", "LRRK2"]
+    mutations = ["SNCA", "GBA", "LRRK2"]
+    eps = 1e-10
+
+    selected = []  # (concept_id, class, log2fc, direction)
+
+    for cid, info in gap_info.items():
+        if not info.get("is_alive", False):
+            continue
+
+        # Optional Gini pre-filter
+        class_vals = [max(info[cn], 0) for cn in class_names]
+        gini = compute_gini_impurity(class_vals)
+        if gini > max_gini:
+            continue
+
+        ctrl_mean = info["Control"]
+
+        # Mutation-high: each mutation vs Control
+        for mut in mutations:
+            mut_mean = info[mut]
+            log2fc = np.log2((mut_mean + eps) / (ctrl_mean + eps))
+            if abs(log2fc) >= de_min_log2fc:
+                if log2fc > 0:
+                    selected.append((cid, mut, float(log2fc), "mut_high"))
+                else:
+                    selected.append((cid, "Control", float(log2fc), "ctrl_high"))
+
+    # Deduplicate: one concept can be DE in multiple mutations
+    from collections import defaultdict as _ddict
+    concept_classes = _ddict(list)
+    for cid, cls, fc, direction in selected:
+        concept_classes[cid].append((cls, fc, direction))
+
+    deduped = []
+    for cid, entries in concept_classes.items():
+        classes = sorted(set(e[0] for e in entries))
+        max_fc = max(abs(e[1]) for e in entries)
+        label = "_".join(classes)
+        direction = entries[0][2]
+        deduped.append((cid, label, max_fc, direction))
+
+    deduped.sort(key=lambda x: abs(x[2]), reverse=True)
+    logger.info(f"  gap_csv DE filter: {len(deduped)} concepts selected "
+                f"(max_gini={max_gini}, min_log2fc={de_min_log2fc})")
     return deduped
 
 
@@ -860,11 +1029,12 @@ def get_visualization_args():
     
     # Concept selection
     parser.add_argument("--concept_ids", type=str, default="de_filter",
-                        help="Comma-separated concept IDs, 'all_alive', 'gini_filter', or 'de_filter'")
+                        help="Comma-separated concept IDs, 'all_alive', 'gini_filter', "
+                             "'de_filter' (features_cache), or 'de_filter_csv' (gap_csv log2FC)")
     parser.add_argument("--max_gini", type=float, default=0.3,
                         help="Max Gini coefficient for class-specific filtering (lower = more specific)")
-    parser.add_argument("--max_concepts", type=int, default=100,
-                        help="Maximum number of concepts to visualize")
+    parser.add_argument("--max_concepts", type=int, default=0,
+                        help="Maximum number of concepts to visualize (0 = all)")
     
     # DE filter options
     parser.add_argument("--features_cache", type=str, default="",
@@ -924,15 +1094,22 @@ def main():
     else:
         logger.info("No GAP CSV provided")
         if args.features_cache:
-            logger.info("  → Using features_cache for DE-based concept selection")
-            if args.concept_ids not in ("de_filter",):
-                logger.info("  → Auto-switching concept_ids to 'de_filter'")
-                args.concept_ids = "de_filter"
+            if args.concept_ids == "gini_filter":
+                logger.info("  → Computing GAP info from features_cache for gini_filter")
+                gap_info = compute_gap_info_from_cache(
+                    args.features_cache, dead_threshold=1e-5)
+                alive_concepts = [cid for cid, info in gap_info.items() if info["is_alive"]]
+                logger.info(f"  Alive concepts: {len(alive_concepts)}")
+            else:
+                logger.info("  → Using features_cache for DE-based concept selection")
+                if args.concept_ids not in ("de_filter",):
+                    logger.info("  → Auto-switching concept_ids to 'de_filter'")
+                    args.concept_ids = "de_filter"
     
     # ===== Parse concept IDs =====
     concept_class_labels = {}  # concept_id -> dominant class label (for DE mode)
     if args.concept_ids == "all_alive":
-        concept_ids = alive_concepts[:args.max_concepts]
+        concept_ids = alive_concepts if args.max_concepts == 0 else alive_concepts[:args.max_concepts]
         logger.info(f"  Using first {len(concept_ids)} alive concepts")
     elif args.concept_ids == "gini_filter":
         # Filter by Gini coefficient (class-specific concepts)
@@ -949,9 +1126,9 @@ def main():
         if len(filtered) > 10:
             logger.info(f"    ... and {len(filtered) - 10} more")
         
-        concept_ids = [x[0] for x in filtered[:args.max_concepts]]
+        concept_ids = [x[0] for x in filtered] if args.max_concepts == 0 else [x[0] for x in filtered[:args.max_concepts]]
     elif args.concept_ids == "de_filter":
-        # DE-based class-specific concept selection
+        # DE-based class-specific concept selection (requires features_cache)
         if not args.features_cache or not args.apoptosis_csv:
             logger.error("de_filter requires --features_cache and --apoptosis_csv")
             return
@@ -971,10 +1148,36 @@ def main():
             logger.info(f"    ... and {len(de_concepts) - 20} more")
         
         # Build concept_ids and class_labels mapping
-        de_concepts = de_concepts[:args.max_concepts]
+        if args.max_concepts > 0:
+            de_concepts = de_concepts[:args.max_concepts]
         concept_ids = [x[0] for x in de_concepts]
         concept_class_labels = {x[0]: x[1] for x in de_concepts}
         logger.info(f"  DE filter: {len(concept_ids)} concepts selected")
+    elif args.concept_ids == "de_filter_csv":
+        # DE-based selection using gap_csv only (log2FC, no Wilcoxon)
+        if not gap_info:
+            logger.error("de_filter_csv requires --gap_csv")
+            return
+        de_concepts = select_concepts_by_gap_csv_de(
+            gap_info,
+            max_gini=args.max_gini,
+            de_min_log2fc=args.de_min_log2fc,
+        )
+        if len(de_concepts) == 0:
+            logger.warning("No concepts pass DE filter (CSV)! "
+                          "Try increasing --max_gini or decreasing --de_min_log2fc")
+            return
+        
+        for cid, cls, fc, direction in de_concepts[:20]:
+            logger.info(f"    Concept {cid}: {cls} (log2fc={fc:.2f}, {direction})")
+        if len(de_concepts) > 20:
+            logger.info(f"    ... and {len(de_concepts) - 20} more")
+        
+        if args.max_concepts > 0:
+            de_concepts = de_concepts[:args.max_concepts]
+        concept_ids = [x[0] for x in de_concepts]
+        concept_class_labels = {x[0]: x[1] for x in de_concepts}
+        logger.info(f"  DE filter (CSV): {len(concept_ids)} concepts selected")
     else:
         concept_ids = [int(x.strip()) for x in args.concept_ids.split(",")]
         logger.info(f"  Using specified concepts: {concept_ids}")
@@ -1132,7 +1335,21 @@ def main():
     )
     logger.info(f"  Cached {len(act_cache)} activation maps")
 
-    # ===== Phase 4: Visualize =====
+    # ===== Phase 4: Visualize (local first, then copy to Drive) =====
+    import shutil, tempfile
+
+    # If output_dir is on Google Drive, save locally first to avoid FUSE file loss
+    final_output_dir = args.output_dir
+    is_drive = "/drive/" in args.output_dir or "/content/drive/" in args.output_dir
+    if is_drive:
+        local_output_dir = os.path.join(tempfile.gettempdir(), "concept_vis_local")
+        if os.path.exists(local_output_dir):
+            shutil.rmtree(local_output_dir)
+        os.makedirs(local_output_dir, exist_ok=True)
+        logger.info(f"  Saving to local disk first: {local_output_dir}")
+    else:
+        local_output_dir = final_output_dir
+
     logger.info(f"\nPhase 4: Generating visualizations for {len(per_concept_data)} concepts...")
     for cid in tqdm(concept_ids, desc="Visualizing"):
         if cid not in per_concept_data:
@@ -1142,7 +1359,7 @@ def main():
         visualize_concept(
             encoder, sae, bank, cid, cid_valid, cid_gap,
             top_k=args.top_k,
-            output_dir=args.output_dir,
+            output_dir=local_output_dir,
             device=device,
             which_layer=args.which_layer,
             img_size=args.img_size,
@@ -1152,7 +1369,17 @@ def main():
             class_label=cls_label,
         )
 
-    logger.info(f"\nDone! Output -> {args.output_dir}")
+    # Copy local results to Drive
+    if is_drive and local_output_dir != final_output_dir:
+        logger.info(f"\nCopying results to Drive: {final_output_dir}")
+        if os.path.exists(final_output_dir):
+            shutil.rmtree(final_output_dir)
+        shutil.copytree(local_output_dir, final_output_dir)
+        n_files = sum(len(files) for _, _, files in os.walk(final_output_dir))
+        logger.info(f"  Copied {n_files} files to Drive")
+        shutil.rmtree(local_output_dir)
+
+    logger.info(f"\nDone! Output -> {final_output_dir}")
 
 
 if __name__ == "__main__":
