@@ -137,6 +137,38 @@ def patch_shuffle_channels(
     return out
 
 
+def patch_rotate_channels(
+    x: torch.Tensor, channels: List[int], patch_size: int = 8,
+) -> torch.Tensor:
+    """Rotate each patch IN-PLACE by random {90°, 180°, 270°} per patch.
+    Preserves coarse spatial density (bright regions stay where they are)
+    while destroying fine orientation/shape within each patch.
+    x: (B, 3, H, W)
+    """
+    import random as _rng
+    B, C, H, W = x.shape
+    nH = H // patch_size
+    nW = W // patch_size
+    out = x.clone()
+
+    for b in range(B):
+        for ch in channels:
+            ch_data = out[b, ch, :nH*patch_size, :nW*patch_size]
+            patches = ch_data.view(nH, patch_size, nW, patch_size)
+            patches = patches.permute(0, 2, 1, 3).contiguous()  # (nH, nW, ps, ps)
+
+            for i in range(nH):
+                for j in range(nW):
+                    k = _rng.randint(1, 3)  # 90°, 180°, or 270° (exclude 0°)
+                    patches[i, j] = torch.rot90(patches[i, j], k, dims=(0, 1))
+
+            patches = patches.permute(0, 2, 1, 3).contiguous()
+            out[b, ch, :nH*patch_size, :nW*patch_size] = patches.view(
+                nH * patch_size, nW * patch_size)
+
+    return out
+
+
 def patch_shuffle_all_same_perm(
     x: torch.Tensor, patch_size: int = 8,
 ) -> torch.Tensor:

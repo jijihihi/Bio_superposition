@@ -95,7 +95,20 @@
 
 # python -m suppression_test.step08c_texture_attribution \
 #     --model_state_path /home/ubuntu/model-east3/outputs/MoCo_seed87/best_model.pt \
-#     --concept_ids "48,49,94,117,203,300,306,331,337,381,432,441,491,548,738,807,814,849,885,914,968,1086,1181,1196,1226,1304,1341,1366,1408,1416,1447,1461,1464,1555,1578,1647,1710,1737,1766,1815,1850,1880,1885,1945,1975,1978,1995,2003,2019,2048,2055,2182,2198,2246,2248,2315,2490,2567,2683,2716,2785,2798,2800,2835,2851,2926,2943,2954,2956,2967,2968,3026,3035,3186,3249,3272,3336,3370,3403,3462,3466,3481,3557,3592,3625,3635,3685,3713,3720,3760,3794,3820,3845,3847,3922,3933,3934,3977,4060,4080" \
+#     --concept_ids "0018,0037,0046,0048,0049,0056,0080,0094,0101,0117,0134,0203,0237,0264,0277,0300,0301,0306,0326,0331,0337,0340,0358,0381,0405,0432,0441,0474,0484,0491,0522,0539,0548,0557,0576,0581,0621,0679,0700,0738,0776,0783,0788,0807,0812,0814,0824,0849,0857,0885,0909,0914,0916,0932,0936,0952,0968,0985,1048,1049,1070,1086,1090,1093,1105,1127,1146,1181,1196,1203,1211,1219,1226,1240,1265,1281,1282,1286,1301,1304,1322,1326,1332,1338,1339,1341,1366,1372,1380,1398,1408,1416,1438,1447,1450,1461,1464,1470,1539,1555,1558,1560,1566,1578,1581,1592,1632,1647,1648,1659,1667,1673,1685,1688,1699,1710,1737,1766,1778,1783,1803,1815,1819,1850,1879,1880,1885,1932,1945,1953,1962,1975,1978,1995,2001,2003,2019,2048,2052,2055,2057,2122,2147,2156,2170,2173,2182,2183,2198,2221,2246,2248,2290,2291,2314,2315,2338,2363,2375,2389,2421,2424,2468,2490,2502,2530,2541,2567,2587,2595,2598,2616,2683,2716,2748,2773,2785,2796,2798,2800,2805,2814,2835,2837,2851,2864,2872,2873,2903,2910,2920,2924,2926,2943,2954,2956,2959,2967,2968,3001,3012,3026,3035,3044,3079,3128,3129,3133,3135,3154,3181,3186,3221,3245,3249,3259,3272,3301,3304,3315,3323,3336,3338,3366,3370,3403,3439,3462,3466,3481,3497,3533,3538,3542,3557,3585,3592,3625,3627,3635,3637,3656,3683,3685,3701,3713,3720,3736,3742,3760,3762,3779,3788,3789,3794,3820,3845,3847,3900,3922,3933,3934,3977,3979,4014,4060,4071,4080,4092" \
+#     --sae_ckpt /home/ubuntu/model-east3/outputs/MoCo_seed87/SAE/stage5_out_d4096_gated_sp3200.0_aux0.03125_tied_ep008.pt \
+#     --save_dir /home/ubuntu/model-east3/outputs/MoCo_seed87/SAE \
+#     --shard_root /home/ubuntu/model-east3/wds_shards_tar \
+#     --samples_per_class 1000 \
+#     --patch_size 8 \
+#     --blur_sigma 4.0 \
+#     --blur_kernel_size 25 \
+#     --n_shuffle_repeats 3 \
+#     --seam_margin 0
+
+# python -m suppression_test.step08c_texture_attribution \
+#     --model_state_path /home/ubuntu/model-east3/outputs/MoCo_seed87/best_model.pt \
+#     --concept_ids "0018,0037,0046,0048,0049,0056,0080,0094,0101,0117,0134,0203,0237,0264,0277,0300,0301,0306,0326,0331,0337,0340,0358,0381,0405,0432,0441,0474,0484,0491,0522,0539,0548,0557,0576,0581,0621,0679,0700,0738,0776,0783,0788,0807,0812,0814,0824,0849,0857,0885,0909,0914,0916,0932,0936,0952,0968,0985,1048,1049,1070,1086,1090,1093,1105,1127,1146,1181,1196,1203,1211,1219,1226,1240,1265,1281,1282,1286,1301,1304,1322,1326,1332,1338,1339,1341,1366,1372,1380,1398,1408,1416,1438,1447,1450,1461,1464,1470,1539,1555,1558,1560,1566,1578,1581,1592,1632,1647,1648,1659,1667,1673,1685,1688,1699,1710,1737,1766,1778,1783,1803,1815,1819,1850,1879,1880,1885,1932,1945,1953,1962,1975,1978,1995,2001,2003,2019,2048,2052,2055,2057,2122,2147,2156,2170,2173,2182,2183,2198,2221,2246,2248,2290,2291,2314,2315,2338,2363,2375,2389,2421,2424,2468,2490,2502,2530,2541,2567,2587,2595,2598,2616,2683,2716,2748,2773,2785,2796,2798,2800,2805,2814,2835,2837,2851,2864,2872,2873,2903,2910,2920,2924,2926,2943,2954,2956,2959,2967,2968,3001,3012,3026,3035,3044,3079,3128,3129,3133,3135,3154,3181,3186,3221,3245,3249,3259,3272,3301,3304,3315,3323,3336,3338,3366,3370,3403,3439,3462,3466,3481,3497,3533,3538,3542,3557,3585,3592,3625,3627,3635,3637,3656,3683,3685,3701,3713,3720,3736,3742,3760,3762,3779,3788,3789,3794,3820,3845,3847,3900,3922,3933,3934,3977,3979,4014,4060,4071,4080,4092" \
 #     --sae_ckpt /home/ubuntu/model-east3/outputs/MoCo_seed87/SAE/stage5_out_d4096_gated_sp3200.0_aux0.03125_tied_ep008.pt \
 #     --save_dir /home/ubuntu/model-east3/outputs/MoCo_seed87/SAE \
 #     --shard_root /home/ubuntu/model-east3/wds_shards_tar \
@@ -158,6 +171,7 @@ from suppression_test.step08_channel_attribution import (
 # Reuse from step08b
 from suppression_test.step08b_local_shape_attribution import (
     patch_shuffle_channels,
+    patch_rotate_channels,
 )
 
 logger = get_logger("texture_attribution")
@@ -593,6 +607,18 @@ def main():
         lambda x: patch_shuffle_channels(x, [2], ps),
         desc="B_patch", n_repeats=n_rep)
 
+    # ── 5b. Per-channel patch ROTATION (reference frame decomposition) ──
+    logger.info("\n  ── Per-channel patch rotation (density preserved, shape destroyed) ──")
+    R_rotated = collect_spatial_averaged(
+        lambda x: patch_rotate_channels(x, [0], ps),
+        desc="R_rotated", n_repeats=n_rep)
+    G_rotated = collect_spatial_averaged(
+        lambda x: patch_rotate_channels(x, [1], ps),
+        desc="G_rotated", n_repeats=n_rep)
+    B_rotated = collect_spatial_averaged(
+        lambda x: patch_rotate_channels(x, [2], ps),
+        desc="B_rotated", n_repeats=n_rep)
+
     # ── 6. Per-channel blur then patch shuffle (NEW — texture removal) ──
     # Blur FIRST so patch boundary artifacts are identical to shuffle-only.
     logger.info("\n  ── Per-channel blur→shuffle (texture removal) ──")
@@ -636,23 +662,36 @@ def main():
         tk_R_patch  = topk_mean(R_patch[metric])
         tk_G_patch  = topk_mean(G_patch[metric])
         tk_B_patch  = topk_mean(B_patch[metric])
+        tk_R_rot    = topk_mean(R_rotated[metric])
+        tk_G_rot    = topk_mean(G_rotated[metric])
+        tk_B_rot    = topk_mean(B_rotated[metric])
         tk_R_pb     = topk_mean(R_patch_blur[metric])
         tk_G_pb     = topk_mean(G_patch_blur[metric])
         tk_B_pb     = topk_mean(B_patch_blur[metric])
         tk_baseline = topk_mean(baseline[metric])
 
-        # ── 9 components (each is (d_sae,) array) ──
+        # ── Components ──
         # Interactions (from step08 methodology)
         GB_inter = tk_R_only - tk_ab    # GB preserved when only R shifted
         RB_inter = tk_G_only - tk_ab    # RB preserved when only G shifted
         RG_inter = tk_B_only - tk_ab    # RG preserved when only B shifted
 
-        # Local shape (from step08b methodology)
-        R_local = tk_R_swap - tk_R_patch
-        G_local = tk_G_swap - tk_G_patch
-        B_local = tk_B_swap - tk_B_patch
+        # Hybrid (old "local") = swap - patch (confounded: local + reference)
+        R_hybrid = tk_R_swap - tk_R_patch
+        G_hybrid = tk_G_swap - tk_G_patch
+        B_hybrid = tk_B_swap - tk_B_patch
 
-        # Texture (NEW)
+        # Local shape (pure) = swap - rotated
+        R_local = tk_R_swap - tk_R_rot
+        G_local = tk_G_swap - tk_G_rot
+        B_local = tk_B_swap - tk_B_rot
+
+        # Reference frame = rotated - patch
+        R_ref = tk_R_rot - tk_R_patch
+        G_ref = tk_G_rot - tk_G_patch
+        B_ref = tk_B_rot - tk_B_patch
+
+        # Texture
         R_tex = tk_R_patch - tk_R_pb
         G_tex = tk_G_patch - tk_G_pb
         B_tex = tk_B_patch - tk_B_pb
@@ -662,48 +701,48 @@ def main():
         logger.info(f"  {metric_label}(baseline) mean: {tk_baseline[alive_mask].mean():.6f}")
         logger.info(f"  {metric_label}(all_broken) mean: {tk_ab[alive_mask].mean():.6f}")
 
-        logger.info(f"\n  ── Pairwise Channel Interactions ──")
-        for pair, contrib in [("RG", RG_inter), ("RB", RB_inter), ("GB", GB_inter)]:
-            vals = contrib[alive_mask]
+        def _log_comp(name, vals_arr):
+            vals = vals_arr[alive_mask]
             n_neg = int((vals < 0).sum())
             logger.info(
-                f"  {pair}: mean={vals.mean():.6f}, "
-                f"median={np.median(vals):.6f}, std={vals.std():.6f}, "
-                f"negative={n_neg}/{len(vals)} ({n_neg/len(vals)*100:.1f}%)")
+                f"  {name:12s}: mean={vals.mean():+.6f}, "
+                f"std={vals.std():.6f}, "
+                f"neg={n_neg}/{len(vals)} ({n_neg/len(vals)*100:.1f}%)")
 
-        logger.info(f"\n  ── Per-Channel Local Shape ──")
-        for ch, local, swap, patch in [
-            ("R", R_local, tk_R_swap, tk_R_patch),
-            ("G", G_local, tk_G_swap, tk_G_patch),
-            ("B", B_local, tk_B_swap, tk_B_patch),
-        ]:
-            vals = local[alive_mask]
-            n_neg = int((vals < 0).sum())
-            logger.info(
-                f"  {ch}_local: mean={vals.mean():.6f}, "
-                f"median={np.median(vals):.6f}, std={vals.std():.6f}, "
-                f"negative={n_neg}/{len(vals)} ({n_neg/len(vals)*100:.1f}%)")
-            logger.info(
-                f"    {ch}_swap={swap[alive_mask].mean():.6f}, "
-                f"{ch}_patch={patch[alive_mask].mean():.6f}")
+        logger.info(f"\n  ── Pairwise Channel Interactions ──")
+        _log_comp("RG_inter", RG_inter)
+        _log_comp("RB_inter", RB_inter)
+        _log_comp("GB_inter", GB_inter)
+
+        logger.info(f"\n  ── Per-Channel Hybrid (local + ref, confounded) ──")
+        _log_comp("R_hybrid", R_hybrid)
+        _log_comp("G_hybrid", G_hybrid)
+        _log_comp("B_hybrid", B_hybrid)
+
+        logger.info(f"\n  ── Per-Channel Local Shape (pure: swap - rotated) ──")
+        _log_comp("R_local", R_local)
+        _log_comp("G_local", G_local)
+        _log_comp("B_local", B_local)
+
+        logger.info(f"\n  ── Per-Channel Reference Frame (rotated - patch) ──")
+        _log_comp("R_ref", R_ref)
+        _log_comp("G_ref", G_ref)
+        _log_comp("B_ref", B_ref)
+
+        # Verify hybrid = local + ref
+        logger.info(f"\n  ── Hybrid = Local + Ref verification ──")
+        for ch in ["R", "G", "B"]:
+            h = eval(f"{ch}_hybrid")[alive_mask].mean()
+            l = eval(f"{ch}_local")[alive_mask].mean()
+            r = eval(f"{ch}_ref")[alive_mask].mean()
+            logger.info(f"  {ch}: hybrid={h:.6f}, local+ref={l+r:.6f}, diff={h-(l+r):.2e}")
 
         logger.info(f"\n  ── Per-Channel Texture ──")
-        for ch, tex, patch, pb in [
-            ("R", R_tex, tk_R_patch, tk_R_pb),
-            ("G", G_tex, tk_G_patch, tk_G_pb),
-            ("B", B_tex, tk_B_patch, tk_B_pb),
-        ]:
-            vals = tex[alive_mask]
-            n_neg = int((vals < 0).sum())
-            logger.info(
-                f"  {ch}_tex: mean={vals.mean():.6f}, "
-                f"median={np.median(vals):.6f}, std={vals.std():.6f}, "
-                f"negative={n_neg}/{len(vals)} ({n_neg/len(vals)*100:.1f}%)")
-            logger.info(
-                f"    {ch}_patch={patch[alive_mask].mean():.6f}, "
-                f"{ch}_patch_blur={pb[alive_mask].mean():.6f}")
+        _log_comp("R_tex", R_tex)
+        _log_comp("G_tex", G_tex)
+        _log_comp("B_tex", B_tex)
 
-        # ── Fractional contributions ──
+        # ── Fractional contributions (12 components) ──
         logger.info(f"\n  ── Fractional Contributions (clipped to ≥0) ──")
         components = {
             "RG_inter": np.maximum(RG_inter, 0),
@@ -712,6 +751,9 @@ def main():
             "R_local":  np.maximum(R_local, 0),
             "G_local":  np.maximum(G_local, 0),
             "B_local":  np.maximum(B_local, 0),
+            "R_ref":    np.maximum(R_ref, 0),
+            "G_ref":    np.maximum(G_ref, 0),
+            "B_ref":    np.maximum(B_ref, 0),
             "R_tex":    np.maximum(R_tex, 0),
             "G_tex":    np.maximum(G_tex, 0),
             "B_tex":    np.maximum(B_tex, 0),
@@ -722,26 +764,29 @@ def main():
             v = frac[alive_mask]
             logger.info(f"  {name:12s}: mean={v.mean():.4f}, std={v.std():.4f}")
 
-        # Category-level fractions
+        # Category-level fractions (4 categories)
         inter_total = components["RG_inter"] + components["RB_inter"] + components["GB_inter"]
         local_total = components["R_local"] + components["G_local"] + components["B_local"]
+        ref_total   = components["R_ref"] + components["G_ref"] + components["B_ref"]
         tex_total   = components["R_tex"] + components["G_tex"] + components["B_tex"]
 
         for cat_name, cat_vals in [
             ("Interactions", inter_total),
             ("Local Shape",  local_total),
+            ("Reference",    ref_total),
             ("Texture",      tex_total),
         ]:
             frac = cat_vals / total_comp
             v = frac[alive_mask]
             logger.info(f"  {'['+cat_name+']':14s}: mean={v.mean():.4f}, std={v.std():.4f}")
 
-        # ── 9-Component Additivity Check ──
+        # ── 9-Component Additivity Check (hybrid = local + ref) ──
         logger.info(f"\n  ── 9-Component Additivity Check ──")
-        logger.info(f"  baseline + Σ(9 components) ≈ orig\n")
+        logger.info(f"  baseline + Σ(3 inter + 3 hybrid + 3 tex) ≈ orig")
+        logger.info(f"  (hybrid = local + ref, so 9 = 3 inter + 3 local + 3 ref + 3 tex is 12)\n")
 
         sum_9 = (RG_inter + RB_inter + GB_inter +
-                 R_local + G_local + B_local +
+                 R_hybrid + G_hybrid + B_hybrid +
                  R_tex + G_tex + B_tex)
         reconstructed = tk_baseline + sum_9
 
@@ -758,7 +803,7 @@ def main():
                 continue
             idx = topk_indices[n_i]
             o = orig[metric][idx, n_i]
-            # Reconstruct per-image
+            # Reconstruct per-image (using hybrid = swap - patch)
             bl = baseline[metric][idx, n_i]
             rg_i = B_only[metric][idx, n_i] - all_broken[metric][idx, n_i]
             rb_i = G_only[metric][idx, n_i] - all_broken[metric][idx, n_i]
@@ -787,35 +832,39 @@ def main():
         logger.info(f"    [0.8-1.2]: {in_band}/{len(valid_lin)} "
                     f"({in_band/len(valid_lin)*100:.1f}%)")
 
-        # ── Partial checks (consistency with step08 / step08b) ──
+        # ── Partial checks ──
         logger.info(f"\n  ── Partial Additivity (consistency checks) ──")
-
-        # step08-style: interactions only
         inter_sum = (RG_inter + RB_inter + GB_inter)[alive_mask].sum()
         total_spatial = (tk_orig - tk_ab)[alive_mask].sum()
         logger.info(f"  Interactions: sum={inter_sum:.4f} / "
                     f"total_spatial={total_spatial:.4f} = "
                     f"{inter_sum / (total_spatial + 1e-12):.4f}")
 
-        # step08b-style: local shape + cross-channel baseline
-        for ch_name, swap_val, patch_val, pb_val in [
-            ("R", tk_R_swap, tk_R_patch, tk_R_pb),
-            ("G", tk_G_swap, tk_G_patch, tk_G_pb),
-            ("B", tk_B_swap, tk_B_patch, tk_B_pb),
+        for ch_name, swap_val, rot_val, patch_val, pb_val in [
+            ("R", tk_R_swap, tk_R_rot, tk_R_patch, tk_R_pb),
+            ("G", tk_G_swap, tk_G_rot, tk_G_patch, tk_G_pb),
+            ("B", tk_B_swap, tk_B_rot, tk_B_patch, tk_B_pb),
         ]:
-            local_v = (swap_val - patch_val)[alive_mask].mean()
+            hybrid_v = (swap_val - patch_val)[alive_mask].mean()
+            local_v = (swap_val - rot_val)[alive_mask].mean()
+            ref_v = (rot_val - patch_val)[alive_mask].mean()
             tex_v = (patch_val - pb_val)[alive_mask].mean()
-            logger.info(f"    {ch_name}: local={local_v:.6f}, tex={tex_v:.6f}, "
-                        f"ratio local/tex={local_v / (tex_v + 1e-12):.2f}")
+            logger.info(f"    {ch_name}: hybrid={hybrid_v:.6f} (local={local_v:.6f} + ref={ref_v:.6f}), tex={tex_v:.6f}")
 
         # ── Collect per-metric data for saving ──
         m = metric  # "l2sq" or "gap"
         save_data[f"{m}_RG_inter"]    = RG_inter
         save_data[f"{m}_RB_inter"]    = RB_inter
         save_data[f"{m}_GB_inter"]    = GB_inter
+        save_data[f"{m}_R_hybrid"]    = R_hybrid
+        save_data[f"{m}_G_hybrid"]    = G_hybrid
+        save_data[f"{m}_B_hybrid"]    = B_hybrid
         save_data[f"{m}_R_local"]     = R_local
         save_data[f"{m}_G_local"]     = G_local
         save_data[f"{m}_B_local"]     = B_local
+        save_data[f"{m}_R_ref"]       = R_ref
+        save_data[f"{m}_G_ref"]       = G_ref
+        save_data[f"{m}_B_ref"]       = B_ref
         save_data[f"{m}_R_tex"]       = R_tex
         save_data[f"{m}_G_tex"]       = G_tex
         save_data[f"{m}_B_tex"]       = B_tex
@@ -832,6 +881,9 @@ def main():
         save_data[f"{m}_tk_R_patch"]  = tk_R_patch
         save_data[f"{m}_tk_G_patch"]  = tk_G_patch
         save_data[f"{m}_tk_B_patch"]  = tk_B_patch
+        save_data[f"{m}_tk_R_rot"]    = tk_R_rot
+        save_data[f"{m}_tk_G_rot"]    = tk_G_rot
+        save_data[f"{m}_tk_B_rot"]    = tk_B_rot
         save_data[f"{m}_tk_R_pb"]     = tk_R_pb
         save_data[f"{m}_tk_G_pb"]     = tk_G_pb
         save_data[f"{m}_tk_B_pb"]     = tk_B_pb
