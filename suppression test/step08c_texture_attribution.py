@@ -24,12 +24,33 @@
 #     → single-channel shifts: 2 directions (lr, ud) averaged
 #
 # ── Per-Channel Local Shape ──
-#
-#   R_local = avg(R_lr, R_ud) - R_patch_shuffle  # 왼쪽은 RG RB의 공간적 정보만 파괴된다. 오른쪽은 RG RB의 공간적 정보와 R의 local shape이 파괴된다. 이거 두개 빼면, R local shape이 GAP에 기여하는 값 알 수 있다.
-#   G_local = avg(G_lr, G_ud) - G_patch_shuffle
-#   B_local = avg(B_lr, B_ud) - B_patch_shuffle
+#   양쪽 모두 동일한 lr/ud swap을 적용하여 reference frame 파괴를 대칭적으로 만든다.
+#   R_local = avg(R_lr, R_ud) - avg(R_lr_then_rotate, R_ud_then_rotate)
+#     → 좌변: swap만 (RG RB interaction 파괴, R local shape 보존)
+#     → 우변: swap + rotation (RG RB interaction 파괴 + R local shape 추가 파괴)
+#     → 차이 = R local shape의 GAP 기여도
+#   G_local = avg(G_lr, G_ud) - avg(G_lr_rot, G_ud_rot)
+#   B_local = avg(B_lr, B_ud) - avg(B_lr_rot, B_ud_rot)
 #     → swap term: 2 directions (lr, ud) averaged  (same arrays as interaction)
-#     → patch shuffle: direction-irrelevant (random permutation, n_rep averaged)
+#     → rotation: patch_rotate는 reference frame을 보존하면서 local shape만 파괴
+#
+# ---Per_Channel reference frame + size
+# 
+#    R_refrence frame = avg(lr ud then R_patch_rotate) - avg(R_patch_shuffle) # 둘 다 local shape 파괴하는데, 전자는 size와 refrence frame이 유지되고 후자는 유지 안된다.
+#    G_refrence frame = avg(lr ud then G_patch_rotate) - avg(G_patch_shuffle)
+#    B_refrence frame = avg(lr ud then B_patch_rotate) - avg(B_patch_shuffle)
+# 
+#  ## patch shuffle과 patch rotation의 경우 파괴하는 local shape 정도가 다를 것이다. 따라서 이를 보정할 필요가 있을테지만 이것까지 생각해서 하는건 너무 과하다. 
+#
+#
+# ---Per_Channel hybrid
+#
+#   R_hybrid = avg(R_lr, R_ud) - R_patch_shuffle  # 왼쪽은 RG RB의 공간적 정보만 파괴된다. 오른쪽은 RG RB의 공간적 정보와 R의 local shape, referance frame(+size)가 파괴된다. 이거 두개 빼면, R local shape과 refrence frame이 GAP에 기여하는 값 알 수 있다.
+#   G_hybrid = avg(G_lr, G_ud) - G_patch_shuffle  
+#   B_hybrid = avg(B_lr, B_ud) - B_patch_shuffle
+# 
+#  당연하게 항등식으로 hybrid = ref + local.
+#
 #
 # ── Per-Channel Texture ──
 #
@@ -48,6 +69,14 @@
 # ── Additivity ──
 #
 #   baseline + Σ(9 components) ≈ orig
+#
+#
+#  -- patch_size를 바꾸면 local shape 구할때 , patch shuffle patch rotation 다 바뀌고, blur -> shffule로 texture 구하는것도 바뀜. (texture구할때 patch shuffle -> blur patch shuffle.) baseline 구할때도 바뀜.
+#
+# -- n_shuffle_repeats는 patch shuffle 랜덤이니까 여러번해서 평균 내도록.
+# 적용되는 조건들: patch_shuffle, swap→rotate, blur→shuffle, baseline (전부 랜덤 요소가 있는 것들). lr/ud swap은 deterministic이라 repeat 안 합니다.
+#
+#  lr_ud는 항상 짝으로 평균낸다.  R_only = R_swap = avg(R_lr, R_ud)
 #
 # Usage:
 #   python -m suppression_test.step08c_texture_attribution \
@@ -607,17 +636,32 @@ def main():
         lambda x: patch_shuffle_channels(x, [2], ps),
         desc="B_patch", n_repeats=n_rep)
 
-    # ── 5b. Per-channel patch ROTATION (reference frame decomposition) ──
-    logger.info("\n  ── Per-channel patch rotation (density preserved, shape destroyed) ──")
-    R_rotated = collect_spatial_averaged(
-        lambda x: patch_rotate_channels(x, [0], ps),
-        desc="R_rotated", n_repeats=n_rep)
-    G_rotated = collect_spatial_averaged(
-        lambda x: patch_rotate_channels(x, [1], ps),
-        desc="G_rotated", n_repeats=n_rep)
-    B_rotated = collect_spatial_averaged(
-        lambda x: patch_rotate_channels(x, [2], ps),
-        desc="B_rotated", n_repeats=n_rep)
+    # ── 5b. Per-channel swap+rotate (matched reference frame) ──
+    # Both sides of subtraction now apply the same lr/ud swap.
+    # Right side additionally applies rotation → isolates local shape.
+    logger.info("\n  ── Per-channel swap→rotate (matched reference frame) ──")
+    R_lr_rot = collect_spatial_averaged(
+        lambda x: patch_rotate_channels(lr_swap_channels(x, [0]), [0], ps),
+        desc="R_lr_rot", n_repeats=n_rep)
+    R_ud_rot = collect_spatial_averaged(
+        lambda x: patch_rotate_channels(ud_swap_channels(x, [0]), [0], ps),
+        desc="R_ud_rot", n_repeats=n_rep)
+    G_lr_rot = collect_spatial_averaged(
+        lambda x: patch_rotate_channels(lr_swap_channels(x, [1]), [1], ps),
+        desc="G_lr_rot", n_repeats=n_rep)
+    G_ud_rot = collect_spatial_averaged(
+        lambda x: patch_rotate_channels(ud_swap_channels(x, [1]), [1], ps),
+        desc="G_ud_rot", n_repeats=n_rep)
+    B_lr_rot = collect_spatial_averaged(
+        lambda x: patch_rotate_channels(lr_swap_channels(x, [2]), [2], ps),
+        desc="B_lr_rot", n_repeats=n_rep)
+    B_ud_rot = collect_spatial_averaged(
+        lambda x: patch_rotate_channels(ud_swap_channels(x, [2]), [2], ps),
+        desc="B_ud_rot", n_repeats=n_rep)
+    # Average lr and ud for matched swap+rotate
+    R_swap_rot = {k: (R_lr_rot[k] + R_ud_rot[k]) / 2 for k in ["l2sq", "gap"]}
+    G_swap_rot = {k: (G_lr_rot[k] + G_ud_rot[k]) / 2 for k in ["l2sq", "gap"]}
+    B_swap_rot = {k: (B_lr_rot[k] + B_ud_rot[k]) / 2 for k in ["l2sq", "gap"]}
 
     # ── 6. Per-channel blur then patch shuffle (NEW — texture removal) ──
     # Blur FIRST so patch boundary artifacts are identical to shuffle-only.
@@ -662,9 +706,9 @@ def main():
         tk_R_patch  = topk_mean(R_patch[metric])
         tk_G_patch  = topk_mean(G_patch[metric])
         tk_B_patch  = topk_mean(B_patch[metric])
-        tk_R_rot    = topk_mean(R_rotated[metric])
-        tk_G_rot    = topk_mean(G_rotated[metric])
-        tk_B_rot    = topk_mean(B_rotated[metric])
+        tk_R_swrot  = topk_mean(R_swap_rot[metric])
+        tk_G_swrot  = topk_mean(G_swap_rot[metric])
+        tk_B_swrot  = topk_mean(B_swap_rot[metric])
         tk_R_pb     = topk_mean(R_patch_blur[metric])
         tk_G_pb     = topk_mean(G_patch_blur[metric])
         tk_B_pb     = topk_mean(B_patch_blur[metric])
@@ -681,20 +725,56 @@ def main():
         G_hybrid = tk_G_swap - tk_G_patch
         B_hybrid = tk_B_swap - tk_B_patch
 
-        # Local shape (pure) = swap - rotated
-        R_local = tk_R_swap - tk_R_rot
-        G_local = tk_G_swap - tk_G_rot
-        B_local = tk_B_swap - tk_B_rot
+        # Local shape (pure) = swap - swap_then_rotate (matched reference frame)
+        R_local = tk_R_swap - tk_R_swrot
+        G_local = tk_G_swap - tk_G_swrot
+        B_local = tk_B_swap - tk_B_swrot
 
-        # Reference frame = rotated - patch
-        R_ref = tk_R_rot - tk_R_patch
-        G_ref = tk_G_rot - tk_G_patch
-        B_ref = tk_B_rot - tk_B_patch
+        # Reference frame = swap_then_rotate - patch
+        R_ref = tk_R_swrot - tk_R_patch
+        G_ref = tk_G_swrot - tk_G_patch
+        B_ref = tk_B_swrot - tk_B_patch
 
         # Texture
         R_tex = tk_R_patch - tk_R_pb
         G_tex = tk_G_patch - tk_G_pb
         B_tex = tk_B_patch - tk_B_pb
+
+        # ── Collect per-metric data for saving (BEFORE reporting) ──
+        m = metric  # "l2sq" or "gap"
+        save_data[f"{m}_RG_inter"]    = RG_inter
+        save_data[f"{m}_RB_inter"]    = RB_inter
+        save_data[f"{m}_GB_inter"]    = GB_inter
+        save_data[f"{m}_R_hybrid"]    = R_hybrid
+        save_data[f"{m}_G_hybrid"]    = G_hybrid
+        save_data[f"{m}_B_hybrid"]    = B_hybrid
+        save_data[f"{m}_R_local"]     = R_local
+        save_data[f"{m}_G_local"]     = G_local
+        save_data[f"{m}_B_local"]     = B_local
+        save_data[f"{m}_R_ref"]       = R_ref
+        save_data[f"{m}_G_ref"]       = G_ref
+        save_data[f"{m}_B_ref"]       = B_ref
+        save_data[f"{m}_R_tex"]       = R_tex
+        save_data[f"{m}_G_tex"]       = G_tex
+        save_data[f"{m}_B_tex"]       = B_tex
+        save_data[f"{m}_tk_orig"]     = tk_orig
+        save_data[f"{m}_tk_baseline"] = tk_baseline
+        save_data[f"{m}_tk_all_broken"] = tk_ab
+        save_data[f"{m}_tk_R_only"]   = tk_R_only
+        save_data[f"{m}_tk_G_only"]   = tk_G_only
+        save_data[f"{m}_tk_B_only"]   = tk_B_only
+        save_data[f"{m}_tk_R_swap"]   = tk_R_swap
+        save_data[f"{m}_tk_G_swap"]   = tk_G_swap
+        save_data[f"{m}_tk_B_swap"]   = tk_B_swap
+        save_data[f"{m}_tk_R_patch"]  = tk_R_patch
+        save_data[f"{m}_tk_G_patch"]  = tk_G_patch
+        save_data[f"{m}_tk_B_patch"]  = tk_B_patch
+        save_data[f"{m}_tk_R_rot"]    = tk_R_swrot
+        save_data[f"{m}_tk_G_rot"]    = tk_G_swrot
+        save_data[f"{m}_tk_B_rot"]    = tk_B_swrot
+        save_data[f"{m}_tk_R_pb"]     = tk_R_pb
+        save_data[f"{m}_tk_G_pb"]     = tk_G_pb
+        save_data[f"{m}_tk_B_pb"]     = tk_B_pb
 
         # ── Report ──
         logger.info(f"\n  {metric_label}(orig) mean: {tk_orig[alive_mask].mean():.6f}")
@@ -841,9 +921,9 @@ def main():
                     f"{inter_sum / (total_spatial + 1e-12):.4f}")
 
         for ch_name, swap_val, rot_val, patch_val, pb_val in [
-            ("R", tk_R_swap, tk_R_rot, tk_R_patch, tk_R_pb),
-            ("G", tk_G_swap, tk_G_rot, tk_G_patch, tk_G_pb),
-            ("B", tk_B_swap, tk_B_rot, tk_B_patch, tk_B_pb),
+            ("R", tk_R_swap, tk_R_swrot, tk_R_patch, tk_R_pb),
+            ("G", tk_G_swap, tk_G_swrot, tk_G_patch, tk_G_pb),
+            ("B", tk_B_swap, tk_B_swrot, tk_B_patch, tk_B_pb),
         ]:
             hybrid_v = (swap_val - patch_val)[alive_mask].mean()
             local_v = (swap_val - rot_val)[alive_mask].mean()
@@ -851,44 +931,10 @@ def main():
             tex_v = (patch_val - pb_val)[alive_mask].mean()
             logger.info(f"    {ch_name}: hybrid={hybrid_v:.6f} (local={local_v:.6f} + ref={ref_v:.6f}), tex={tex_v:.6f}")
 
-        # ── Collect per-metric data for saving ──
-        m = metric  # "l2sq" or "gap"
-        save_data[f"{m}_RG_inter"]    = RG_inter
-        save_data[f"{m}_RB_inter"]    = RB_inter
-        save_data[f"{m}_GB_inter"]    = GB_inter
-        save_data[f"{m}_R_hybrid"]    = R_hybrid
-        save_data[f"{m}_G_hybrid"]    = G_hybrid
-        save_data[f"{m}_B_hybrid"]    = B_hybrid
-        save_data[f"{m}_R_local"]     = R_local
-        save_data[f"{m}_G_local"]     = G_local
-        save_data[f"{m}_B_local"]     = B_local
-        save_data[f"{m}_R_ref"]       = R_ref
-        save_data[f"{m}_G_ref"]       = G_ref
-        save_data[f"{m}_B_ref"]       = B_ref
-        save_data[f"{m}_R_tex"]       = R_tex
-        save_data[f"{m}_G_tex"]       = G_tex
-        save_data[f"{m}_B_tex"]       = B_tex
-        save_data[f"{m}_linearity"]   = linearity
-        save_data[f"{m}_tk_orig"]     = tk_orig
-        save_data[f"{m}_tk_baseline"] = tk_baseline
-        save_data[f"{m}_tk_all_broken"] = tk_ab
-        save_data[f"{m}_tk_R_only"]   = tk_R_only
-        save_data[f"{m}_tk_G_only"]   = tk_G_only
-        save_data[f"{m}_tk_B_only"]   = tk_B_only
-        save_data[f"{m}_tk_R_swap"]   = tk_R_swap
-        save_data[f"{m}_tk_G_swap"]   = tk_G_swap
-        save_data[f"{m}_tk_B_swap"]   = tk_B_swap
-        save_data[f"{m}_tk_R_patch"]  = tk_R_patch
-        save_data[f"{m}_tk_G_patch"]  = tk_G_patch
-        save_data[f"{m}_tk_B_patch"]  = tk_B_patch
-        save_data[f"{m}_tk_R_rot"]    = tk_R_rot
-        save_data[f"{m}_tk_G_rot"]    = tk_G_rot
-        save_data[f"{m}_tk_B_rot"]    = tk_B_rot
-        save_data[f"{m}_tk_R_pb"]     = tk_R_pb
-        save_data[f"{m}_tk_G_pb"]     = tk_G_pb
-        save_data[f"{m}_tk_B_pb"]     = tk_B_pb
+        # linearity is computed later; add to save_data after loop
+        save_data[f"{metric}_linearity"] = linearity
 
-    # ── Save ──
+    # ── Save (early, before any optional post-processing that might crash) ──
     npz_path = os.path.join(out_dir, f"texture_attribution_ps{ps}_blur{bs:.1f}.npz")
     np.savez_compressed(
         npz_path,

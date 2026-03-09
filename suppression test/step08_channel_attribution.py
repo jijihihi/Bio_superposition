@@ -140,7 +140,8 @@ def get_sae_activation_maps(
     encoder: Encoder, sae: GatedSAE,
     x: torch.Tensor, which_layer: str,
 ) -> torch.Tensor:
-    """Returns act_maps: (B, d_sae, H, W) — full spatial, token-norm restored."""
+    """Returns act_maps: (B, d_sae, H, W) — full spatial, token-norm restored.
+    Uses per-image centering (matches step14_visualize_concept_activations)."""
     fmap = encoder.forward_feature_maps(x, which=which_layer)
     B, C, H, W = fmap.shape
 
@@ -148,27 +149,31 @@ def get_sae_activation_maps(
     gap_norm = gap.norm(dim=1, keepdim=True).view(B, 1, 1, 1).clamp_min(1e-12)
     fmap_normed = fmap / gap_norm
 
-    tokens = fmap_normed.permute(0, 2, 3, 1).contiguous()
-    flat_tokens = tokens.view(-1, C)
-    flat_tokens = flat_tokens - flat_tokens.mean(dim=0, keepdim=True)
-
-    # Save per-token L2 norms before normalization
-    token_l2_norms = flat_tokens.norm(dim=1, keepdim=True).clamp_min(1e-12)
-    flat_tokens = F.normalize(flat_tokens, dim=1, eps=1e-12)
+    fmap_normed = fmap_normed.permute(0, 2, 3, 1).contiguous()  # (B, H, W, C)
 
     chunk_size = 8192
-    acts_list = []
-    for start in range(0, flat_tokens.size(0), chunk_size):
-        end = min(start + chunk_size, flat_tokens.size(0))
-        _, chunk_acts, _, _, _ = sae(flat_tokens[start:end])
-        acts_list.append(chunk_acts.float())
-    acts = torch.cat(acts_list, dim=0)              # (B*H*W, d_sae)
+    all_acts = []
+    for b_idx in range(B):
+        img_tokens = fmap_normed[b_idx].view(H * W, C)  # (H*W, C)
+        # Per-image centering (NOT batch centering)
+        img_tokens = img_tokens - img_tokens.mean(dim=0, keepdim=True)
+        # Save per-token L2 norms before normalization
+        token_l2 = img_tokens.norm(dim=1, keepdim=True).clamp_min(1e-12)
+        img_tokens = F.normalize(img_tokens, dim=1, eps=1e-12)
+        # SAE forward (chunked for memory safety)
+        acts_list = []
+        for start in range(0, img_tokens.size(0), chunk_size):
+            end = min(start + chunk_size, img_tokens.size(0))
+            _, chunk_acts, _, _, _ = sae(img_tokens[start:end])
+            acts_list.append(chunk_acts.float())
+        acts = torch.cat(acts_list, dim=0)  # (H*W, d_sae)
+        # Restore per-token L2 norms
+        acts = acts * token_l2
+        all_acts.append(acts)
 
-    # Restore per-token L2 norms
-    acts = acts * token_l2_norms
-
-    d_sae = acts.shape[1]
-    return acts.view(B, H, W, d_sae).permute(0, 3, 1, 2)  # (B, d_sae, H, W)
+    all_acts = torch.stack(all_acts, dim=0)  # (B, H*W, d_sae)
+    d_sae = all_acts.shape[2]
+    return all_acts.view(B, H, W, d_sae).permute(0, 3, 1, 2)  # (B, d_sae, H, W)
 
 
 
