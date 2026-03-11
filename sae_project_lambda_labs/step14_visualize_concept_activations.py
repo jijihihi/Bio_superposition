@@ -20,6 +20,7 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from tqdm.auto import tqdm
 from PIL import Image
+import shutil, tempfile
 
 try:
     import tifffile
@@ -1053,6 +1054,8 @@ def get_visualization_args():
                         help="Number of top images per concept")
     parser.add_argument("--cmap", type=str, default="jet",
                         help="Colormap name (jet, hot, viridis, etc.)")
+    parser.add_argument("--mut_only", action="store_true",
+                        help="Only visualize mutation-high concepts (skip Control-only, remap Control_X→X)")
     parser.add_argument("--overlay_alpha", type=float, default=0.5,
                         help="Overlay blend alpha (0-1)")
     
@@ -1336,7 +1339,6 @@ def main():
     logger.info(f"  Cached {len(act_cache)} activation maps")
 
     # ===== Phase 4: Visualize (local first, then copy to Drive) =====
-    import shutil, tempfile
 
     # If output_dir is on Google Drive, save locally first to avoid FUSE file loss
     final_output_dir = args.output_dir
@@ -1349,6 +1351,25 @@ def main():
         logger.info(f"  Saving to local disk first: {local_output_dir}")
     else:
         local_output_dir = final_output_dir
+
+    # ── mut_only: filter out Control-only, remap Control_X → X ──
+    if args.mut_only and concept_class_labels:
+        _MUTS = {"SNCA", "GBA", "LRRK2"}
+        filtered_ids = []
+        for cid in concept_ids:
+            raw = concept_class_labels.get(cid, "")
+            parts = set(raw.split("_"))
+            muts = parts & _MUTS
+            if len(muts) == 0:
+                continue  # pure Control → skip
+            # Remap: keep only mutation parts
+            new_label = "_".join(sorted(muts))
+            concept_class_labels[cid] = new_label
+            filtered_ids.append(cid)
+        n_dropped = len(concept_ids) - len(filtered_ids)
+        concept_ids = filtered_ids
+        logger.info(f"  --mut_only: {n_dropped} Control-only concepts dropped, "
+                    f"{len(concept_ids)} remaining")
 
     logger.info(f"\nPhase 4: Generating visualizations for {len(per_concept_data)} concepts...")
     for cid in tqdm(concept_ids, desc="Visualizing"):

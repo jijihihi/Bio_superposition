@@ -22,11 +22,16 @@ import argparse
 # ── Configuration ──
 # Adjust these paths to your Drive-mounted npz files
 NPZ_PATHS = {
+    "ps16_blur8.0": "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_sparsity3200_loss_L2norm곱해줌/texture_attribution/texture_attribution_ps16_blur8.0.npz",
     "ps8_blur4.0": "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_sparsity3200_loss_L2norm곱해줌/texture_attribution/texture_attribution_ps8_blur4.0.npz",
     "ps4_blur2.0": "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_sparsity3200_loss_L2norm곱해줌/texture_attribution/texture_attribution_ps4_blur2.0.npz",
+    
 }
 
 METRIC = "l2sq"  # default; overridden by --metric arg
+
+# Path to concept visualization directories (concept_XXXX_CLASSNAME)
+CONCEPT_DIR = "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_sparsity3200_loss_L2norm곱해줌/concept_by_gap_csv_d4096_sp3200_max"
 
 COMPONENT_NAMES_12 = [
     "RG_inter", "RB_inter", "GB_inter",
@@ -178,8 +183,8 @@ def print_summary(df, label=""):
     print(f"  N neurons: {len(lin)}")
     print(f"  mean={lin.mean():.4f}, median={lin.median():.4f}")
     print(f"  5th/95th: [{lin.quantile(0.05):.4f}, {lin.quantile(0.95):.4f}]")
-    in_band = ((lin > 0.5) & (lin < 1.5)).sum()
-    print(f"  [0.5-1.5]: {in_band}/{len(lin)} ({in_band/len(lin)*100:.1f}%)")
+    in_band = ((lin > 0.7) & (lin < 1.3)).sum()
+    print(f"  [0.7-1.3]: {in_band}/{len(lin)} ({in_band/len(lin)*100:.1f}%)")
 
 
 def plot_stacked_bar(df, label="", top_n=50, sort_by="orig"):
@@ -337,13 +342,296 @@ def export_per_neuron_csv(df, output_path, metric, label=""):
 
 
 # ==============================================================================
+# Mutation-Specific Decomposition Analysis
+# ==============================================================================
+
+def parse_concept_dirs(concept_dir):
+    """Parse concept_XXXX_CLASS directories → {neuron_id: class_label}.
+    Handles multi-class labels like 'concept_0037_GBA_SNCA' → 'GBA_SNCA'.
+    """
+    import re
+    neuron_to_class = {}
+    if not os.path.isdir(concept_dir):
+        print(f"⚠ Concept dir not found: {concept_dir}")
+        return neuron_to_class
+    for name in os.listdir(concept_dir):
+        m = re.match(r"concept_(\d+)_(.+)", name)
+        if m and os.path.isdir(os.path.join(concept_dir, name)):
+            nid = int(m.group(1))
+            cls = m.group(2)
+            neuron_to_class[nid] = cls
+    print(f"  Parsed {len(neuron_to_class)} concepts from {concept_dir}")
+    return neuron_to_class
+
+
+def analyze_by_mutation(df, neuron_to_class, metric="gap"):
+    """Per-mutation summary of 12-component fractions (signed + absolute)."""
+    comp_names = df.attrs.get("comp_names", COMPONENT_NAMES_9)
+    has_rot = df.attrs.get("has_rotation", False)
+    m = metric
+    frac_cols = [f"{m}_{c}_frac" for c in comp_names]
+
+    # Map neuron_id → mutation group(s)
+    # Rules:
+    #   - pure "Control" → excluded
+    #   - "Control_GBA" or "GBA_Control" → assign to "GBA"
+    #   - "Control_SNCA" → assign to "SNCA"
+    #   - "LRRK2_SNCA" → keep as "LRRK2_SNCA" (multi-mutation)
+    #   - single mutation "SNCA" → assign to "SNCA"
+    MUTATIONS = {"SNCA", "GBA", "LRRK2"}
+    df_nid = df.set_index("neuron_id")
+
+    # Build mutation → list of neuron_ids
+    from collections import defaultdict
+    group_nids = defaultdict(list)
+    for nid, raw_cls in neuron_to_class.items():
+        if nid not in df_nid.index:
+            continue
+        parts = set(raw_cls.split("_"))
+        muts = parts & MUTATIONS
+        if len(muts) == 0:
+            continue  # pure Control → skip
+        elif len(muts) == 1:
+            group_nids[muts.pop()].append(nid)
+        else:
+            # Multi-mutation: keep original sorted label
+            label = "_".join(sorted(muts))
+            group_nids[label].append(nid)
+
+    # Build DataFrames per group
+    mutation_groups = {}
+    for cls in sorted(group_nids.keys()):
+        nids = group_nids[cls]
+        sub = df_nid.loc[nids, frac_cols].copy()
+        sub = sub.dropna(subset=frac_cols)
+        if len(sub) == 0:
+            continue
+        mutation_groups[cls] = sub
+
+    if not mutation_groups:
+        print("  No matching neurons found for mutation analysis.")
+        return
+
+    # Clean column names for display (remove metric prefix)
+    clean_names = [c.replace(f"{m}_", "").replace("_frac", "") for c in frac_cols]
+
+    print(f"\n{'='*80}")
+    print(f"  Mutation-Specific Decomposition (metric={metric})")
+    print(f"{'='*80}")
+
+    # Compute dynamic column width based on longest class label
+    cls_labels = {}  # cls → "cls(n=XX)"
+    for cls, sub in mutation_groups.items():
+        cls_labels[cls] = f"{cls}(n={len(sub)})"
+    cw = max(max(len(v) for v in cls_labels.values()), 20) + 2  # column width
+
+    def _header():
+        h = f"  {'Component':16s}"
+        for cls in mutation_groups:
+            h += f" | {cls_labels[cls]:>{cw}s}"
+        return h
+
+    def _sep():
+        return f"  {'-'*16}" + " | " + " | ".join([f"{'─'*cw}"] * len(mutation_groups))
+
+    # ── Signed fractions ──
+    print(f"\n  ── Signed Fractions (mean / median) ──")
+    print(_header())
+    print(_sep())
+
+    for i, col in enumerate(frac_cols):
+        row = f"  {clean_names[i]:16s}"
+        for cls, sub in mutation_groups.items():
+            vals = sub[col].values
+            cell = f"{vals.mean():+.4f} / {np.median(vals):+.4f}"
+            row += f" | {cell:>{cw}s}"
+        print(row)
+
+    # Category-level signed
+    print(f"\n  {'--- Category ---':16s}")
+    cat_defs = [
+        ("Interaction", [f"{m}_RG_inter_frac", f"{m}_RB_inter_frac", f"{m}_GB_inter_frac"]),
+        ("Local Shape", [f"{m}_R_local_frac", f"{m}_G_local_frac", f"{m}_B_local_frac"]),
+    ]
+    if has_rot:
+        cat_defs.append(
+            ("Reference", [f"{m}_R_ref_frac", f"{m}_G_ref_frac", f"{m}_B_ref_frac"])
+        )
+    cat_defs.append(
+        ("Texture", [f"{m}_R_tex_frac", f"{m}_G_tex_frac", f"{m}_B_tex_frac"])
+    )
+    for cat_name, cat_cols_list in cat_defs:
+        row = f"  {cat_name:16s}"
+        for cls, sub in mutation_groups.items():
+            valid_cols = [c for c in cat_cols_list if c in sub.columns]
+            if valid_cols:
+                cat_sum = sub[valid_cols].sum(axis=1).values
+                cell = f"{cat_sum.mean():+.4f} / {np.median(cat_sum):+.4f}"
+                row += f" | {cell:>{cw}s}"
+            else:
+                row += f" | {'N/A':>{cw}s}"
+        print(row)
+
+    # ── Absolute fractions ──
+    print(f"\n  ── Absolute |Fractions| (mean / median) ──")
+    print(_header())
+    print(_sep())
+
+    for i, col in enumerate(frac_cols):
+        row = f"  {clean_names[i]:16s}"
+        for cls, sub in mutation_groups.items():
+            vals = np.abs(sub[col].values)
+            cell = f"{vals.mean():.4f} / {np.median(vals):.4f}"
+            row += f" | {cell:>{cw}s}"
+        print(row)
+
+    # Category-level absolute
+    print(f"\n  {'--- Category ---':16s}")
+    for cat_name, cat_cols_list in cat_defs:
+        row = f"  {cat_name:16s}"
+        for cls, sub in mutation_groups.items():
+            valid_cols = [c for c in cat_cols_list if c in sub.columns]
+            if valid_cols:
+                cat_abs = sub[valid_cols].abs().sum(axis=1).values
+                cell = f"{cat_abs.mean():.4f} / {np.median(cat_abs):.4f}"
+                row += f" | {cell:>{cw}s}"
+            else:
+                row += f" | {'N/A':>{cw}s}"
+        print(row)
+
+    # ── Signed proportions ──
+    print(f"\n  ── Signed Proportions (component mean / Σmeans) ──")
+    print(_header())
+    print(_sep())
+
+    signed_means = {}
+    for cls, sub in mutation_groups.items():
+        signed_means[cls] = np.array([sub[col].values.mean() for col in frac_cols])
+
+    for i, col in enumerate(frac_cols):
+        row = f"  {clean_names[i]:16s}"
+        for cls in mutation_groups:
+            denom = signed_means[cls].sum()
+            if abs(denom) < 1e-12:
+                row += f" | {'N/A':>{cw}s}"
+            else:
+                cell = f"{signed_means[cls][i] / denom:+.4f}"
+                row += f" | {cell:>{cw}s}"
+        print(row)
+
+    print(f"\n  {'--- Category ---':16s}")
+    for cat_name, cat_cols_list in cat_defs:
+        row = f"  {cat_name:16s}"
+        for cls in mutation_groups:
+            valid_idx = [j for j, c in enumerate(frac_cols) if c in cat_cols_list]
+            denom = signed_means[cls].sum()
+            if abs(denom) < 1e-12 or not valid_idx:
+                row += f" | {'N/A':>{cw}s}"
+            else:
+                cat_val = sum(signed_means[cls][j] for j in valid_idx)
+                cell = f"{cat_val / denom:+.4f}"
+                row += f" | {cell:>{cw}s}"
+        print(row)
+
+    # ── Absolute proportions ──
+    print(f"\n  ── Absolute Proportions (|mean| / Σ|means|, sums to 1.0) ──")
+    print(_header())
+    print(_sep())
+
+    abs_means = {}
+    for cls, sub in mutation_groups.items():
+        abs_means[cls] = np.array([np.abs(sub[col].values).mean() for col in frac_cols])
+
+    for i, col in enumerate(frac_cols):
+        row = f"  {clean_names[i]:16s}"
+        for cls in mutation_groups:
+            denom = abs_means[cls].sum()
+            if denom < 1e-12:
+                row += f" | {'N/A':>{cw}s}"
+            else:
+                cell = f"{abs_means[cls][i] / denom:.4f}"
+                row += f" | {cell:>{cw}s}"
+        print(row)
+
+    print(f"\n  {'--- Category ---':16s}")
+    for cat_name, cat_cols_list in cat_defs:
+        row = f"  {cat_name:16s}"
+        for cls in mutation_groups:
+            valid_idx = [j for j, c in enumerate(frac_cols) if c in cat_cols_list]
+            denom = abs_means[cls].sum()
+            if denom < 1e-12 or not valid_idx:
+                row += f" | {'N/A':>{cw}s}"
+            else:
+                cat_val = sum(abs_means[cls][j] for j in valid_idx)
+                cell = f"{cat_val / denom:.4f}"
+                row += f" | {cell:>{cw}s}"
+        print(row)
+
+
+# ==============================================================================
 # Main
 # ==============================================================================
 def get_args():
     p = argparse.ArgumentParser("Analyze texture attribution npz")
     p.add_argument("--metric", type=str, default="gap", choices=["gap", "l2sq"],
-                   help="Which metric to analyze (default: gap)")
+                   help="Primary metric for visualization (default: gap)")
+    p.add_argument("--npz", type=str, nargs="*", default=None,
+                   help="One or more npz file paths. If not given, uses NPZ_PATHS dict.")
+    p.add_argument("--concept_dir", type=str,
+                   default=CONCEPT_DIR,
+                   help="Path to concept directories (concept_XXXX_CLASS)")
+    p.add_argument("--linearity_min", type=float, default=0.0,
+                   help="Minimum linearity to include a neuron (default: 0.0 = no filter)")
+    p.add_argument("--linearity_max", type=float, default=999,
+                   help="Maximum linearity to include a neuron (default: 999 = no filter)")
+    p.add_argument("--min_spatial_frac", type=float, default=0.1,
+                   help="Minimum (orig-baseline)/orig to include a neuron. "
+                        "Filters out neurons with negligible spatial info (default: 0.05)")
     return p.parse_args()
+
+
+def _apply_linearity_filter(df, metric, lo, hi):
+    """Filter neurons by linearity range. Returns filtered copy."""
+    lin_col = f"{metric}_linearity"
+    if lin_col not in df.columns:
+        return df
+    before = len(df)
+    mask = (df[lin_col] >= lo) & (df[lin_col] <= hi)
+    df_out = df[mask].copy()
+    # Preserve attrs
+    for k, v in df.attrs.items():
+        df_out.attrs[k] = v
+    after = len(df_out)
+    if before != after:
+        print(f"  Linearity filter [{lo}, {hi}]: {before} → {after} neurons")
+    return df_out
+
+
+def _apply_spatial_frac_filter(df, metric, min_frac):
+    """Filter neurons where |orig - baseline| / orig < min_frac.
+    Keeps neurons with sufficient spatial effect in EITHER direction:
+      - orig > baseline: spatial info contributes to activation
+      - baseline > orig: spatial info suppresses activation (also valid)
+    Only removes neurons where the spatial effect is negligible."""
+    orig_col = f"{metric}_orig"
+    baseline_col = f"{metric}_baseline"
+    if orig_col not in df.columns or baseline_col not in df.columns:
+        return df
+    before = len(df)
+    orig = df[orig_col]
+    spatial = (df[orig_col] - df[baseline_col]).abs()
+    # |orig - baseline| / orig >= min_frac
+    safe_orig = orig.where(orig.abs() > 1e-12, 1e-12)
+    ratio = spatial / safe_orig
+    mask = ratio >= min_frac
+    df_out = df[mask].copy()
+    for k, v in df.attrs.items():
+        df_out.attrs[k] = v
+    after = len(df_out)
+    if before != after:
+        print(f"  Spatial frac filter [|orig-baseline|/orig >= {min_frac}]: "
+              f"{before} → {after} neurons (removed {before - after})")
+    return df_out
 
 
 def main():
@@ -351,17 +639,43 @@ def main():
     args = get_args()
     METRIC = args.metric
     print(f"Primary metric for visualization: {METRIC}")
+    lin_lo, lin_hi = args.linearity_min, args.linearity_max
+    has_lin_filter = lin_lo > 0 or lin_hi < 100
+    if has_lin_filter:
+        print(f"Linearity filter: [{lin_lo}, {lin_hi}]")
+    min_spatial_frac = args.min_spatial_frac
+    if min_spatial_frac > 0:
+        print(f"Spatial frac filter: (orig-baseline)/orig >= {min_spatial_frac}")
+
+    # Build NPZ path dict
+    if args.npz:
+        npz_paths = {}
+        for p in args.npz:
+            label = os.path.splitext(os.path.basename(p))[0]
+            label = label.replace("texture_attribution_", "")
+            npz_paths[label] = p
+    else:
+        npz_paths = NPZ_PATHS
 
     dfs = {}
-    for label, path in NPZ_PATHS.items():
+    for label, path in npz_paths.items():
         if not os.path.exists(path):
             print(f"⚠ Not found: {path}")
             continue
         print(f"Loading: {path}")
         df = load_npz(path)
         set_primary_metric(df, METRIC)  # aliases for plotting
+        # Apply linearity filter (on primary metric)
+        if has_lin_filter:
+            df = _apply_linearity_filter(df, METRIC, lin_lo, lin_hi)
+        if min_spatial_frac > 0:
+            df = _apply_spatial_frac_filter(df, METRIC, min_spatial_frac)
         dfs[label] = df
         print_summary(df, label=label)
+
+    # Parse concept directories for mutation-specific analysis
+    concept_dir = args.concept_dir
+    neuron_to_class = parse_concept_dirs(concept_dir) if os.path.isdir(concept_dir) else {}
 
     # Per-condition visualizations
     for label, df in dfs.items():
@@ -371,8 +685,14 @@ def main():
 
         # Export CSV — one per metric
         for m in ["gap", "l2sq"]:
-            csv_path = NPZ_PATHS[label].replace(".npz", f"_{m}_per_neuron.csv")
+            csv_path = npz_paths[label].replace(".npz", f"_{m}_per_neuron.csv")
             export_per_neuron_csv(df, csv_path, metric=m, label=label)
+
+        # Mutation-specific analysis
+        if neuron_to_class:
+            for m in ["gap", "l2sq"]:
+                print(f"\n  ─── Mutation analysis for {label} (metric={m}) ───")
+                analyze_by_mutation(df, neuron_to_class, metric=m)
 
     # Cross-condition comparison
     if len(dfs) >= 2:
