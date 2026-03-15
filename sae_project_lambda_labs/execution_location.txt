@@ -1,1 +1,0 @@
-SAE 훈련, 훈련시 자동으로 되는 linear 평가와 gap_menas.csv는 람다랩스에 한다
