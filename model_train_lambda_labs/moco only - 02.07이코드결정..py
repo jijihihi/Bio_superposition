@@ -9,6 +9,29 @@
 # - Per-epoch Linear Probe(3 epochs) for early stopping (그대로 유지)
 # ==============================================================================
 
+
+## CNN encoder 구조.
+
+## stem (3->64. resblock 없음) 그 뒤로 resblock 있음
+# stage2 (64 -> 128) 2
+# stage3 (128 -> 256) 2
+# stage4 (256 -> 512) 3
+# stage5 (512 -> 512) 3  resblock은 4개니까. stage4_out
+# refine (512 -> 512) 1  refinement block output
+
+# "We extract intermediate feature maps from two locations in the encoder:
+# the output of the final backbone stage (f_stage4, 512 channels) 
+# and the output of the additional residual block (f_refine, 512 channels). 
+# Each spatial position in these feature maps serves as an input token 
+# to the Sparse Autoencoder."
+
+# "We extract intermediate feature maps from two specific layers in the encoder: 
+# the final backbone stage (f_stage4, 512 channels) 
+# and the subsequent refinement residual block (f_refine, 512 channels). 
+# Each spatial position within these feature maps is treated as an independent input token 
+# or training and evaluating the Sparse Autoencoder (SAE)."
+
+
 import os, re, io, json, math, time, glob, random, argparse, logging, sys, pickle, csv
 from dataclasses import dataclass
 from typing import Dict, List, Tuple, Optional
@@ -1242,6 +1265,7 @@ class Trainer:
                 "total_elapsed_sec": f"{total_elapsed:.1f}",
                 "gpu_mem_peak_mb": f"{gpu_peak_mb:.1f}",
             })
+
 
 
 # ==============================================================================

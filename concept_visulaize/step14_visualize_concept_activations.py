@@ -78,6 +78,42 @@ spatial activation map에 L2 norm을 적용하는 것은 의미가 없습니다.
 # control - high인 경우에는, 모든 class 에서 top-k를 뽑느다. control vs all mutation이어서 정확하지 않을 수 있다.
 
 
+
+
+
+# %matplotlib inline
+# import logging
+# logging.basicConfig(level=logging.INFO, force=True)
+
+# ##이거하자
+# %matplotlib inline
+# import sys
+# sys.argv = [
+#     "step14",
+#     "--features_cache","/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_sparsity3200_loss_L2norm곱해줌/features_cache_stage5_out_normrestored_all.npz",
+#     "--sae_ckpt", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_sparsity3200_loss_L2norm곱해줌/stage5_out_d4096_gated_sp3200.0_aux0.03125_tied_ep008.pt",
+#     "--apoptosis_csv", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv",
+#     "--model_state_path", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/best_model.pt",
+#     "--shard_root", "/content/wds_shards",
+#     "--save_dir", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87",
+#     "--output_dir", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_sparsity3200_loss_L2norm곱해줌/concept_by_gap_csv_d4096_sp3200_max_0.58",
+#     "--concept_ids", "de_filter_csv",
+#    "--max_gini", "0.75",
+#     "--de_min_log2fc", "0.58",
+#     "--mut_only",
+#     "--gap_csv", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_sparsity3200_loss_L2norm곱해줌/gated_sae_stage5_out_d4096_sp3200.0_aux0.03125_tied_class_gap_means.csv"
+
+
+
+
+# ]
+# from sae_project.step14_visualize_concept_activations import main
+# main()
+
+
+
+
+
 # ==============================================================================
 # Visualization Utilities
 # ==============================================================================

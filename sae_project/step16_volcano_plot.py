@@ -18,17 +18,20 @@
 #   main()
 # ==============================================================================
 
-## --gap_l2_norm 이거는 cnn_gap만 L2 norm 해서 비교한다.
+## SAE는 step14의 select_concepts_by_gap_csv_de와 동일한 방식으로 DE 필터
+## CNN GAP은 per-image class mean log2FC 기반
+## 둘 다 mut_only, dedup, gini 필터 적용 (step14 일관성)
 
 # import sys
 # sys.argv = [
 #     "step16_volcano_plot",
 #     "--cnn_gap_cache", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/CNN_GAP/cnn_gap_stage5_out_all.npz",
-#     "--sae_cache", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_sparsity3200_loss_L2norm곱해줌/features_cache_stage5_out_all.npz",
+#     "--sae_cache", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_sparsity3200_loss_L2norm곱해줌/gated_sae_stage5_out_d4096_sp3200.0_aux0.03125_tied_class_gap_means_per_image.npz",
 #     "--output_dir", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/volcano_plots",
-#     "--gap_l2_norm",
-#     "--min_log2fc", "1.0",
-#     "--dead_threshold", "5e-5"
+#     "--min_log2fc", "0.58",
+#     "--max_gini", "0.75",
+#     "--mut_only",
+#     "--dead_threshold", "5e-4",
 # ]
 # from sae_project.step16_volcano_plot import main
 # main()
@@ -50,18 +53,23 @@ from statsmodels.stats.multitest import multipletests
 
 from sae_project.step02_logging_utils import get_logger, SUPERCLASS_MAP
 
+# ── step14에서 import (일관성 유지) ──
+from concept_visulaize.step14_visualize_concept_activations import (
+    load_gap_csv,
+    compute_gini_impurity,
+    select_concepts_by_gap_csv_de,
+)
+
 logger = get_logger("volcano_plot")
 
 
 # ==============================================================================
-# Differential Expression Analysis
+# CNN GAP DE: per-image class-mean log2FC
 # ==============================================================================
-def compute_de(X, superclasses, mutation, adj_p_threshold=0.05, min_log2fc=0.0):
+def compute_de_cnn(X, superclasses, mutation, min_log2fc=0.0):
     """
-    DEG-like feature selection: Wilcoxon rank-sum test + BH correction.
-    Control vs Mutation for each feature (channel or neuron).
-
-    Returns dict: adj_pvalues, log2fc, mask, n_sig, n_up, n_down
+    CNN GAP: per-image 값으로 class mean log2FC 계산.
+    Wilcoxon은 volcano y축 시각화용.
     """
     sc_arr = np.array(superclasses)
     ctrl_mask = sc_arr == "Control"
@@ -70,16 +78,14 @@ def compute_de(X, superclasses, mutation, adj_p_threshold=0.05, min_log2fc=0.0):
     X_ctrl = X[ctrl_mask]
     X_mut = X[mut_mask]
     d = X.shape[1]
-
-    pvals = np.ones(d)
     eps = 1e-10
 
-    # Log2 fold change
     ctrl_means = X_ctrl.mean(axis=0)
     mut_means = X_mut.mean(axis=0)
     log2fc = np.log2((mut_means + eps) / (ctrl_means + eps))
 
-    # Wilcoxon rank-sum test per feature
+    # Wilcoxon (volcano y축 시각화용)
+    pvals = np.ones(d)
     for j in range(d):
         c_vals = X_ctrl[:, j]
         m_vals = X_mut[:, j]
@@ -91,26 +97,85 @@ def compute_de(X, superclasses, mutation, adj_p_threshold=0.05, min_log2fc=0.0):
         except ValueError:
             pass
 
-    # BH correction
     _, adj_p, _, _ = multipletests(pvals, method="fdr_bh")
-
-    # Significance mask
-    sig_mask = adj_p < adj_p_threshold
-    if min_log2fc > 0:
-        sig_mask &= np.abs(log2fc) >= min_log2fc
-
-    n_up = int(np.sum(sig_mask & (log2fc > 0)))
-    n_down = int(np.sum(sig_mask & (log2fc < 0)))
 
     return {
         "adj_pvalues": adj_p,
         "log2fc": log2fc,
-        "mask": sig_mask,
-        "n_sig": int(sig_mask.sum()),
-        "n_up": n_up,
-        "n_down": n_down,
         "n_total": d,
     }
+
+
+def select_cnn_de_like_step14(X, superclasses, min_log2fc, max_gini, mut_only):
+    """
+    CNN GAP에 step14와 동일한 로직 적용:
+    - class mean log2FC
+    - Gini filter
+    - mut_only
+    - dedup
+
+    Returns (deduped_list, per_mutation_de_results)
+    """
+    sc_arr = np.array(superclasses)
+    d = X.shape[1]
+    eps = 1e-10
+    class_names = ["Control", "SNCA", "GBA", "LRRK2"]
+    mutations = ["SNCA", "GBA", "LRRK2"]
+
+    # Class means per channel
+    class_means = {}
+    for cn in class_names:
+        mask = sc_arr == cn
+        if mask.sum() > 0:
+            class_means[cn] = X[mask].mean(axis=0)
+        else:
+            class_means[cn] = np.zeros(d)
+
+    # Build gap_info-like dict for CNN channels
+    cnn_gap_info = {}
+    for ch in range(d):
+        vals = {cn: float(class_means[cn][ch]) for cn in class_names}
+        cnn_gap_info[ch] = {
+            "is_alive": True,  # CNN channels are always alive
+            **vals,
+        }
+
+    # Use step14's function directly
+    selected = select_concepts_by_gap_csv_de(
+        cnn_gap_info, max_gini=max_gini, de_min_log2fc=min_log2fc
+    )
+
+    # mut_only filter
+    if mut_only:
+        _MUTS = {"SNCA", "GBA", "LRRK2"}
+        filtered = []
+        for cid, label, fc, direction in selected:
+            parts = set(label.split("_"))
+            muts = parts & _MUTS
+            if len(muts) == 0:
+                continue
+            new_label = "_".join(sorted(muts))
+            filtered.append((cid, new_label, fc, direction))
+        n_dropped = len(selected) - len(filtered)
+        logger.info(f"    mut_only: {n_dropped} Control-only dropped, "
+                    f"{len(filtered)} remaining")
+        selected = filtered
+
+    # Per-mutation DE results for volcano plots
+    per_mut_de = {}
+    for mut in mutations:
+        de = compute_de_cnn(X, superclasses, mut, min_log2fc=min_log2fc)
+        # Mark mut_only significant channels
+        sig = np.abs(de["log2fc"]) >= min_log2fc
+        if mut_only:
+            sig = sig & (de["log2fc"] > 0)  # mut_high only
+        de["mask"] = sig
+        de["n_sig"] = int(sig.sum())
+        de["n_up"] = int(np.sum(sig & (de["log2fc"] > 0)))
+        de["n_down"] = int(np.sum(sig & (de["log2fc"] < 0)))
+        per_mut_de[mut] = de
+
+    return selected, per_mut_de
 
 
 # ==============================================================================
@@ -267,55 +332,65 @@ def plot_volcano_comparison(
 
 
 # ==============================================================================
-# Summary bar chart: % DE features
+# Summary bar chart: absolute count of class-specific features
 # ==============================================================================
 def plot_de_summary_bar(de_results_cnn, de_results_sae, mutations,
                         output_path, dpi=300):
-    """Bar chart comparing % DE features for CNN vs SAE across mutations."""
+    """Bar chart comparing COUNT of DE features for CNN vs SAE across mutations.
+    Absolute count matters more than % — more class-specific features = more interpretable."""
     fig, ax = plt.subplots(figsize=(10, 5))
 
     x = np.arange(len(mutations))
     width = 0.35
 
-    pcts_cnn = []
-    pcts_sae = []
+    counts_cnn = []
+    counts_sae = []
     for mut in mutations:
-        cnn = de_results_cnn[mut]
-        sae = de_results_sae[mut]
-        pcts_cnn.append(100 * cnn["n_sig"] / max(cnn["n_total"], 1))
-        pcts_sae.append(100 * sae["n_sig"] / max(sae["n_total"], 1))
+        counts_cnn.append(de_results_cnn[mut]["n_sig"])
+        counts_sae.append(de_results_sae[mut]["n_sig"])
 
-    bars_cnn = ax.bar(x - width/2, pcts_cnn, width, label="CNN GAP Channels",
+    bars_cnn = ax.bar(x - width/2, counts_cnn, width,
+                      label=f"CNN GAP ({de_results_cnn[mutations[0]]['n_total']} channels)",
                       color="#5B9BD5", alpha=0.85, edgecolor="white")
-    bars_sae = ax.bar(x + width/2, pcts_sae, width, label="SAE Neurons",
+    bars_sae = ax.bar(x + width/2, counts_sae, width,
+                      label=f"SAE ({de_results_sae[mutations[0]]['n_total']} alive neurons)",
                       color="#ED7D31", alpha=0.85, edgecolor="white")
 
-    # Value labels
-    for bars, pcts in [(bars_cnn, pcts_cnn), (bars_sae, pcts_sae)]:
-        for bar, pct in zip(bars, pcts):
-            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5,
-                    f"{pct:.1f}%", ha="center", va="bottom", fontsize=10,
+    # Count + percentage labels on top
+    for bars, counts, de_results in [
+        (bars_cnn, counts_cnn, de_results_cnn),
+        (bars_sae, counts_sae, de_results_sae),
+    ]:
+        for bar, count, mut in zip(bars, counts, mutations):
+            n_total = de_results[mut]["n_total"]
+            pct = 100 * count / max(n_total, 1)
+            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1,
+                    f"{count}", ha="center", va="bottom", fontsize=11,
                     fontweight="bold")
+            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() - max(bar.get_height()*0.1, 2),
+                    f"({pct:.1f}%)", ha="center", va="top", fontsize=8,
+                    color="white", fontweight="bold")
 
-    # Count labels
+    # Up/Down breakdown below
     for i, mut in enumerate(mutations):
         cnn = de_results_cnn[mut]
         sae = de_results_sae[mut]
-        ax.text(x[i] - width/2, -2.5,
-                f"{cnn['n_sig']}/{cnn['n_total']}", ha="center",
+        ax.text(x[i] - width/2, -max(max(counts_cnn + counts_sae) * 0.06, 3),
+                f"↑{cnn['n_up']} ↓{cnn['n_down']}", ha="center",
                 fontsize=8, color="#5B9BD5")
-        ax.text(x[i] + width/2, -2.5,
-                f"{sae['n_sig']}/{sae['n_total']}", ha="center",
+        ax.text(x[i] + width/2, -max(max(counts_cnn + counts_sae) * 0.06, 3),
+                f"↑{sae['n_up']} ↓{sae['n_down']}", ha="center",
                 fontsize=8, color="#ED7D31")
 
-    ax.set_ylabel("% Differentially Expressed Features", fontsize=12)
+    ax.set_ylabel("Number of Class-Specific Features (DE)", fontsize=12)
     ax.set_title("Class-Specific Feature Discovery:\nCNN GAP Channels vs SAE Neurons",
                  fontsize=13, fontweight="bold")
     ax.set_xticks(x)
     ax.set_xticklabels([f"{m} vs Control" for m in mutations], fontsize=11)
     ax.legend(fontsize=10)
     ax.grid(True, alpha=0.15, axis="y")
-    ax.set_ylim(bottom=-5)
+    ymax = max(counts_cnn + counts_sae) * 1.15
+    ax.set_ylim(bottom=-ymax * 0.08, top=ymax)
 
     fig.tight_layout()
     fig.savefig(output_path, dpi=dpi, bbox_inches="tight")
@@ -368,126 +443,193 @@ def load_features(cache_path, apply_l2_norm=False, dead_threshold=1e-5):
 # ==============================================================================
 def main():
     parser = argparse.ArgumentParser(
-        description="Volcano plot: CNN GAP channels vs SAE neurons (DE analysis)"
+        description="Volcano plot: CNN GAP channels vs SAE neurons (step14-consistent DE)"
     )
     parser.add_argument("--cnn_gap_cache", type=str, required=True,
-                        help="Path to CNN GAP .npz cache")
+                        help="Path to CNN GAP .npz cache (per-image values)")
     parser.add_argument("--sae_cache", type=str, required=True,
-                        help="Path to SAE features .npz cache")
+                        help="Path to SAE per-image .npz cache (with usage_ema)")
     parser.add_argument("--output_dir", type=str, required=True)
     parser.add_argument("--gap_l2_norm", action="store_true",
                         help="L2 normalize CNN GAP features before DE")
-    parser.add_argument("--adj_p", type=float, default=0.05,
-                        help="Adjusted p-value threshold for DE")
-    parser.add_argument("--min_log2fc", type=float, default=1.5,
-                        help="Minimum absolute log2 fold change for DE")
+    parser.add_argument("--min_log2fc", type=float, default=0.58,
+                        help="Min |log2FC| for DE (step14 default=0.58)")
+    parser.add_argument("--max_gini", type=float, default=0.75,
+                        help="Max Gini impurity for class-specificity")
+    parser.add_argument("--mut_only", action="store_true",
+                        help="Only keep mutation-high features (drop Control-only)")
+    parser.add_argument("--dead_threshold", type=float, default=5e-4,
+                        help="usage_ema threshold for dead SAE neurons (default=5e-4, same as step09)")
+    parser.add_argument("--adj_p", type=float, default=1e-10,
+                        help="Adjusted p-value threshold line for CNN volcano plot")
     parser.add_argument("--max_neg_log10p", type=float, default=50,
-                        help="Cap -log10(p) at this value for display (0=no cap, default=50)")
-    parser.add_argument("--dead_threshold", type=float, default=5e-5,
-                        help="Usage EMA threshold for dead SAE neurons")
+                        help="Cap -log10(p) for CNN volcano display")
     parser.add_argument("--dpi", type=int, default=300)
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
     mutations = ["SNCA", "GBA", "LRRK2"]
+    class_names = ["Control", "SNCA", "GBA", "LRRK2"]
 
-    # ── Load ──
+    # ==========================================================================
+    # 1) SAE: per-image npz → usage_ema 필터 → class mean log2FC (step14 동일)
+    # ==========================================================================
     logger.info("=" * 60)
-    logger.info("Loading CNN GAP features")
+    logger.info("SAE: Loading per-image cache with usage_ema")
+    sae_data = np.load(args.sae_cache, allow_pickle=True)
+    X_sae = sae_data["X_all"]
+    sae_lines = sae_data["lines"] if "lines" in sae_data else sae_data["y"]
+    if sae_lines.dtype.kind != 'U':
+        sae_lines = sae_lines.astype(str)
+    sc_sae = [SUPERCLASS_MAP.get(ln, ln) for ln in sae_lines]
+
+    # usage_ema 기반 dead neuron 필터
+    n_total_sae = X_sae.shape[1]
+    if "usage_ema" in sae_data:
+        usage_ema = sae_data["usage_ema"]
+        alive_mask = usage_ema > args.dead_threshold
+        alive_indices = np.where(alive_mask)[0]
+        X_sae_alive = X_sae[:, alive_mask]
+        n_alive_sae = int(alive_mask.sum())
+        logger.info(f"  SAE: {n_total_sae} total, {n_alive_sae} alive "
+                    f"(usage_ema > {args.dead_threshold})")
+    else:
+        alive_indices = np.arange(n_total_sae)
+        X_sae_alive = X_sae
+        n_alive_sae = n_total_sae
+        logger.info(f"  SAE: {n_total_sae} neurons (no usage_ema found)")
+
+    # Per-class mean 계산 → gap_info dict 구성 (select_concepts_by_gap_csv_de에 전달)
+    sc_arr = np.array(sc_sae)
+    sae_gap_info = {}
+    for i, orig_idx in enumerate(alive_indices):
+        vals = {}
+        for cn in class_names:
+            mask = sc_arr == cn
+            if mask.sum() > 0:
+                vals[cn] = float(X_sae_alive[mask, i].mean())
+            else:
+                vals[cn] = 0.0
+        sae_gap_info[int(orig_idx)] = {
+            "is_alive": True,
+            **vals,
+        }
+
+    # step14 select_concepts_by_gap_csv_de 동일 로직
+    sae_selected = select_concepts_by_gap_csv_de(
+        sae_gap_info, max_gini=args.max_gini, de_min_log2fc=args.min_log2fc
+    )
+    logger.info(f"  Before mut_only: {len(sae_selected)} concepts")
+
+    # mut_only filter
+    if args.mut_only:
+        _MUTS = {"SNCA", "GBA", "LRRK2"}
+        filtered = []
+        for cid, label, fc, direction in sae_selected:
+            parts = set(label.split("_"))
+            muts = parts & _MUTS
+            if len(muts) == 0:
+                continue
+            new_label = "_".join(sorted(muts))
+            filtered.append((cid, new_label, fc, direction))
+        n_dropped = len(sae_selected) - len(filtered)
+        sae_selected = filtered
+        logger.info(f"  mut_only: {n_dropped} Control-only dropped, "
+                    f"{len(sae_selected)} remaining")
+
+    logger.info(f"  SAE: {n_alive_sae} alive → {len(sae_selected)} DE concepts (deduped)")
+
+    # Count per-mutation for SAE
+    sae_per_mut = {mut: 0 for mut in mutations}
+    for cid, label, fc, direction in sae_selected:
+        for mut in mutations:
+            if mut in label:
+                sae_per_mut[mut] += 1
+
+    # ==========================================================================
+    # 2) CNN GAP: step14-style DE filter
+    # ==========================================================================
+    logger.info(f"\n{'='*60}")
+    logger.info("CNN GAP: Loading cache and running step14-style DE filter")
     X_cnn, sc_cnn, _ = load_features(
         args.cnn_gap_cache, apply_l2_norm=args.gap_l2_norm)
+    logger.info(f"  CNN GAP: {X_cnn.shape[1]} channels, {X_cnn.shape[0]} images")
 
-    logger.info("Loading SAE features")
-    X_sae, sc_sae, _ = load_features(
-        args.sae_cache, dead_threshold=args.dead_threshold)
+    cnn_selected, cnn_per_mut_de = select_cnn_de_like_step14(
+        X_cnn, sc_cnn, args.min_log2fc, args.max_gini, args.mut_only
+    )
+    logger.info(f"  CNN: {X_cnn.shape[1]} channels → {len(cnn_selected)} DE channels (deduped)")
 
-    logger.info(f"  CNN GAP: {X_cnn.shape[1]} channels")
-    logger.info(f"  SAE:     {X_sae.shape[1]} neurons (alive)")
+    # Count per-mutation for CNN
+    cnn_per_mut = {mut: 0 for mut in mutations}
+    for cid, label, fc, direction in cnn_selected:
+        for mut in mutations:
+            if mut in label:
+                cnn_per_mut[mut] += 1
 
-    # ── DE analysis per mutation ──
-    de_cnn = {}
-    de_sae = {}
-
+    # ==========================================================================
+    # 3) Volcano plots (CNN only — has per-image Wilcoxon)
+    # ==========================================================================
     for mut in mutations:
-        logger.info(f"\n{'='*60}")
-        logger.info(f"DE Analysis: {mut} vs Control")
-        logger.info("=" * 60)
+        if mut in cnn_per_mut_de:
+            plot_volcano(
+                cnn_per_mut_de[mut],
+                f"CNN GAP — {mut} vs Control",
+                "Channel",
+                os.path.join(args.output_dir, f"volcano_cnn_{mut}.png"),
+                adj_p_threshold=args.adj_p,
+                min_log2fc=args.min_log2fc,
+                max_neg_log10p=args.max_neg_log10p,
+                dpi=args.dpi,
+            )
 
-        # CNN GAP
-        logger.info(f"  CNN GAP ({X_cnn.shape[1]} channels):")
-        de_cnn[mut] = compute_de(
-            X_cnn, sc_cnn, mut,
-            adj_p_threshold=args.adj_p, min_log2fc=args.min_log2fc)
-        c = de_cnn[mut]
-        logger.info(f"    DE channels: {c['n_sig']}/{c['n_total']} "
-                     f"({100*c['n_sig']/c['n_total']:.1f}%) "
-                     f"[Up:{c['n_up']}, Down:{c['n_down']}]")
+    # ==========================================================================
+    # 4) Summary bar chart: deduped counts
+    # ==========================================================================
+    de_cnn_summary = {}
+    de_sae_summary = {}
+    for mut in mutations:
+        de_cnn_summary[mut] = {
+            "n_sig": cnn_per_mut[mut],
+            "n_total": X_cnn.shape[1],
+            "n_up": cnn_per_mut[mut],
+            "n_down": 0,
+        }
+        de_sae_summary[mut] = {
+            "n_sig": sae_per_mut[mut],
+            "n_total": n_alive_sae,
+            "n_up": sae_per_mut[mut],
+            "n_down": 0,
+        }
 
-        # SAE
-        logger.info(f"  SAE ({X_sae.shape[1]} neurons):")
-        de_sae[mut] = compute_de(
-            X_sae, sc_sae, mut,
-            adj_p_threshold=args.adj_p, min_log2fc=args.min_log2fc)
-        s = de_sae[mut]
-        logger.info(f"    DE neurons:  {s['n_sig']}/{s['n_total']} "
-                     f"({100*s['n_sig']/s['n_total']:.1f}%) "
-                     f"[Up:{s['n_up']}, Down:{s['n_down']}]")
-
-        # ── Individual volcano plots ──
-        plot_volcano(
-            de_cnn[mut],
-            f"CNN GAP — {mut} vs Control",
-            "Channel",
-            os.path.join(args.output_dir, f"volcano_cnn_{mut}.png"),
-            adj_p_threshold=args.adj_p,
-            min_log2fc=args.min_log2fc,
-            max_neg_log10p=args.max_neg_log10p,
-            dpi=args.dpi,
-        )
-        plot_volcano(
-            de_sae[mut],
-            f"SAE — {mut} vs Control",
-            "Neuron",
-            os.path.join(args.output_dir, f"volcano_sae_{mut}.png"),
-            adj_p_threshold=args.adj_p,
-            min_log2fc=args.min_log2fc,
-            max_neg_log10p=args.max_neg_log10p,
-            dpi=args.dpi,
-        )
-
-        # ── Side-by-side comparison ──
-        plot_volcano_comparison(
-            de_cnn[mut], de_sae[mut], mut,
-            os.path.join(args.output_dir, f"volcano_comparison_{mut}.png"),
-            adj_p_threshold=args.adj_p,
-            min_log2fc=args.min_log2fc,
-            max_neg_log10p=args.max_neg_log10p,
-            dpi=args.dpi,
-        )
-
-    # ── Summary bar chart ──
     plot_de_summary_bar(
-        de_cnn, de_sae, mutations,
+        de_cnn_summary, de_sae_summary, mutations,
         os.path.join(args.output_dir, "de_summary_bar.png"),
         dpi=args.dpi,
     )
 
-    # ── Print summary ──
+    # ==========================================================================
+    # 5) Print summary
+    # ==========================================================================
     logger.info(f"\n{'='*60}")
     logger.info("SUMMARY: CNN GAP Channels vs SAE Neurons")
+    logger.info(f"  Method: per-image class-mean log2FC (step14 consistent)")
+    logger.info(f"  min_log2fc={args.min_log2fc}, max_gini={args.max_gini}, "
+                f"mut_only={args.mut_only}, dead_threshold={args.dead_threshold}")
     logger.info("=" * 60)
-    logger.info(f"  {'':15s} {'CNN Channels':>20s} {'SAE Neurons':>20s}")
-    logger.info(f"  {'':15s} {'('+str(X_cnn.shape[1])+' total)':>20s} "
-                f"{'('+str(X_sae.shape[1])+' total)':>20s}")
-    logger.info("  " + "-" * 56)
+    logger.info(f"  {'':15s} {'CNN (dedup)':>15s} {'SAE (dedup)':>15s}")
+    logger.info(f"  {'':15s} {'('+str(X_cnn.shape[1])+' ch)':>15s} "
+                f"{'('+str(n_alive_sae)+' alive)':>15s}")
+    logger.info("  " + "-" * 46)
+
     for mut in mutations:
-        c = de_cnn[mut]
-        s = de_sae[mut]
-        c_pct = 100 * c["n_sig"] / c["n_total"]
-        s_pct = 100 * s["n_sig"] / s["n_total"]
         logger.info(f"  {mut+' vs Ctrl':15s} "
-                     f"{c['n_sig']:>4d} ({c_pct:5.1f}%)       "
-                     f"{s['n_sig']:>4d} ({s_pct:5.1f}%)")
+                     f"{cnn_per_mut[mut]:>6d}         "
+                     f"{sae_per_mut[mut]:>6d}")
+
+    logger.info(f"  {'TOTAL (dedup)':15s} "
+                 f"{len(cnn_selected):>6d}         "
+                 f"{len(sae_selected):>6d}")
 
     logger.info(f"\n  Output: {args.output_dir}")
     logger.info("=" * 60)
