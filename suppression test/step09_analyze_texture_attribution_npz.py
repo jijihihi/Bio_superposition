@@ -305,8 +305,9 @@ def compare_conditions(dfs, comp_list=None):
     plt.show()
 
 
-def export_per_neuron_csv(df, output_path, metric, label=""):
-    """Export per-neuron data to CSV for one metric."""
+def export_per_neuron_csv(df, output_path, metric, label="", neuron_to_class=None):
+    """Export per-neuron data to CSV for one metric.
+    If neuron_to_class is provided, adds class_label column."""
     comp_names = df.attrs.get("comp_names", COMPONENT_NAMES_9)
     has_rot = df.attrs.get("has_rotation", False)
     m = metric
@@ -337,8 +338,155 @@ def export_per_neuron_csv(df, output_path, metric, label=""):
     out_names.append("linearity")
     out_df = df[src_cols].copy()
     out_df.columns = out_names
+    # Add class label if available
+    if neuron_to_class:
+        out_df["class_label"] = out_df["neuron_id"].map(
+            lambda nid: neuron_to_class.get(int(nid), ""))
     out_df.to_csv(output_path, index=False, float_format="%.6f")
     print(f"Saved: {output_path}  ({len(df)} neurons, metric={metric})")
+
+
+def export_class_summary_csv(df, neuron_to_class, output_path, metric="gap"):
+    """Export per-class summary statistics (mean/median/std) for each component
+    and category fraction to CSV. Each row = one class × one component."""
+    comp_names = df.attrs.get("comp_names", COMPONENT_NAMES_9)
+    has_rot = df.attrs.get("has_rotation", False)
+    m = metric
+    frac_cols = [f"{m}_{c}_frac" for c in comp_names]
+    cat_defs = [
+        ("interaction_frac", [f"{m}_RG_inter_frac", f"{m}_RB_inter_frac", f"{m}_GB_inter_frac"]),
+        ("local_shape_frac", [f"{m}_R_local_frac", f"{m}_G_local_frac", f"{m}_B_local_frac"]),
+    ]
+    if has_rot:
+        cat_defs.append(
+            ("reference_frac", [f"{m}_R_ref_frac", f"{m}_G_ref_frac", f"{m}_B_ref_frac"])
+        )
+    cat_defs.append(
+        ("texture_frac", [f"{m}_R_tex_frac", f"{m}_G_tex_frac", f"{m}_B_tex_frac"])
+    )
+
+    MUTATIONS = {"SNCA", "GBA", "LRRK2"}
+    from collections import defaultdict
+    group_nids = defaultdict(list)
+    df_nid = df.set_index("neuron_id")
+    for nid, raw_cls in neuron_to_class.items():
+        if nid not in df_nid.index:
+            continue
+        parts = set(raw_cls.split("_"))
+        muts = parts & MUTATIONS
+        if len(muts) == 0:
+            continue
+        elif len(muts) == 1:
+            group_nids[muts.pop()].append(nid)
+        else:
+            label = "_".join(sorted(muts))
+            group_nids[label].append(nid)
+
+    rows = []
+    for cls in sorted(group_nids.keys()):
+        nids = group_nids[cls]
+        sub = df_nid.loc[nids, frac_cols].dropna(subset=frac_cols)
+        if len(sub) == 0:
+            continue
+        n_neurons = len(sub)
+        # Per-component fractions (signed + absolute)
+        for i, col in enumerate(frac_cols):
+            clean = comp_names[i]
+            vals = sub[col].values
+            abs_vals = np.abs(vals)
+            rows.append({
+                "class": cls, "component": clean, "type": "component",
+                "n_neurons": n_neurons,
+                "mean": vals.mean(), "median": np.median(vals), "std": vals.std(),
+                "abs_mean": abs_vals.mean(), "abs_median": np.median(abs_vals),
+                "abs_std": abs_vals.std(),
+            })
+        # Category-level fractions (signed + absolute)
+        for cat_name, cat_cols_list in cat_defs:
+            valid_cols = [c for c in cat_cols_list if c in sub.columns]
+            if valid_cols:
+                cat_sum = sub[valid_cols].sum(axis=1).values
+                cat_abs = sub[valid_cols].abs().sum(axis=1).values
+                rows.append({
+                    "class": cls, "component": cat_name, "type": "category",
+                    "n_neurons": n_neurons,
+                    "mean": cat_sum.mean(), "median": np.median(cat_sum),
+                    "std": cat_sum.std(),
+                    "abs_mean": cat_abs.mean(), "abs_median": np.median(cat_abs),
+                    "abs_std": cat_abs.std(),
+                })
+
+    out_df = pd.DataFrame(rows)
+
+    # abs_proportion = mean(|vals_i|) / Σ_j mean(|vals_j|)  (matches analyze_by_mutation, sums to 1)
+    # proportion_std = std_i / Σ_j mean(|vals_j|)  (same denominator → same scale for error bars)
+    out_df["abs_proportion"] = np.nan
+    out_df["proportion_std"] = np.nan
+    for cls in out_df["class"].unique():
+        # Components
+        comp_mask = (out_df["class"] == cls) & (out_df["type"] == "component")
+        denom = out_df.loc[comp_mask, "abs_mean"].sum()
+        if denom > 1e-12:
+            out_df.loc[comp_mask, "abs_proportion"] = (
+                out_df.loc[comp_mask, "abs_mean"] / denom)
+            out_df.loc[comp_mask, "proportion_std"] = (
+                out_df.loc[comp_mask, "std"] / denom)
+        # Categories
+        cat_mask = (out_df["class"] == cls) & (out_df["type"] == "category")
+        cat_denom = out_df.loc[cat_mask, "abs_mean"].sum()
+        if cat_denom > 1e-12:
+            out_df.loc[cat_mask, "abs_proportion"] = (
+                out_df.loc[cat_mask, "abs_mean"] / cat_denom)
+            out_df.loc[cat_mask, "proportion_std"] = (
+                out_df.loc[cat_mask, "std"] / cat_denom)
+
+    out_df.to_csv(output_path, index=False, float_format="%.6f")
+    print(f"Saved class summary: {output_path}  ({len(out_df)} rows)")
+
+
+def export_per_neuron_with_class_csv(df, neuron_to_class, output_path, metric="gap"):
+    """Export per-neuron CSV with class label, filtered to mutation-relevant neurons.
+    Columns: neuron_id, class_label, mutation_group, each component frac, category fracs,
+    linearity — ready for figure generation."""
+    comp_names = df.attrs.get("comp_names", COMPONENT_NAMES_9)
+    has_rot = df.attrs.get("has_rotation", False)
+    m = metric
+
+    MUTATIONS = {"SNCA", "GBA", "LRRK2"}
+    rows = []
+    for _, r in df.iterrows():
+        nid = int(r["neuron_id"])
+        raw_cls = neuron_to_class.get(nid, None)
+        if raw_cls is None:
+            continue
+        parts = set(raw_cls.split("_"))
+        muts = parts & MUTATIONS
+        if len(muts) == 0:
+            continue
+        mut_group = "_".join(sorted(muts)) if len(muts) > 1 else muts.pop()
+
+        row = {
+            "neuron_id": nid,
+            "class_label": raw_cls,
+            "mutation_group": mut_group,
+            "orig": float(r[f"{m}_orig"]),
+            "baseline": float(r[f"{m}_baseline"]),
+            "total_spatial": float(r[f"{m}_total_spatial"]),
+            "linearity": float(r[f"{m}_linearity"]),
+        }
+        for c in comp_names:
+            row[c] = float(r[f"{m}_{c}"])
+            row[f"{c}_frac"] = float(r[f"{m}_{c}_frac"]) if pd.notna(r[f"{m}_{c}_frac"]) else np.nan
+        # Category fracs
+        for cat in ["interaction_frac", "local_shape_frac", "texture_frac"]:
+            row[cat] = float(r[f"{m}_{cat}"]) if f"{m}_{cat}" in r.index else np.nan
+        if has_rot and f"{m}_reference_frac" in r.index:
+            row["reference_frac"] = float(r[f"{m}_reference_frac"])
+        rows.append(row)
+
+    out_df = pd.DataFrame(rows)
+    out_df.to_csv(output_path, index=False, float_format="%.6f")
+    print(f"Saved per-neuron with class: {output_path}  ({len(out_df)} neurons)")
 
 
 # ==============================================================================
@@ -686,13 +834,24 @@ def main():
         # Export CSV — one per metric
         for m in ["gap", "l2sq"]:
             csv_path = npz_paths[label].replace(".npz", f"_{m}_per_neuron.csv")
-            export_per_neuron_csv(df, csv_path, metric=m, label=label)
+            export_per_neuron_csv(df, csv_path, metric=m, label=label,
+                                 neuron_to_class=neuron_to_class)
 
-        # Mutation-specific analysis
+        # Mutation-specific analysis + CSV export
         if neuron_to_class:
             for m in ["gap", "l2sq"]:
                 print(f"\n  ─── Mutation analysis for {label} (metric={m}) ───")
                 analyze_by_mutation(df, neuron_to_class, metric=m)
+                # Class-level summary CSV
+                summary_csv = npz_paths[label].replace(
+                    ".npz", f"_{m}_class_summary.csv")
+                export_class_summary_csv(
+                    df, neuron_to_class, summary_csv, metric=m)
+                # Per-neuron with class label CSV (for figure generation)
+                neuron_cls_csv = npz_paths[label].replace(
+                    ".npz", f"_{m}_per_neuron_with_class.csv")
+                export_per_neuron_with_class_csv(
+                    df, neuron_to_class, neuron_cls_csv, metric=m)
 
     # Cross-condition comparison
     if len(dfs) >= 2:
