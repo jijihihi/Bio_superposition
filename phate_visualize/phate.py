@@ -12,6 +12,15 @@
 #          --sae_ckpt ... --save_dir ... --model_state_path ... --shard_root ...
 # ==============================================================================
 
+# DPT와 뉴런 개수가 다른 이유. DPT에서는 de_eval_split 이 있다. 그 뉴런이 mutation specific 하다는 것 등을 데이터 셋을 나눠서 그 데이터셋에서 선태하고 나머지 데이터 셋에서 DPT 하는등
+# 근데 phate는 전체적으로 다 시각화하는거니까 de_eval_split이 필요가 없고 따라서 이걸 안하면 필터링 되는 뉴런 개수가 달라질 수 있다.
+
+## sclens 등 근거로 gap_l2_norm 등 하는데. l2 norm 이후로 min cv de filter 등 작동된다.
+
+
+
+# phate.py의 PAGA는 Leiden clustering 없이 superclass 기준으로 합니다: superclass 기준으로 control GBA가 연결되어 있는지 아닌지 등을 판단.
+
 import os
 import argparse
 import numpy as np
@@ -359,67 +368,70 @@ def plot_phate(
     output_path: str,
     point_size: float = 3.0,
     alpha: float = 0.5,
-    dpi: int = 200,
+    dpi: int = 300,
     pca_variance_explained: float = 0.0,
     phate_t: int = 0,
     n_alive: int = 0,
     n_total: int = 0,
 ):
-    """Save PHATE 2D scatter plot colored by class."""
-    fig, ax = plt.subplots(1, 1, figsize=(10, 8))
+    """Save publication-ready PHATE 2D scatter plot colored by class."""
+    fig, ax = plt.subplots(1, 1, figsize=(6, 6))
 
     for cls in sorted(CLASS_NAMES.keys()):
         mask = labels == cls
         if mask.sum() == 0:
             continue
+        n = int(mask.sum())
         ax.scatter(
             phate_coords[mask, 0],
             phate_coords[mask, 1],
             s=point_size,
             alpha=alpha,
-            label=f"{CLASS_NAMES[cls]} (n={mask.sum()})",
+            label=f"{CLASS_NAMES[cls]} (n={n:,})",
             c=CLASS_COLORS[cls],
             edgecolors="none",
+            rasterized=True,
         )
 
-    ax.set_xlabel("PHATE 1", fontsize=12)
-    ax.set_ylabel("PHATE 2", fontsize=12)
-    ax.set_title(title, fontsize=14, fontweight="bold")
+    ax.set_xlabel("PHATE 1", fontsize=14)
+    ax.set_ylabel("PHATE 2", fontsize=14)
 
-    # Info text
-    info_lines = [
-        f"Alive neurons: {n_alive}/{n_total}",
-        f"PCA 30D variance explained: {pca_variance_explained:.1%}",
-        f"PHATE t: {phate_t}",
-    ]
-    info_text = "\n".join(info_lines)
-    ax.text(
-        0.02, 0.02, info_text,
-        transform=ax.transAxes,
-        fontsize=9,
-        verticalalignment="bottom",
-        bbox=dict(boxstyle="round,pad=0.4", facecolor="white", alpha=0.8),
-    )
-
-    ax.legend(
-        loc="upper right",
-        markerscale=3,
-        fontsize=10,
-        framealpha=0.9,
-    )
+    # Remove ticks, spines, grid for clean publication look
+    ax.set_xticks([])
+    ax.set_yticks([])
+    for spine in ax.spines.values():
+        spine.set_visible(False)
 
     ax.set_aspect("equal", adjustable="datalim")
-    ax.grid(True, alpha=0.2)
+
+    # Clean legend
+    leg = ax.legend(
+        loc="best",
+        markerscale=4,
+        fontsize=11,
+        frameon=True,
+        framealpha=0.9,
+        edgecolor="0.8",
+        handletextpad=0.5,
+        borderpad=0.6,
+    )
+    for lh in leg.legend_handles:
+        lh.set_alpha(1.0)
 
     fig.tight_layout()
     fig.savefig(output_path, dpi=dpi, bbox_inches="tight")
-    plt.show()
+    pdf_path = output_path.rsplit(".", 1)[0] + ".pdf"
+    fig.savefig(pdf_path, bbox_inches="tight")
+    svg_path = output_path.rsplit(".", 1)[0] + ".svg"
+    fig.savefig(svg_path, bbox_inches="tight")
     plt.close(fig)
     logger.info(f"  Saved PHATE plot: {output_path}")
+    logger.info(f"  Saved PHATE PDF:  {pdf_path}")
+    logger.info(f"  Saved PHATE SVG:  {svg_path}")
 
 
 # ==============================================================================
-# Plot PHATE (superclass string labels version)
+# Plot PHATE (superclass string labels version) — Publication-ready
 # ==============================================================================
 def plot_phate_superclass(
     phate_coords: np.ndarray,
@@ -428,11 +440,11 @@ def plot_phate_superclass(
     output_path: str,
     point_size: float = 3.0,
     alpha: float = 0.5,
-    dpi: int = 200,
+    dpi: int = 300,
     info_text: str = "",
 ):
-    """Save PHATE 2D scatter plot colored by superclass (string labels)."""
-    fig, ax = plt.subplots(1, 1, figsize=(10, 8))
+    """Save publication-ready PHATE 2D scatter plot colored by superclass."""
+    fig, ax = plt.subplots(1, 1, figsize=(6, 6))
     superclasses_arr = np.array(superclasses)
 
     # Plot order: Control first (background), then mutations
@@ -441,37 +453,57 @@ def plot_phate_superclass(
         mask = superclasses_arr == cls
         if mask.sum() == 0:
             continue
+        n = int(mask.sum())
         ax.scatter(
             phate_coords[mask, 0],
             phate_coords[mask, 1],
             s=point_size,
             alpha=alpha,
-            label=f"{cls} (n={mask.sum()})",
+            label=f"{cls} (n={n:,})",
             c=SUPERCLASS_COLORS.get(cls, "gray"),
             edgecolors="none",
+            rasterized=True,
         )
 
-    ax.set_xlabel("PHATE 1", fontsize=12)
-    ax.set_ylabel("PHATE 2", fontsize=12)
-    ax.set_title(title, fontsize=14, fontweight="bold")
+    ax.set_xlabel("PHATE 1", fontsize=14)
+    ax.set_ylabel("PHATE 2", fontsize=14)
 
-    if info_text:
-        ax.text(
-            0.02, 0.02, info_text,
-            transform=ax.transAxes, fontsize=9,
-            verticalalignment="bottom",
-            bbox=dict(boxstyle="round,pad=0.4", facecolor="white", alpha=0.8),
-        )
+    # Remove ticks, spines, grid for clean publication look
+    ax.set_xticks([])
+    ax.set_yticks([])
+    for spine in ax.spines.values():
+        spine.set_visible(False)
 
-    ax.legend(loc="upper right", markerscale=3, fontsize=10, framealpha=0.9)
     ax.set_aspect("equal", adjustable="datalim")
-    ax.grid(True, alpha=0.2)
+
+    # Clean legend
+    leg = ax.legend(
+        loc="best",
+        markerscale=4,
+        fontsize=11,
+        frameon=True,
+        framealpha=0.9,
+        edgecolor="0.8",
+        handletextpad=0.5,
+        borderpad=0.6,
+    )
+    # Make legend markers fully opaque
+    for lh in leg.legend_handles:
+        lh.set_alpha(1.0)
 
     fig.tight_layout()
+    # Save PNG
     fig.savefig(output_path, dpi=dpi, bbox_inches="tight")
-    plt.show()
+    # Save PDF (vector) for publication
+    pdf_path = output_path.rsplit(".", 1)[0] + ".pdf"
+    fig.savefig(pdf_path, bbox_inches="tight")
+    # Save SVG for Illustrator editing
+    svg_path = output_path.rsplit(".", 1)[0] + ".svg"
+    fig.savefig(svg_path, bbox_inches="tight")
     plt.close(fig)
     logger.info(f"  Saved PHATE plot: {output_path}")
+    logger.info(f"  Saved PHATE PDF:  {pdf_path}")
+    logger.info(f"  Saved PHATE SVG:  {svg_path}")
 
 
 # ==============================================================================
@@ -770,25 +802,12 @@ def main():
         png_name = f"phate_{cache_basename}{clean_suffix}_knn{args.knn}_t{actual_t}.png"
         output_path = os.path.join(output_dir, png_name)
 
-        title = (
-            f"PHATE – {cache_basename}{suffix}\n"
-            f"knn={args.knn}, t={actual_t}, dist={args.knn_dist}, "
-            f"features={X_in.shape[1]}"
-        )
-        info_text = (
-            f"Samples: {X_in.shape[0]}\n"
-            f"Features: {X_in.shape[1]}\n"
-            f"Filter: {filter_info}\n"
-            f"Norm: {args.norm}\n"
-            f"{extra_info}"
-            f"PHATE t: {actual_t}"
-        )
+        title = ""  # publication-ready: no title
 
         plot_phate_superclass(
             X_phate, superclasses_in,
             title=title, output_path=output_path,
             point_size=args.point_size, alpha=args.alpha, dpi=args.dpi,
-            info_text=info_text,
         )
 
         npz_path = output_path.replace(".png", "_coords.npz")

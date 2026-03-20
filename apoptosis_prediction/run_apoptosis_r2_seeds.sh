@@ -58,7 +58,7 @@ for MODEL in "${MODELS[@]}"; do
             echo ""
             echo "▶ MoCo seed=${SEED} | ${LAYER} | ${MODEL} | L2norm=ON"
 
-            python -m kendall_correlation_coefficient.apoptosis_r2_test \
+            python -m apoptosis_prediction.apoptosis_r2_test \
                 --features_cache "${CACHE}" \
                 --apoptosis_csv "${APOPTOSIS_CSV}" \
                 --model "${MODEL}" \
@@ -66,6 +66,8 @@ for MODEL in "${MODELS[@]}"; do
                 --output_dir "${SEED_OUT}" \
                 --seed 42 \
                 --cv_folds 5 \
+                --n_repeats 2 \
+                --n_permutations 2 \
                 --quiet
 
             # ---- without L2 norm ----
@@ -75,13 +77,15 @@ for MODEL in "${MODELS[@]}"; do
             echo ""
             echo "▶ MoCo seed=${SEED} | ${LAYER} | ${MODEL} | L2norm=OFF"
 
-            python -m kendall_correlation_coefficient.apoptosis_r2_test \
+            python -m apoptosis_prediction.apoptosis_r2_test \
                 --features_cache "${CACHE}" \
                 --apoptosis_csv "${APOPTOSIS_CSV}" \
                 --model "${MODEL}" \
                 --output_dir "${SEED_OUT}" \
                 --seed 42 \
                 --cv_folds 5 \
+                --n_repeats 2 \
+                --n_permutations 2 \
                 --quiet
         done
     done
@@ -107,7 +111,7 @@ for MODEL in "${MODELS[@]}"; do
             echo ""
             echo "▶ noNorm seed=${SEED} | ${LAYER} | ${MODEL} | L2norm=ON"
 
-            python -m kendall_correlation_coefficient.apoptosis_r2_test \
+            python -m apoptosis_prediction.apoptosis_r2_test \
                 --features_cache "${CACHE}" \
                 --apoptosis_csv "${APOPTOSIS_CSV}" \
                 --model "${MODEL}" \
@@ -115,6 +119,8 @@ for MODEL in "${MODELS[@]}"; do
                 --output_dir "${SEED_OUT}" \
                 --seed 42 \
                 --cv_folds 5 \
+                --n_repeats 2 \
+                --n_permutations 2 \
                 --quiet
 
             # ---- without L2 norm ----
@@ -124,13 +130,15 @@ for MODEL in "${MODELS[@]}"; do
             echo ""
             echo "▶ noNorm seed=${SEED} | ${LAYER} | ${MODEL} | L2norm=OFF"
 
-            python -m kendall_correlation_coefficient.apoptosis_r2_test \
+            python -m apoptosis_prediction.apoptosis_r2_test \
                 --features_cache "${CACHE}" \
                 --apoptosis_csv "${APOPTOSIS_CSV}" \
                 --model "${MODEL}" \
                 --output_dir "${SEED_OUT}" \
                 --seed 42 \
                 --cv_folds 5 \
+                --n_repeats 2 \
+                --n_permutations 2 \
                 --quiet
         done
     done

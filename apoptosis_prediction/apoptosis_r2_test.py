@@ -21,6 +21,21 @@
 #   main()
 # ==============================================================================
 
+# --features_cache에 SAE 벡터 넣으면 그냥 SAE 벡터로 R^2 예측 가능한다.
+
+# !python -m kendall_correlation_coefficient.apoptosis_r2_test \
+#     --features_cache "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_no_L2norm_loss/features_cache_stage5_out_d8192_sparsity800_normrestored.npz" \
+#     --apoptosis_csv "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv" \
+#     --model "ridge" \
+#     --gap_l1_norm \
+#     --output_dir "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/apoptosis_r2_results \
+#     --seed 42 
+#     --cv_folds 5
+
+## cnn에서 나온 GAP값에 대해서, 세포 사멸율 예측시키는거. + GAP L2 norm 의 효과
+
+# XGBOOST에 대해서 rige랑 동일한 비율로 train/test 나눠서 (80/20) 진행한다.
+
 import os
 import argparse
 import numpy as np
@@ -33,7 +48,7 @@ if not _IN_COLAB:
 import matplotlib.pyplot as plt
 
 from sklearn.linear_model import RidgeCV
-from sklearn.model_selection import KFold
+from sklearn.model_selection import KFold, RepeatedKFold
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
 from scipy.stats import kendalltau, pearsonr
@@ -83,6 +98,8 @@ def get_args():
 
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--cv_folds", type=int, default=5)
+    p.add_argument("--n_repeats", type=int, default=2,
+                   help="Number of repeats for RepeatedKFold CV (e.g. 2 for 2×5=10 folds)")
     p.add_argument("--n_permutations", type=int, default=0,
                    help="Number of permutations for null distribution")
     p.add_argument("--output_dir", type=str, default="")
@@ -275,7 +292,7 @@ def plot_permutation_null(real_r2, perm_r2s, group, pval, output_path, dpi=200):
 # ==============================================================================
 # Core: evaluate R² with fixed feature mask
 # ==============================================================================
-def evaluate_r2(X, y, seed, cv_folds, n_permutations=0):
+def evaluate_r2(X, y, seed, cv_folds, n_permutations=0, n_repeats=1):
     """
     Ridge CV R² with pre-selected features (feature mask already applied).
 
@@ -286,6 +303,7 @@ def evaluate_r2(X, y, seed, cv_folds, n_permutations=0):
     seed : int
     cv_folds : int
     n_permutations : int — 0 to skip permutation test
+    n_repeats : int — number of repeats for RepeatedKFold (default 1 = standard KFold)
 
     Returns dict with r2_mean, r2_std, perm_pval, etc.
     """
@@ -298,8 +316,11 @@ def evaluate_r2(X, y, seed, cv_folds, n_permutations=0):
                 "perm_pval": None, "perm_r2s": np.array([])}
 
     def _cv_pass(X_in, y_in, debug=False):
-        """Run one full CV pass."""
-        kf = KFold(n_splits=cv_folds, shuffle=True, random_state=seed)
+        """Run one full CV pass (possibly repeated)."""
+        if n_repeats > 1:
+            kf = RepeatedKFold(n_splits=cv_folds, n_repeats=n_repeats, random_state=seed)
+        else:
+            kf = KFold(n_splits=cv_folds, shuffle=True, random_state=seed)
         fold_r2s = []
         y_pred = np.full_like(y_in, np.nan)
 
@@ -335,25 +356,49 @@ def evaluate_r2(X, y, seed, cv_folds, n_permutations=0):
     r2_mean = real_scores.mean()
     r2_std = real_scores.std()
 
-    # Permutation test
+    # Permutation test — parallelised, per-fold null
     if n_permutations > 0:
-        rng = np.random.RandomState(seed)
-        perm_r2s = np.zeros(n_permutations)
+        from joblib import Parallel, delayed
 
-        for i in range(n_permutations):
-            y_perm = rng.permutation(y_v)
-            perm_scores, _ = _cv_pass(X_v, y_perm)
-            perm_r2s[i] = perm_scores.mean()
+        def _single_perm_ridge(perm_seed):
+            rng_p = np.random.RandomState(perm_seed)
+            y_perm = rng_p.permutation(y_v)
+            kf_p = KFold(n_splits=cv_folds, shuffle=True, random_state=seed)
+            fold_r2s_p = []
+            for train_idx, test_idx in kf_p.split(y_perm):
+                pipe = Pipeline([
+                    ("scaler", StandardScaler()),
+                    ("ridge", RidgeCV(alphas=[0.01, 0.1, 1.0, 10.0, 100.0])),
+                ])
+                pipe.fit(X_v[train_idx], y_perm[train_idx])
+                pred = pipe.predict(X_v[test_idx])
+                ss_res = np.sum((y_perm[test_idx] - pred) ** 2)
+                ss_tot = np.sum((y_perm[test_idx] - y_perm[test_idx].mean()) ** 2)
+                fold_r2s_p.append(1.0 - ss_res / max(ss_tot, 1e-12))
+            return fold_r2s_p
 
-            if (i + 1) % 100 == 0:
-                logger.info(f"    Permutation {i+1}/{n_permutations}...")
+        perm_seeds = [seed + 10000 + i * 7 for i in range(n_permutations)]
+        logger.info(f"    Permutation: {n_permutations} perms × {cv_folds} folds "
+                    f"= {n_permutations * cv_folds} null R²s (parallel)")
 
-        perm_pval = (np.sum(perm_r2s >= r2_mean) + 1) / (n_permutations + 1)
+        results_list = Parallel(n_jobs=-1, prefer="threads")(
+            delayed(_single_perm_ridge)(ps) for ps in perm_seeds
+        )
+
+        # Flatten: all per-fold R²s in the null
+        perm_fold_r2s = np.array([r2 for fold_list in results_list for r2 in fold_list])
+        # Also keep per-permutation means for backward compat
+        perm_r2s = np.array([np.mean(fold_list) for fold_list in results_list])
+
+        # p-value: compare real mean R² against null per-fold R² distribution
+        perm_pval = (np.sum(perm_fold_r2s >= r2_mean) + 1) / (len(perm_fold_r2s) + 1)
         logger.info(f"    Permutation p={perm_pval:.4f} "
-                    f"(null mean={np.nanmean(perm_r2s):.4f}, real={r2_mean:.4f})")
+                    f"(null mean={perm_fold_r2s.mean():.4f}, real={r2_mean:.4f}, "
+                    f"n_null={len(perm_fold_r2s)})")
     else:
         perm_pval = None
         perm_r2s = np.array([])
+        perm_fold_r2s = np.array([])
         logger.info("    Permutation test skipped")
 
     return {
@@ -364,13 +409,14 @@ def evaluate_r2(X, y, seed, cv_folds, n_permutations=0):
         "y_pred": y_pred,
         "perm_pval": perm_pval,
         "perm_r2s": perm_r2s,
+        "perm_fold_r2s": perm_fold_r2s if n_permutations > 0 else np.array([]),
     }
 
 
 # ==============================================================================
 # Core: evaluate R² with XGBoost
 # ==============================================================================
-def evaluate_r2_xgboost(X, y, seed, cv_folds, args, n_permutations=0):
+def evaluate_r2_xgboost(X, y, seed, cv_folds, args, n_permutations=0, n_repeats=1):
     """
     XGBoost CV R² with early stopping.
     Measures maximum nonlinear predictive capacity.
@@ -389,7 +435,10 @@ def evaluate_r2_xgboost(X, y, seed, cv_folds, args, n_permutations=0):
                 "perm_pval": None, "perm_r2s": np.array([])}
 
     def _cv_pass(X_in, y_in, debug=False):
-        kf = KFold(n_splits=cv_folds, shuffle=True, random_state=seed)
+        if n_repeats > 1:
+            kf = RepeatedKFold(n_splits=cv_folds, n_repeats=n_repeats, random_state=seed)
+        else:
+            kf = KFold(n_splits=cv_folds, shuffle=True, random_state=seed)
         fold_r2s = []
         y_pred = np.full_like(y_in, np.nan)
 
@@ -451,22 +500,66 @@ def evaluate_r2_xgboost(X, y, seed, cv_folds, args, n_permutations=0):
     r2_mean = real_scores.mean()
     r2_std = real_scores.std()
 
-    # Permutation test
+    # Permutation test — parallelised, per-fold null
     if n_permutations > 0:
-        rng = np.random.RandomState(seed)
-        perm_r2s = np.zeros(n_permutations)
-        for i in range(n_permutations):
-            y_perm = rng.permutation(y_v)
-            perm_scores, _ = _cv_pass(X_v, y_perm)
-            perm_r2s[i] = perm_scores.mean()
-            if (i + 1) % 50 == 0:
-                logger.info(f"    Permutation {i+1}/{n_permutations}...")
-        perm_pval = (np.sum(perm_r2s >= r2_mean) + 1) / (n_permutations + 1)
+        from joblib import Parallel, delayed
+
+        def _single_perm_xgb(perm_seed):
+            rng_p = np.random.RandomState(perm_seed)
+            y_perm = rng_p.permutation(y_v)
+            kf_p = KFold(n_splits=cv_folds, shuffle=True, random_state=seed)
+            fold_r2s_p = []
+            for fold_i, (train_idx, test_idx) in enumerate(kf_p.split(y_perm)):
+                X_train, X_test = X_v[train_idx], X_v[test_idx]
+                y_train, y_test = y_perm[train_idx], y_perm[test_idx]
+                n_train = len(X_train)
+                n_val = max(1, int(n_train * 0.15))
+                val_idx = np.random.RandomState(seed + fold_i).permutation(n_train)[:n_val]
+                tr_idx = np.setdiff1d(np.arange(n_train), val_idx)
+                try:
+                    import torch as _th
+                    _use_gpu = _th.cuda.is_available()
+                except ImportError:
+                    _use_gpu = False
+                xgb_m = XGBRegressor(
+                    n_estimators=args.xgb_n_estimators,
+                    max_depth=args.xgb_max_depth,
+                    learning_rate=args.xgb_learning_rate,
+                    subsample=args.xgb_subsample,
+                    colsample_bytree=args.xgb_colsample_bytree,
+                    random_state=seed, n_jobs=1, verbosity=0,
+                    early_stopping_rounds=args.xgb_early_stopping,
+                    tree_method="hist",
+                    device="cuda" if _use_gpu else "cpu",
+                )
+                xgb_m.fit(X_train[tr_idx], y_train[tr_idx],
+                          eval_set=[(X_train[val_idx], y_train[val_idx])],
+                          verbose=False)
+                pred = xgb_m.predict(X_test)
+                ss_res = np.sum((y_test - pred) ** 2)
+                ss_tot = np.sum((y_test - y_test.mean()) ** 2)
+                fold_r2s_p.append(1.0 - ss_res / max(ss_tot, 1e-12))
+            return fold_r2s_p
+
+        perm_seeds = [seed + 10000 + i * 7 for i in range(n_permutations)]
+        logger.info(f"    Permutation: {n_permutations} perms × {cv_folds} folds "
+                    f"= {n_permutations * cv_folds} null R²s (parallel, XGBoost)")
+
+        results_list = Parallel(n_jobs=-1, prefer="threads")(
+            delayed(_single_perm_xgb)(ps) for ps in perm_seeds
+        )
+
+        perm_fold_r2s = np.array([r2 for fold_list in results_list for r2 in fold_list])
+        perm_r2s = np.array([np.mean(fold_list) for fold_list in results_list])
+
+        perm_pval = (np.sum(perm_fold_r2s >= r2_mean) + 1) / (len(perm_fold_r2s) + 1)
         logger.info(f"    Permutation p={perm_pval:.4f} "
-                    f"(null mean={np.nanmean(perm_r2s):.4f}, real={r2_mean:.4f})")
+                    f"(null mean={perm_fold_r2s.mean():.4f}, real={r2_mean:.4f}, "
+                    f"n_null={len(perm_fold_r2s)})")
     else:
         perm_pval = None
         perm_r2s = np.array([])
+        perm_fold_r2s = np.array([])
         logger.info("    Permutation test skipped")
 
     return {
@@ -477,6 +570,7 @@ def evaluate_r2_xgboost(X, y, seed, cv_folds, args, n_permutations=0):
         "y_pred": y_pred,
         "perm_pval": perm_pval,
         "perm_r2s": perm_r2s,
+        "perm_fold_r2s": perm_fold_r2s,
     }
 
 
@@ -555,12 +649,14 @@ def main():
     if args.model == "xgboost":
         eval_fn = lambda X, y: evaluate_r2_xgboost(
             X, y, args.seed, args.cv_folds, args,
-            n_permutations=args.n_permutations)
+            n_permutations=args.n_permutations,
+            n_repeats=args.n_repeats)
         model_tag = "XGBoost"
     else:
         eval_fn = lambda X, y: evaluate_r2(
             X, y, args.seed, args.cv_folds,
-            n_permutations=args.n_permutations)
+            n_permutations=args.n_permutations,
+            n_repeats=args.n_repeats)
         model_tag = "Ridge"
 
     # ── Evaluate: mutation-only ──
@@ -651,6 +747,7 @@ def main():
             "r2_std": float(res["r2_std"]),
             "r2_scores": res.get("r2_scores", []),
             "perm_pval": float(res["perm_pval"]) if res.get("perm_pval") is not None else None,
+            "perm_fold_r2s": res.get("perm_fold_r2s", np.array([])).tolist(),
         }
         json_results.append(jr)
 
@@ -661,6 +758,8 @@ def main():
             "layer": which_layer,
             "gap_l2_norm": args.gap_l2_norm,
             "features_cache": args.features_cache,
+            "n_repeats": args.n_repeats,
+            "cv_folds": args.cv_folds,
             "results": json_results,
         }, f, indent=2)
     logger.info(f"  Saved JSON: {json_path}")

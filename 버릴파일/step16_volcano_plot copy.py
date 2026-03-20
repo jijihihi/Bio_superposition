@@ -356,6 +356,32 @@ def plot_de_summary_bar(de_results_cnn, de_results_sae, mutations,
                       label=f"SAE ({de_results_sae[mutations[0]]['n_total']} alive neurons)",
                       color="#ED7D31", alpha=0.85, edgecolor="white")
 
+    # Count + percentage labels on top
+    for bars, counts, de_results in [
+        (bars_cnn, counts_cnn, de_results_cnn),
+        (bars_sae, counts_sae, de_results_sae),
+    ]:
+        for bar, count, mut in zip(bars, counts, mutations):
+            n_total = de_results[mut]["n_total"]
+            pct = 100 * count / max(n_total, 1)
+            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1,
+                    f"{count}", ha="center", va="bottom", fontsize=11,
+                    fontweight="bold")
+            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() - max(bar.get_height()*0.1, 2),
+                    f"({pct:.1f}%)", ha="center", va="top", fontsize=8,
+                    color="white", fontweight="bold")
+
+    # Up/Down breakdown below
+    for i, mut in enumerate(mutations):
+        cnn = de_results_cnn[mut]
+        sae = de_results_sae[mut]
+        ax.text(x[i] - width/2, -max(max(counts_cnn + counts_sae) * 0.06, 3),
+                f"↑{cnn['n_up']} ↓{cnn['n_down']}", ha="center",
+                fontsize=8, color="#5B9BD5")
+        ax.text(x[i] + width/2, -max(max(counts_cnn + counts_sae) * 0.06, 3),
+                f"↑{sae['n_up']} ↓{sae['n_down']}", ha="center",
+                fontsize=8, color="#ED7D31")
+
     ax.set_ylabel("Number of Class-Specific Features (DE)", fontsize=12)
     ax.set_title("Class-Specific Feature Discovery:\nCNN GAP Channels vs SAE Neurons",
                  fontsize=13, fontweight="bold")
@@ -364,7 +390,7 @@ def plot_de_summary_bar(de_results_cnn, de_results_sae, mutations,
     ax.legend(fontsize=10)
     ax.grid(True, alpha=0.15, axis="y")
     ymax = max(counts_cnn + counts_sae) * 1.15
-    ax.set_ylim(bottom=0, top=ymax)
+    ax.set_ylim(bottom=-ymax * 0.08, top=ymax)
 
     fig.tight_layout()
     fig.savefig(output_path, dpi=dpi, bbox_inches="tight")
@@ -542,42 +568,20 @@ def main():
                 cnn_per_mut[mut] += 1
 
     # ==========================================================================
-    # 3) Volcano plots (CNN + SAE — both have per-image Wilcoxon)
+    # 3) Volcano plots (CNN only — has per-image Wilcoxon)
     # ==========================================================================
-    # CNN volcano
     for mut in mutations:
         if mut in cnn_per_mut_de:
             plot_volcano(
                 cnn_per_mut_de[mut],
                 f"CNN GAP — {mut} vs Control",
                 "Channel",
-                os.path.join(args.output_dir, f"volcano_cnn_{mut}.svg"),
+                os.path.join(args.output_dir, f"volcano_cnn_{mut}.png"),
                 adj_p_threshold=args.adj_p,
                 min_log2fc=args.min_log2fc,
                 max_neg_log10p=args.max_neg_log10p,
                 dpi=args.dpi,
             )
-
-    # SAE volcano (per-image Wilcoxon on alive neurons)
-    for mut in mutations:
-        de_sae = compute_de_cnn(X_sae_alive, sc_sae, mut, min_log2fc=args.min_log2fc)
-        sig = np.abs(de_sae["log2fc"]) >= args.min_log2fc
-        if args.mut_only:
-            sig = sig & (de_sae["log2fc"] > 0)
-        de_sae["mask"] = sig
-        de_sae["n_sig"] = int(sig.sum())
-        de_sae["n_up"] = int(np.sum(sig & (de_sae["log2fc"] > 0)))
-        de_sae["n_down"] = int(np.sum(sig & (de_sae["log2fc"] < 0)))
-        plot_volcano(
-            de_sae,
-            f"SAE — {mut} vs Control",
-            "Neuron",
-            os.path.join(args.output_dir, f"volcano_sae_{mut}.svg"),
-            adj_p_threshold=args.adj_p,
-            min_log2fc=args.min_log2fc,
-            max_neg_log10p=args.max_neg_log10p,
-            dpi=args.dpi,
-        )
 
     # ==========================================================================
     # 4) Summary bar chart: deduped counts
@@ -600,7 +604,7 @@ def main():
 
     plot_de_summary_bar(
         de_cnn_summary, de_sae_summary, mutations,
-        os.path.join(args.output_dir, "de_summary_bar.svg"),
+        os.path.join(args.output_dir, "de_summary_bar.png"),
         dpi=args.dpi,
     )
 

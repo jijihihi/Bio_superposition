@@ -65,13 +65,15 @@ for SAE_SEED in "${SAE_SEEDS[@]}"; do
 
                 echo -ne "\r[$TOTAL] seed=$SAE_SEED l2=$L2_LABEL model=$MODEL filter=$FILTER_LABEL   "
 
-                python -m kendall_correlation_coefficient.apoptosis_r2_test \
+                python -m apoptosis_prediction.apoptosis_r2_test \
                     --features_cache "$CACHE" \
                     --apoptosis_csv "$APOPTOSIS_CSV" \
                     --model "$MODEL" \
                     --dead_threshold 5e-5 \
                     --seed 42 \
                     --cv_folds 5 \
+                    --n_repeats 2 \
+                    --n_permutations 4 \
                     --output_dir "$OUT_DIR" \
                     --quiet \
                     $GAP_L2 \

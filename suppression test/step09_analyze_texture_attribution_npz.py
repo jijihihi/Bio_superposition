@@ -419,7 +419,7 @@ def export_class_summary_csv(df, neuron_to_class, output_path, metric="gap"):
     out_df = pd.DataFrame(rows)
 
     # abs_proportion = mean(|vals_i|) / Σ_j mean(|vals_j|)  (matches analyze_by_mutation, sums to 1)
-    # proportion_std = std_i / Σ_j mean(|vals_j|)  (same denominator → same scale for error bars)
+    # proportion_std = abs_std_i / Σ_j mean(|vals_j|)  (same denominator, std of |vals|)
     out_df["abs_proportion"] = np.nan
     out_df["proportion_std"] = np.nan
     for cls in out_df["class"].unique():
@@ -430,7 +430,7 @@ def export_class_summary_csv(df, neuron_to_class, output_path, metric="gap"):
             out_df.loc[comp_mask, "abs_proportion"] = (
                 out_df.loc[comp_mask, "abs_mean"] / denom)
             out_df.loc[comp_mask, "proportion_std"] = (
-                out_df.loc[comp_mask, "std"] / denom)
+                out_df.loc[comp_mask, "abs_std"] / denom)
         # Categories
         cat_mask = (out_df["class"] == cls) & (out_df["type"] == "category")
         cat_denom = out_df.loc[cat_mask, "abs_mean"].sum()
@@ -438,7 +438,7 @@ def export_class_summary_csv(df, neuron_to_class, output_path, metric="gap"):
             out_df.loc[cat_mask, "abs_proportion"] = (
                 out_df.loc[cat_mask, "abs_mean"] / cat_denom)
             out_df.loc[cat_mask, "proportion_std"] = (
-                out_df.loc[cat_mask, "std"] / cat_denom)
+                out_df.loc[cat_mask, "abs_std"] / cat_denom)
 
     out_df.to_csv(output_path, index=False, float_format="%.6f")
     print(f"Saved class summary: {output_path}  ({len(out_df)} rows)")
@@ -485,8 +485,95 @@ def export_per_neuron_with_class_csv(df, neuron_to_class, output_path, metric="g
         rows.append(row)
 
     out_df = pd.DataFrame(rows)
+
+    # ── Per-neuron absolute proportions: |frac_i| / Σ_j|frac_j| (sums to 1 per neuron) ──
+    frac_col_names = [f"{c}_frac" for c in comp_names]
+    abs_frac = out_df[frac_col_names].abs()
+    row_denom = abs_frac.sum(axis=1).replace(0, np.nan)  # avoid div-by-zero
+    for c in comp_names:
+        out_df[f"{c}_abs_prop"] = abs_frac[f"{c}_frac"] / row_denom
+
+    # Category-level absolute proportions (sum of component abs_prop within category)
+    out_df["interaction_abs_prop"] = out_df[[f"{c}_abs_prop" for c in ["RG_inter", "RB_inter", "GB_inter"]]].sum(axis=1)
+    out_df["local_shape_abs_prop"] = out_df[[f"{c}_abs_prop" for c in ["R_local", "G_local", "B_local"]]].sum(axis=1)
+    out_df["texture_abs_prop"] = out_df[[f"{c}_abs_prop" for c in ["R_tex", "G_tex", "B_tex"]]].sum(axis=1)
+    if has_rot:
+        out_df["reference_abs_prop"] = out_df[[f"{c}_abs_prop" for c in ["R_ref", "G_ref", "B_ref"]]].sum(axis=1)
+
     out_df.to_csv(output_path, index=False, float_format="%.6f")
     print(f"Saved per-neuron with class: {output_path}  ({len(out_df)} neurons)")
+    return out_df
+
+
+# ==============================================================================
+# Box Plot Visualization
+# ==============================================================================
+
+CLASS_PALETTE = {
+    'GBA': '#D62728',
+    'LRRK2': '#1F77B4',
+    'LRRK2_SNCA': '#2CA02C',
+    'SNCA': '#FF7F0E',
+}
+
+import seaborn as sns
+
+def plot_abs_prop_boxplot(per_neuron_df, output_path, label=""):
+    """Box plot of per-neuron absolute proportions by mutation group.
+    Shows distribution of |frac_i| / Σ|frac_j| for each component."""
+    comp_names = [
+        'RG_inter', 'RB_inter', 'GB_inter',
+        'R_local', 'G_local', 'B_local',
+        'R_ref', 'G_ref', 'B_ref',
+        'R_tex', 'G_tex', 'B_tex',
+    ]
+    # Filter to components that exist as abs_prop columns
+    abs_prop_cols = [f"{c}_abs_prop" for c in comp_names if f"{c}_abs_prop" in per_neuron_df.columns]
+    comp_labels = [c.replace("_abs_prop", "") for c in abs_prop_cols]
+    if not abs_prop_cols:
+        print("  No abs_prop columns found, skipping box plot.")
+        return
+
+    # Exclude very small multi-mutation groups
+    df_plot = per_neuron_df[per_neuron_df['mutation_group'] != 'GBA_LRRK2'].copy()
+    if len(df_plot) == 0:
+        return
+
+    # Wide → long
+    df_long = df_plot.melt(
+        id_vars=['neuron_id', 'mutation_group'],
+        value_vars=abs_prop_cols,
+        var_name='component', value_name='abs_prop'
+    )
+    df_long['component'] = df_long['component'].str.replace('_abs_prop', '', regex=False)
+    df_long['component'] = pd.Categorical(
+        df_long['component'], categories=comp_labels, ordered=True)
+
+    # Style
+    plt.rcParams['font.family'] = 'DejaVu Sans'
+    plt.rcParams['pdf.fonttype'] = 42
+    sns.set_style("ticks")
+
+    fig, ax = plt.subplots(figsize=(16, 6))
+    sns.boxplot(
+        data=df_long, x='component', y='abs_prop', hue='mutation_group',
+        palette=CLASS_PALETTE, fliersize=2, linewidth=0.8, ax=ax,
+        showmeans=True,
+        meanprops=dict(marker='D', markerfacecolor='black', markeredgecolor='black', markersize=4),
+    )
+    ax.set_title(f'Absolute Proportion per Component ({label})',
+                 fontsize=14, pad=15, weight='bold')
+    ax.set_xlabel('Component', fontsize=12, labelpad=10)
+    ax.set_ylabel('Absolute Proportion (per neuron)', fontsize=12, labelpad=10)
+    ax.legend(title='Mutation', frameon=False, fontsize=10, title_fontsize=11)
+    plt.xticks(rotation=45, ha='right')
+    sns.despine()
+    plt.tight_layout()
+
+    pdf_path = output_path.replace('.csv', '_boxplot.pdf')
+    plt.savefig(pdf_path, format='pdf', dpi=300)
+    print(f"  Saved box plot: {pdf_path}")
+    plt.show()
 
 
 # ==============================================================================
@@ -728,10 +815,10 @@ def get_args():
     p.add_argument("--concept_dir", type=str,
                    default=CONCEPT_DIR,
                    help="Path to concept directories (concept_XXXX_CLASS)")
-    p.add_argument("--linearity_min", type=float, default=0.0,
-                   help="Minimum linearity to include a neuron (default: 0.0 = no filter)")
-    p.add_argument("--linearity_max", type=float, default=999,
-                   help="Maximum linearity to include a neuron (default: 999 = no filter)")
+    p.add_argument("--linearity_min", type=float, default=0.3,
+                   help="Minimum linearity to include a neuron (default: 0.3)")
+    p.add_argument("--linearity_max", type=float, default=0.7,
+                   help="Maximum linearity to include a neuron (default: 0.7)")
     p.add_argument("--min_spatial_frac", type=float, default=0.1,
                    help="Minimum (orig-baseline)/orig to include a neuron. "
                         "Filters out neurons with negligible spatial info (default: 0.05)")
@@ -850,8 +937,10 @@ def main():
                 # Per-neuron with class label CSV (for figure generation)
                 neuron_cls_csv = npz_paths[label].replace(
                     ".npz", f"_{m}_per_neuron_with_class.csv")
-                export_per_neuron_with_class_csv(
+                pn_df = export_per_neuron_with_class_csv(
                     df, neuron_to_class, neuron_cls_csv, metric=m)
+                # Box plot of per-neuron absolute proportions
+                plot_abs_prop_boxplot(pn_df, neuron_cls_csv, label=f"{label} ({m})")
 
     # Cross-condition comparison
     if len(dfs) >= 2:

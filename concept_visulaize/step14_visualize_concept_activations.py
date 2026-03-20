@@ -5,6 +5,10 @@
 # - Visualize concept activations via bilinear interpolation
 # ==============================================================================
 
+
+# 이거할때는 GAP_csv 기준. GAP_csv는 dead threshold가 5e-4 기준으로 했기때문에 통과된 피처맴 개수가 적은것.
+
+
 import os
 import io
 import csv
@@ -90,7 +94,7 @@ spatial activation map에 L2 norm을 적용하는 것은 의미가 없습니다.
 # import sys
 # sys.argv = [
 #     "step14",
-#     "--features_cache","/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_sparsity3200_loss_L2norm곱해줌/features_cache_stage5_out_normrestored_all.npz",
+#     "--features_cache","/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_sparsity3200_loss_L2norm곱해줌/features_cache_stage5_out_normrestored_all.npz",   # L2 norm 된 상태. gap_csv 만들때와 동일하게. strict 사용.
 #     "--sae_ckpt", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_sparsity3200_loss_L2norm곱해줌/stage5_out_d4096_gated_sp3200.0_aux0.03125_tied_ep008.pt",
 #     "--apoptosis_csv", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv",
 #     "--model_state_path", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/best_model.pt",
@@ -110,6 +114,8 @@ spatial activation map에 L2 norm을 적용하는 것은 의미가 없습니다.
 # from sae_project.step14_visualize_concept_activations import main
 # main()
 
+# bilinear interpolation을 할때 dead threshold를 설정 안했고 alive 로 그냥 햇기 때문에 "--dead_threshold", "5e-4" 된 상태로 된거. 이거는 usage ema 기준. GAP_csv 뽑아낸 방식 (strict)으로 DE filter한것.abs
+# 그렇다면 sparsity 800 인 경우도, dead threshold 잘 만 설정하면 보기 좋은 애들 많이 나오는거 아닐까?
 
 
 
