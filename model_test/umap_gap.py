@@ -12,8 +12,8 @@
 # ==============================================================================
 
 # python -m model_test.umap_gap \
-#     --ckpt_path /home/ubuntu/model-east3/outputs/MoCo_seed45/best_model.pt \
-#     --save_dir /home/ubuntu/model-east3/outputs/MoCo_seed45 \
+#     --ckpt_path /home/ubuntu/model-east3/outputs/MoCo_seed87/best_model.pt \
+#     --save_dir /home/ubuntu/model-east3/outputs/MoCo_seed87 \
 #     --shard_root /home/ubuntu/model-east3/wds_shards_tar \
 #     --samples_per_class 5000
 
@@ -34,6 +34,7 @@ _IN_COLAB = "google.colab" in sys.modules
 if not _IN_COLAB:
     matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import seaborn as sns
 
 try:
     import umap
@@ -57,11 +58,16 @@ logger = get_logger("umap_gap")
 
 CLASS_NAMES = {0: "Control", 1: "SNCA", 2: "GBA", 3: "LRRK2"}
 CLASS_COLORS = {
-    "Control": "#4C72B0",
-    "SNCA": "#DD8452",
-    "GBA": "#55A868",
-    "LRRK2": "#C44E52",
+    "Control": "#2176AE",   # vivid blue
+    "SNCA": "#E8553A",      # vivid red-orange
+    "GBA": "#1DB954",       # vivid green
+    "LRRK2": "#9B59B6",     # vivid purple
 }
+
+
+plt.rcParams['svg.fonttype'] = 'none'
+plt.rcParams['pdf.fonttype'] = 42      
+sns.set_style("ticks")
 
 
 # ==============================================================================
@@ -109,11 +115,14 @@ def extract_features(encoder, loader, device, use_bf16=True):
 # ==============================================================================
 # UMAP plot
 # ==============================================================================
-def plot_umap(coords, labels, title, output_path, 
-              point_size=3.0, alpha=0.4, dpi=200, info_text=""):
-    """Save UMAP 2D scatter colored by class."""
-    fig, ax = plt.subplots(1, 1, figsize=(10, 8))
-    
+def plot_umap(coords, labels, output_path,
+              point_size=1.5, alpha=0.2, dpi=300, info_text=""):
+    """Save publication-quality UMAP 2D scatter colored by class (SVG + PNG)."""
+    fig, ax = plt.subplots(1, 1, figsize=(7, 7))
+
+    sns.despine()
+
+    # Draw in reverse order so minority classes are on top
     plot_order = ["Control", "SNCA", "GBA", "LRRK2"]
     for cls_name in plot_order:
         cls_id = [k for k, v in CLASS_NAMES.items() if v == cls_name][0]
@@ -122,30 +131,51 @@ def plot_umap(coords, labels, title, output_path,
             continue
         ax.scatter(
             coords[mask, 0], coords[mask, 1],
-            s=point_size, alpha=alpha,
-            label=f"{cls_name} (n={mask.sum()})",
+            s=point_size, alpha=alpha, rasterized=True,
+            label=f"{cls_name} (n={mask.sum():,})",
             c=CLASS_COLORS[cls_name], edgecolors="none",
         )
 
-    ax.set_xlabel("UMAP 1", fontsize=12)
-    ax.set_ylabel("UMAP 2", fontsize=12)
-    ax.set_title(title, fontsize=14, fontweight="bold")
+    # --- Clean publication style ---
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_xlabel("")
+    ax.set_ylabel("")
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    ax.set_aspect("equal", adjustable="datalim")
 
+    # Info text (easily removable in Illustrator as a text object)
     if info_text:
         ax.text(0.02, 0.02, info_text, transform=ax.transAxes,
-                fontsize=9, verticalalignment="bottom",
-                bbox=dict(boxstyle="round,pad=0.4", facecolor="white", alpha=0.8))
+                fontsize=8, verticalalignment="bottom", fontstyle="italic",
+                color="#555555",
+                bbox=dict(boxstyle="round,pad=0.3", facecolor="white",
+                          edgecolor="#cccccc", alpha=0.85))
 
-    ax.legend(loc="upper right", markerscale=3, fontsize=10, framealpha=0.9)
-    ax.set_aspect("equal", adjustable="datalim")
-    ax.grid(True, alpha=0.2)
+    # Legend
+    leg = ax.legend(loc="upper right", markerscale=4, fontsize=9,
+                    frameon=True, framealpha=0.9, edgecolor="#cccccc",
+                    handletextpad=0.3, borderpad=0.4)
+    for lh in leg.legend_handles:
+        lh.set_alpha(1.0)  # full opacity in legend
 
-    fig.tight_layout()
-    fig.savefig(output_path, dpi=dpi, bbox_inches="tight")
+    fig.tight_layout(pad=0.3)
+
+    # Save PNG
+    fig.savefig(output_path, dpi=dpi, bbox_inches="tight",
+                facecolor="white", edgecolor="none")
+    logger.info(f"Saved PNG : {output_path}")
+
+    # Save SVG (with rasterized scatter for small file size)
+    svg_path = os.path.splitext(output_path)[0] + ".svg"
+    fig.savefig(svg_path, format="svg", bbox_inches="tight",
+                facecolor="white", edgecolor="none")
+    logger.info(f"Saved SVG : {svg_path}")
+
     if _IN_COLAB:
         plt.show()
     plt.close(fig)
-    logger.info(f"Saved UMAP: {output_path}")
 
 
 # ==============================================================================
@@ -173,7 +203,7 @@ def get_args():
 
     # UMAP
     p.add_argument("--n_neighbors", type=int, default=15)
-    p.add_argument("--min_dist", type=float, default=0.3)
+    p.add_argument("--min_dist", type=float, default=0.15)
     p.add_argument("--metric", type=str, default="cosine",
                    choices=["euclidean", "cosine", "correlation"])
     p.add_argument("--n_components", type=int, default=2)
@@ -182,9 +212,9 @@ def get_args():
     p.add_argument("--img_size", type=int, default=128)
     p.add_argument("--batch_size", type=int, default=128)
     p.add_argument("--num_workers", type=int, default=4)
-    p.add_argument("--dpi", type=int, default=200)
+    p.add_argument("--dpi", type=int, default=300)
     p.add_argument("--point_size", type=float, default=3.0)
-    p.add_argument("--alpha", type=float, default=0.4)
+    p.add_argument("--alpha", type=float, default=0.35)
 
     return p.parse_args()
 
@@ -300,15 +330,12 @@ def main():
     logger.info(f"Saved coords: {npz_path}")
 
     # Plot
-    title = (f"UMAP – {model_name} (GAP + L2 norm)\n"
-             f"n_neighbors={args.n_neighbors}, min_dist={args.min_dist}")
-    info = (f"Samples: {X.shape[0]}\n"
-            f"Features: {X.shape[1]}D (GAP + L2 norm)\n"
-            f"Metric: {args.metric}")
+    info = (f"n={X.shape[0]:,}  dim={X.shape[1]}\n"
+            f"nn={args.n_neighbors}  min_dist={args.min_dist}  {args.metric}")
 
     png_path = os.path.join(output_dir,
         f"umap_{model_name}_nn{args.n_neighbors}.png")
-    plot_umap(coords, y, title, png_path,
+    plot_umap(coords, y, png_path,
               point_size=args.point_size, alpha=args.alpha,
               dpi=args.dpi, info_text=info)
 

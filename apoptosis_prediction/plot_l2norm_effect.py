@@ -33,6 +33,11 @@ import matplotlib.pyplot as plt
 
 from scipy import stats
 from scipy.stats import wilcoxon
+import seaborn as sns
+
+plt.rcParams['svg.fonttype'] = 'none'
+plt.rcParams['pdf.fonttype'] = 42      
+sns.set_style("ticks")
 
 
 # ==============================================================================
@@ -211,169 +216,163 @@ def draw_bracket(ax, x1, x2, y, h, text, fontsize=9):
 # Main plot
 # ==============================================================================
 def plot_l2norm_effect(stats_off, stats_on, wilcoxon_results, null_perm,
-                       results_dir, training_config, layer, model):
+                       results_dir, training_config, layer, model,
+                       folds=None, cfg_on=None, cfg_off=None):
     """
-    Bar plot: L2 OFF vs L2 ON for each gene, with null permutation line.
+    Paired dot-line plot: L2 OFF vs L2 ON, one figure per mutation.
+    Dots = per-seed mean R² (averaged over CV folds).
+    P-value & effect size r are computed from individual CV folds.
+    Each mutation saved as a separate file.
     """
-    n_groups = len(GROUPS_OF_INTEREST)
-    bar_width = 0.28
-    gap = 0.05
+    if folds is None or cfg_on is None or cfg_off is None:
+        print("  ⚠ No raw folds data — cannot create paired plot")
+        return
 
-    fig, ax = plt.subplots(figsize=(8, 5.5))
+    # ── Build per-seed-mean paired data & per-fold paired data ──
+    fold_lookup = defaultdict(dict)  # (config, grp) -> {(seed, fold_idx): r2}
+    for row in folds:
+        if row["layer"] != layer or row["model"] != model:
+            continue
+        if row["config"] not in (cfg_on, cfg_off):
+            continue
+        if row["group"] not in GROUPS_OF_INTEREST:
+            continue
+        key = (row["config"], row["group"])
+        pair_key = (row["seed"], row["fold_idx"])
+        fold_lookup[key][pair_key] = row["r2"]
 
-    x_centers = np.arange(n_groups)
-    offsets = [-(bar_width / 2 + gap / 2), (bar_width / 2 + gap / 2)]
+    for grp in GROUPS_OF_INTEREST:
+        gene_label = GENE_LABELS[grp]
 
-    max_heights = {}
+        on_dict = fold_lookup.get((cfg_on, grp), {})
+        off_dict = fold_lookup.get((cfg_off, grp), {})
+        common_fold_keys = sorted(set(on_dict.keys()) & set(off_dict.keys()))
 
-    # --- Bars ---
-    for cond_idx, (label, stats_dict, color_key) in enumerate([
-        ("L2 OFF", stats_off, "raw"),
-        ("L2 ON",  stats_on,  "l2norm"),
-    ]):
-        means = []
-        ci_lo_errs = []
-        ci_hi_errs = []
-        positions = []
-
-        for grp_idx, grp in enumerate(GROUPS_OF_INTEREST):
-            if grp in stats_dict:
-                d = stats_dict[grp]
-                means.append(d["mean"])
-                ci_lo_errs.append(d["mean"] - d["ci_lo"])
-                ci_hi_errs.append(d["ci_hi"] - d["mean"])
-                top = d["ci_hi"]
-            else:
-                means.append(0)
-                ci_lo_errs.append(0)
-                ci_hi_errs.append(0)
-                top = 0
-
-            pos = x_centers[grp_idx] + offsets[cond_idx]
-            positions.append(pos)
-
-            if grp_idx not in max_heights or top > max_heights[grp_idx]:
-                max_heights[grp_idx] = top
-
-        positions = np.array(positions)
-        errors = np.array([ci_lo_errs, ci_hi_errs])
-
-        ax.bar(
-            positions, means,
-            width=bar_width,
-            color=L2_COLORS[color_key],
-            edgecolor="white",
-            linewidth=0.5,
-            label=label,
-            yerr=errors,
-            capsize=4,
-            error_kw={"linewidth": 1.0, "capthick": 1.0},
-            zorder=3,
-        )
-
-    # --- Null permutation line ---
-    for grp_idx, grp in enumerate(GROUPS_OF_INTEREST):
-        null_vals = []
-        for cond_cfg in [CONFIG_PAIRS[training_config][1],
-                         CONFIG_PAIRS[training_config][0]]:
-            matches = [r for r in null_perm
-                       if r["config"] == cond_cfg
-                       and r["layer"] == layer
-                       and r["model"] == model
-                       and r["group"] == grp]
-            if matches:
-                null_vals.append(matches[0]["null_mean_r2"])
-
-        if null_vals:
-            null_mean = np.mean(null_vals)
-            null_clipped = max(0.0, null_mean)
-
-            x_left = x_centers[grp_idx] - bar_width - gap
-            x_right = x_centers[grp_idx] + bar_width + gap
-
-            ax.hlines(
-                null_clipped, x_left, x_right,
-                colors="#888888", linewidth=1.5, linestyles="--", zorder=4,
-                label="Null Permutation" if grp_idx == 0 else None,
-            )
-
-            # Annotate null value (show raw value even if clipped)
-            ax.text(
-                x_right + 0.02, null_clipped,
-                f"null={null_mean:.4f}",
-                fontsize=7, color="#666666", va="center", ha="left",
-            )
-
-    # --- Wilcoxon brackets ---
-    for grp_idx, grp in enumerate(GROUPS_OF_INTEREST):
-        if grp not in wilcoxon_results:
+        if len(common_fold_keys) < 5:
+            print(f"  ⚠ {gene_label}: only {len(common_fold_keys)} pairs — skipping")
             continue
 
-        w = wilcoxon_results[grp]
-        pval = w["p_value"]
-        stars = pval_to_stars(pval)
+        # Per-fold arrays (for stats)
+        fold_r2_off = np.array([off_dict[k] for k in common_fold_keys])
+        fold_r2_on = np.array([on_dict[k] for k in common_fold_keys])
 
-        x1 = x_centers[grp_idx] + offsets[0]
-        x2 = x_centers[grp_idx] + offsets[1]
+        # Per-seed mean (for plotting)
+        seed_off = defaultdict(list)
+        seed_on = defaultdict(list)
+        for (seed, fold_idx) in common_fold_keys:
+            seed_off[seed].append(off_dict[(seed, fold_idx)])
+            seed_on[seed].append(on_dict[(seed, fold_idx)])
 
-        base_y = max_heights.get(grp_idx, 0)
-        bracket_y = base_y + 0.02
-        bracket_h = 0.008
+        seeds = sorted(seed_off.keys())
+        seed_mean_off = np.array([np.mean(seed_off[s]) for s in seeds])
+        seed_mean_on = np.array([np.mean(seed_on[s]) for s in seeds])
+        n_seeds = len(seeds)
 
-        if pval < 0.001:
-            p_text = f"{stars}\np<0.001"
-        else:
-            p_text = f"{stars}\np={pval:.3f}"
+        # ── Figure ──
+        fig, ax = plt.subplots(figsize=(4.0, 5.2))
+        x_off, x_on = 0, 1
 
-        draw_bracket(ax, x1, x2, bracket_y, bracket_h, p_text, fontsize=8)
+        # Compute jitter once — shared by lines and dots
+        jitter_rng = np.random.default_rng(42)
+        jitter = jitter_rng.uniform(-0.06, 0.06, size=n_seeds)
 
-    # --- Formatting ---
-    ax.set_xticks(x_centers)
-    ax.set_xticklabels(
-        [GENE_LABELS[g] for g in GROUPS_OF_INTEREST],
-        fontsize=12, fontweight="bold"
-    )
-    ax.set_ylabel("R² (Cell Death Rate Prediction)", fontsize=11, fontweight="bold")
-    ax.set_title(
-        f"GAP L2 Norm Effect on Cell Death Prediction\n"
-        f"({training_config} | {layer} | {model})",
-        fontsize=13, fontweight="bold", pad=15,
-    )
+        # Individual paired lines (semi-transparent, jittered to match dots)
+        for i in range(n_seeds):
+            ax.plot(
+                [x_off + jitter[i], x_on + jitter[i]],
+                [seed_mean_off[i], seed_mean_on[i]],
+                color="#AAAAAA", alpha=0.35, linewidth=1.0, zorder=2,
+            )
 
-    ax.legend(
-        fontsize=9, loc="upper left",
-        framealpha=0.9, edgecolor="gray",
-    )
+        # Individual dots (same jitter as lines)
+        ax.scatter(
+            x_off + jitter, seed_mean_off,
+            s=40, color=L2_COLORS["raw"], alpha=0.7,
+            edgecolors="white", linewidths=0.5, zorder=4,
+        )
+        ax.scatter(
+            x_on + jitter, seed_mean_on,
+            s=40, color=L2_COLORS["l2norm"], alpha=0.7,
+            edgecolors="white", linewidths=0.5, zorder=4,
+        )
 
-    ax.grid(axis="y", alpha=0.2, zorder=0)
-    ax.set_axisbelow(True)
+        # Grand mean (RED, prominent)
+        grand_mean_off = seed_mean_off.mean()
+        grand_mean_on = seed_mean_on.mean()
 
-    y_min, y_max = ax.get_ylim()
-    if y_min > 0:
-        ax.set_ylim(bottom=0)
-    y_min, y_max = ax.get_ylim()
-    ax.set_ylim(top=y_max * 1.15)
+        ax.plot(
+            [x_off, x_on], [grand_mean_off, grand_mean_on],
+            color="#D32F2F", linewidth=2.8, zorder=6, solid_capstyle="round",
+        )
+        ax.scatter(
+            [x_off, x_on], [grand_mean_off, grand_mean_on],
+            s=90, color="#D32F2F", edgecolors="white", linewidths=1.8,
+            zorder=7,
+        )
 
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
+        # Annotate grand means
+        ax.text(x_off - 0.15, grand_mean_off, f"{grand_mean_off:.3f}",
+                fontsize=9, color="#D32F2F", fontweight="bold",
+                ha="right", va="center")
+        ax.text(x_on + 0.15, grand_mean_on, f"{grand_mean_on:.3f}",
+                fontsize=9, color="#D32F2F", fontweight="bold",
+                ha="left", va="center")
 
-    fig.tight_layout()
+        # ── Wilcoxon p-value + effect size r (from individual folds) ──
+        if grp in wilcoxon_results:
+            w = wilcoxon_results[grp]
+            pval = w["p_value"]
+            n_folds = w["n_pairs"]
+            stars = pval_to_stars(pval)
 
-    # --- Save ---
-    base_name = f"l2norm_effect_{training_config}_{layer}_{model}"
-    save_pdf = os.path.join(results_dir, f"{base_name}.pdf")
-    save_png = os.path.join(results_dir, f"{base_name}.png")
-    save_svg = os.path.join(results_dir, f"{base_name}.svg")
+            # Effect size: r = Z / sqrt(N)
+            # Approximate Z from p-value (two-sided)
+            from scipy.stats import norm
+            z_val = abs(norm.ppf(pval / 2)) if pval > 0 else 5.0
+            effect_r = z_val / np.sqrt(n_folds)
 
-    fig.savefig(save_pdf, dpi=300, bbox_inches="tight")
-    fig.savefig(save_png, dpi=200, bbox_inches="tight")
-    fig.savefig(save_svg, bbox_inches="tight")
+            # Build annotation
+            if pval < 0.001:
+                p_str = f"{stars}\np<0.001\nr={effect_r:.2f}"
+            else:
+                p_str = f"{stars}\np={pval:.3f}\nr={effect_r:.2f}"
 
-    plt.close(fig)
-    print(f"\n  Saved L2 norm effect plot:")
-    print(f"    PDF: {save_pdf}")
-    print(f"    PNG: {save_png}")
-    print(f"    SVG: {save_svg}")
+            y_top = max(seed_mean_off.max(), seed_mean_on.max())
+            y_bot = min(seed_mean_off.min(), seed_mean_on.min())
+            ax.text(0.5, y_top + (y_top - y_bot) * 0.08,
+                    p_str, fontsize=9, fontweight="bold",
+                    ha="center", va="bottom", color="black")
+
+        # ── Y-axis zoom to data range ──
+        all_vals = np.concatenate([seed_mean_off, seed_mean_on])
+        data_min = all_vals.min()
+        data_max = all_vals.max()
+        margin = (data_max - data_min) * 0.3
+        ax.set_ylim(data_min - margin, data_max + margin * 1.8)
+
+        # ── Formatting ──
+        ax.set_xticks([x_off, x_on])
+        ax.set_xticklabels(["L2 OFF", "L2 ON"], fontsize=12, fontweight="bold")
+        ax.set_ylabel("R² (Cell Death Prediction)", fontsize=10, fontweight="bold")
+        ax.set_title(
+            f"{gene_label} — GAP L2 Norm Effect\n"
+            f"({training_config} | {layer} | {model})",
+            fontsize=12, fontweight="bold", pad=10,
+        )
+        ax.set_xlim(-0.4, 1.4)
+        ax.grid(axis="y", alpha=0.15, zorder=0)
+        ax.set_axisbelow(True)
+        sns.despine(ax=ax)
+
+        fig.tight_layout()
+
+        # ── Save per-mutation ──
+        base = f"l2norm_effect_{training_config}_{layer}_{model}_{gene_label}"
+        for ext in ["pdf", "png", "svg"]:
+            path = os.path.join(results_dir, f"{base}.{ext}")
+            fig.savefig(path, dpi=300 if ext != "png" else 200, bbox_inches="tight")
+        plt.close(fig)
+        print(f"  Saved {gene_label}: {base}.svg / .png / .pdf")
 
 
 # ==============================================================================
@@ -495,6 +494,8 @@ def main():
     )
     args = parser.parse_args()
 
+    sns.despine()
+
     # Resolve config pair
     cfg_on, cfg_off = CONFIG_PAIRS[args.training_config]
 
@@ -536,6 +537,7 @@ def main():
     plot_l2norm_effect(
         stats_off, stats_on, wilcoxon_results, null_perm,
         args.results_dir, args.training_config, args.layer, args.model,
+        folds=folds, cfg_on=cfg_on, cfg_off=cfg_off,
     )
 
     # Save CSV

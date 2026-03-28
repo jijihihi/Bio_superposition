@@ -47,7 +47,7 @@ def get_args():
     )
     parser.add_argument(
         "--output_csv", type=str,
-        default=r"C:\Users\admin\Desktop\세포사멸율_pooled_결과_7200",
+        default=r"C:\Users\admin\Desktop\세포사멸율_pooled_결과_7200_03.27",
         help="Output CSV file path"
     )
     
@@ -96,100 +96,100 @@ def apply_preprocessing(image, gaussian_sigma=1.0, rolling_ball_radius=0):
 # HIGH THRESHOLD ALGORITHMS (수학적 근거 있음)
 # ============================================================================
 
-def rosin_threshold(data):
-    """
-    Rosin's Unimodal Thresholding (Rosin, 2001)
-    - 분포의 peak에서 tail까지 선을 긋고, 가장 먼 점을 threshold로 사용
-    - 배경 >> foreground인 skewed 분포에 적합 (CytoxGreen처럼)
-    - 높은 threshold 경향
-    """
-    hist, bin_edges = np.histogram(data.ravel(), bins=256)
-    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+# def rosin_threshold(data):
+#     """
+#     Rosin's Unimodal Thresholding (Rosin, 2001)
+#     - 분포의 peak에서 tail까지 선을 긋고, 가장 먼 점을 threshold로 사용
+#     - 배경 >> foreground인 skewed 분포에 적합 (CytoxGreen처럼)
+#     - 높은 threshold 경향
+#     """
+#     hist, bin_edges = np.histogram(data.ravel(), bins=256)
+#     bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
     
-    # Peak 찾기 (histogram의 최댓값)
-    peak_idx = np.argmax(hist)
+#     # Peak 찾기 (histogram의 최댓값)
+#     peak_idx = np.argmax(hist)
     
-    # Tail 찾기 (histogram 끝에서 0이 아닌 마지막 bin)
-    nonzero_indices = np.where(hist > 0)[0]
-    if len(nonzero_indices) == 0:
-        return bin_centers[128]
-    tail_idx = nonzero_indices[-1]
+#     # Tail 찾기 (histogram 끝에서 0이 아닌 마지막 bin)
+#     nonzero_indices = np.where(hist > 0)[0]
+#     if len(nonzero_indices) == 0:
+#         return bin_centers[128]
+#     tail_idx = nonzero_indices[-1]
     
-    if peak_idx >= tail_idx:
-        return bin_centers[peak_idx]
+#     if peak_idx >= tail_idx:
+#         return bin_centers[peak_idx]
     
-    # Peak에서 tail까지 직선 정의
-    p1 = np.array([peak_idx, hist[peak_idx]])
-    p2 = np.array([tail_idx, hist[tail_idx]])
+#     # Peak에서 tail까지 직선 정의
+#     p1 = np.array([peak_idx, hist[peak_idx]])
+#     p2 = np.array([tail_idx, hist[tail_idx]])
     
-    # 각 점에서 직선까지의 수직 거리 계산
-    line_vec = p2 - p1
-    line_len = np.linalg.norm(line_vec)
-    if line_len == 0:
-        return bin_centers[peak_idx]
-    line_unitvec = line_vec / line_len
+#     # 각 점에서 직선까지의 수직 거리 계산
+#     line_vec = p2 - p1
+#     line_len = np.linalg.norm(line_vec)
+#     if line_len == 0:
+#         return bin_centers[peak_idx]
+#     line_unitvec = line_vec / line_len
     
-    max_dist = 0
-    best_idx = peak_idx
+#     max_dist = 0
+#     best_idx = peak_idx
     
-    for i in range(peak_idx, tail_idx + 1):
-        point = np.array([i, hist[i]])
-        vec_to_point = point - p1
-        # 수직 거리 = 외적 / 선분 길이
-        dist = abs(np.cross(line_unitvec, vec_to_point))
-        if dist > max_dist:
-            max_dist = dist
-            best_idx = i
+#     for i in range(peak_idx, tail_idx + 1):
+#         point = np.array([i, hist[i]])
+#         vec_to_point = point - p1
+#         # 수직 거리 = 외적 / 선분 길이
+#         dist = abs(np.cross(line_unitvec, vec_to_point))
+#         if dist > max_dist:
+#             max_dist = dist
+#             best_idx = i
     
-    return bin_centers[best_idx]
+#     return bin_centers[best_idx]
 
 
-def kittler_threshold(data):
-    """
-    Kittler-Illingworth Minimum Error Thresholding (Kittler & Illingworth, 1986)
-    - 두 Gaussian 분포의 혼합으로 가정하고 오분류 오차 최소화
-    - 수학적으로 rigorous한 방법
-    """
-    hist, bin_edges = np.histogram(data.ravel(), bins=256)
-    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-    hist = hist.astype(np.float64)
+# def kittler_threshold(data):
+#     """
+#     Kittler-Illingworth Minimum Error Thresholding (Kittler & Illingworth, 1986)
+#     - 두 Gaussian 분포의 혼합으로 가정하고 오분류 오차 최소화
+#     - 수학적으로 rigorous한 방법
+#     """
+#     hist, bin_edges = np.histogram(data.ravel(), bins=256)
+#     bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+#     hist = hist.astype(np.float64)
     
-    total = hist.sum()
-    if total == 0:
-        return bin_centers[128]
+#     total = hist.sum()
+#     if total == 0:
+#         return bin_centers[128]
     
-    hist = hist / total
+#     hist = hist / total
     
-    min_criterion = np.inf
-    best_thresh = bin_centers[0]
+#     min_criterion = np.inf
+#     best_thresh = bin_centers[0]
     
-    for t in range(1, 255):
-        # 두 클래스의 확률
-        p1 = hist[:t+1].sum()
-        p2 = hist[t+1:].sum()
+#     for t in range(1, 255):
+#         # 두 클래스의 확률
+#         p1 = hist[:t+1].sum()
+#         p2 = hist[t+1:].sum()
         
-        if p1 < 1e-10 or p2 < 1e-10:
-            continue
+#         if p1 < 1e-10 or p2 < 1e-10:
+#             continue
         
-        # 두 클래스의 평균
-        mu1 = np.sum(bin_centers[:t+1] * hist[:t+1]) / p1
-        mu2 = np.sum(bin_centers[t+1:] * hist[t+1:]) / p2
+#         # 두 클래스의 평균
+#         mu1 = np.sum(bin_centers[:t+1] * hist[:t+1]) / p1
+#         mu2 = np.sum(bin_centers[t+1:] * hist[t+1:]) / p2
         
-        # 두 클래스의 분산
-        var1 = np.sum((bin_centers[:t+1] - mu1)**2 * hist[:t+1]) / p1
-        var2 = np.sum((bin_centers[t+1:] - mu2)**2 * hist[t+1:]) / p2
+#         # 두 클래스의 분산
+#         var1 = np.sum((bin_centers[:t+1] - mu1)**2 * hist[:t+1]) / p1
+#         var2 = np.sum((bin_centers[t+1:] - mu2)**2 * hist[t+1:]) / p2
         
-        if var1 <= 0 or var2 <= 0:
-            continue
+#         if var1 <= 0 or var2 <= 0:
+#             continue
         
-        # Kittler criterion
-        criterion = p1 * np.log(np.sqrt(var1) / p1) + p2 * np.log(np.sqrt(var2) / p2)
+#         # Kittler criterion
+#         criterion = p1 * np.log(np.sqrt(var1) / p1) + p2 * np.log(np.sqrt(var2) / p2)
         
-        if criterion < min_criterion:
-            min_criterion = criterion
-            best_thresh = bin_centers[t]
+#         if criterion < min_criterion:
+#             min_criterion = criterion
+#             best_thresh = bin_centers[t]
     
-    return best_thresh
+#     return best_thresh
 
 
 def multiotsu_high_threshold(data):
@@ -204,55 +204,55 @@ def multiotsu_high_threshold(data):
         return threshold_otsu(data)
 
 
-def shanbhag_threshold(data):
-    """Shanbhag entropy thresholding"""
-    hist, bin_edges = np.histogram(data.ravel(), bins=256)
-    hist = hist.astype(np.float64) / (hist.sum() + 1e-10)
-    eps = 1e-10
-    best_thresh, max_entropy = 0, -np.inf
+# def shanbhag_threshold(data):
+#     """Shanbhag entropy thresholding"""
+#     hist, bin_edges = np.histogram(data.ravel(), bins=256)
+#     hist = hist.astype(np.float64) / (hist.sum() + 1e-10)
+#     eps = 1e-10
+#     best_thresh, max_entropy = 0, -np.inf
     
-    for t in range(1, 255):
-        p1, p2 = hist[:t+1].sum(), hist[t+1:].sum()
-        if p1 < eps or p2 < eps:
-            continue
-        h1 = hist[:t+1] / (p1 + eps)
-        h2 = hist[t+1:] / (p2 + eps)
-        entropy = -np.sum(h1[h1>eps] * np.log(h1[h1>eps] + eps)) - np.sum(h2[h2>eps] * np.log(h2[h2>eps] + eps))
-        if entropy > max_entropy:
-            max_entropy, best_thresh = entropy, t
+#     for t in range(1, 255):
+#         p1, p2 = hist[:t+1].sum(), hist[t+1:].sum()
+#         if p1 < eps or p2 < eps:
+#             continue
+#         h1 = hist[:t+1] / (p1 + eps)
+#         h2 = hist[t+1:] / (p2 + eps)
+#         entropy = -np.sum(h1[h1>eps] * np.log(h1[h1>eps] + eps)) - np.sum(h2[h2>eps] * np.log(h2[h2>eps] + eps))
+#         if entropy > max_entropy:
+#             max_entropy, best_thresh = entropy, t
     
-    return bin_edges[best_thresh]
+#     return bin_edges[best_thresh]
 
 
-def huang_threshold(data):
-    """Huang's fuzzy thresholding"""
-    hist, bin_edges = np.histogram(data.ravel(), bins=256)
-    hist = hist.astype(np.float64)
-    total = hist.sum()
-    if total == 0:
-        return bin_edges[128]
-    hist = hist / total
-    S = np.cumsum(hist)
-    W = np.cumsum(np.arange(256) * hist)
+# def huang_threshold(data):
+#     """Huang's fuzzy thresholding"""
+#     hist, bin_edges = np.histogram(data.ravel(), bins=256)
+#     hist = hist.astype(np.float64)
+#     total = hist.sum()
+#     if total == 0:
+#         return bin_edges[128]
+#     hist = hist / total
+#     S = np.cumsum(hist)
+#     W = np.cumsum(np.arange(256) * hist)
     
-    best_thresh, min_ent = 0, np.inf
-    for t in range(1, 255):
-        if S[t] < 1e-10 or (1 - S[t]) < 1e-10:
-            continue
-        mu1 = W[t] / S[t]
-        mu2 = (W[-1] - W[t]) / (1 - S[t])
-        ent = 0
-        for i in range(256):
-            if hist[i] < 1e-10:
-                continue
-            mu = mu1 if i <= t else mu2
-            c = 1 / (1 + abs(i - mu))
-            if c > 1e-10 and c < 1:
-                ent -= hist[i] * (c * np.log(c) + (1 - c) * np.log(1 - c))
-        if ent < min_ent:
-            min_ent, best_thresh = ent, t
+#     best_thresh, min_ent = 0, np.inf
+#     for t in range(1, 255):
+#         if S[t] < 1e-10 or (1 - S[t]) < 1e-10:
+#             continue
+#         mu1 = W[t] / S[t]
+#         mu2 = (W[-1] - W[t]) / (1 - S[t])
+#         ent = 0
+#         for i in range(256):
+#             if hist[i] < 1e-10:
+#                 continue
+#             mu = mu1 if i <= t else mu2
+#             c = 1 / (1 + abs(i - mu))
+#             if c > 1e-10 and c < 1:
+#                 ent -= hist[i] * (c * np.log(c) + (1 - c) * np.log(1 - c))
+#         if ent < min_ent:
+#             min_ent, best_thresh = ent, t
     
-    return bin_edges[best_thresh]
+#     return bin_edges[best_thresh]
 
 
 def calculate_global_thresholds(all_cytox_intensity, radius_label=""):
@@ -279,12 +279,12 @@ def calculate_global_thresholds(all_cytox_intensity, radius_label=""):
     #         thresholds[name] = np.nan
     
     # HIGH THRESHOLD ALGORITHMS (수학적 근거)
-    for name, func in [('rosin', rosin_threshold), ('kittler', kittler_threshold), 
-                       ('multiotsu_high', multiotsu_high_threshold)]:
-        try:
-            thresholds[name] = func(all_cytox_intensity)
-        except:
-            thresholds[name] = np.nan
+    # for name, func in [('rosin', rosin_threshold), ('kittler', kittler_threshold), 
+    #                    ('multiotsu_high', multiotsu_high_threshold)]:
+    #     try:
+    #         thresholds[name] = func(all_cytox_intensity)
+    #     except:
+    #         thresholds[name] = np.nan
     
     # Percentile-based
     # for p in [75, 90, 95, 99, 99.5, 99.9]:
@@ -311,7 +311,7 @@ def calculate_global_thresholds(all_cytox_intensity, radius_label=""):
     #     thresholds['q3_1_5iqr'] = q3 + 1.5 * iqr
     #     thresholds['q3_3iqr'] = q3 + 3 * iqr
     # except:
-        pass
+        # pass
     
     # Print comparison (low to high)
     print("\n   [Threshold 비교: 낮음 → 높음]")

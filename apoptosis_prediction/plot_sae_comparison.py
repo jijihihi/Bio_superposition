@@ -30,7 +30,11 @@ import matplotlib.pyplot as plt
 
 from scipy import stats
 from scipy.stats import wilcoxon
+import seaborn as sns
 
+plt.rcParams['svg.fonttype'] = 'none'
+plt.rcParams['pdf.fonttype'] = 42      
+sns.set_style("ticks")
 
 # ==============================================================================
 # Constants
@@ -455,6 +459,8 @@ def main():
         help="Model for L2 norm effect plot (default: XGBoost)"
     )
     args = parser.parse_args()
+
+    sns.despine()
 
     csv_path = os.path.join(args.results_dir, "sae_r2_all_folds.csv")
     if not os.path.exists(csv_path):

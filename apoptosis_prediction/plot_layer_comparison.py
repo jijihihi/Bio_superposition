@@ -35,7 +35,12 @@ from matplotlib.patches import FancyArrowPatch
 
 from scipy import stats
 from scipy.stats import wilcoxon
+import seaborn as sns
 
+
+plt.rcParams['svg.fonttype'] = 'none'
+plt.rcParams['pdf.fonttype'] = 42      
+sns.set_style("ticks")
 
 # ==============================================================================
 # Constants
@@ -260,6 +265,22 @@ def plot_layer_comparison(stat_dict, folds_data, results_dir, config, model):
             zorder=3,
         )
 
+        # Overlay individual R² points (stripplot-style)
+        for grp_idx, grp in enumerate(GROUPS_OF_INTEREST):
+            key = (layer, grp)
+            if key in stat_dict:
+                vals = stat_dict[key]["values"]
+                pos = x_centers[grp_idx] + offsets[layer_idx]
+                # Jitter for visibility
+                jitter = np.random.default_rng(42 + layer_idx * 100 + grp_idx).uniform(
+                    -bar_width * 0.3, bar_width * 0.3, size=len(vals))
+                ax.scatter(
+                    pos + jitter, vals,
+                    s=12, color="black", alpha=0.45,
+                    edgecolors="white", linewidths=0.3,
+                    zorder=5,
+                )
+
     # ── Significance brackets ──
     for grp_idx, grp in enumerate(GROUPS_OF_INTEREST):
         pairwise = pairwise_wilcoxon(folds_data, config, model, grp)
@@ -331,6 +352,7 @@ def plot_layer_comparison(stat_dict, folds_data, results_dir, config, model):
     ax.spines["right"].set_visible(False)
 
     fig.tight_layout()
+    sns.despine()
 
     # Save
     base_name = f"layer_comparison_{config}_{model}"
@@ -425,7 +447,7 @@ def main():
     )
     parser.add_argument(
         "--config", type=str, default="MoCo_l2norm",
-        help="Config to plot (default: MoCo_l2norm)"
+        help="Config to plot (default: MoCo_l2norm) or noNorm"
     )
     parser.add_argument(
         "--model", type=str, default="Ridge",

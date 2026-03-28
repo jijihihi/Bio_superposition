@@ -15,8 +15,7 @@ for SEED in "${SEEDS[@]}"; do
             --save_dir "$MODEL_DIR" \
             --model_state_path "${MODEL_DIR}/best_model.pt" \
             --shard_root /home/ubuntu/model-east3/wds_shards_tar \
-            --output_dir "${SAE_DIR}/phate" \
-            --dead_threshold 5e-5 \
+            --output_dir "${SAE_DIR}/phate_paper" \
             --samples_per_class 8000 \
 	        --t "auto" \
             --seed "$SEED" \
@@ -30,7 +29,7 @@ for SEED in "${SEEDS[@]}"; do
             --de_min_log2fc 1.0 \
             --n_pca 100 \
             --knn 10 \
-            --dead_threshold 5e-5 \
+            --dead_threshold 1e-5 \
             --decay 100 \
             --gap_l2_norm \
             --paga \
@@ -73,7 +72,7 @@ for SEED in "${SEEDS[@]}"; do
 	        --knn_dist "euclidean" \
             --batch_size 64 \
             --restore_token_norm \
-            --norm log_std \
+            --norm log \
             --filter_mode cv de \
             --min_cv 0.1 \
             --de_adj_p 0.05 \

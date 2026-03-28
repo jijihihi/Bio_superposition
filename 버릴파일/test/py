@@ -1,0 +1,12 @@
+import torch
+
+# 파일 경로
+#path = r"C:\python\최종 논문 용\람다랩스로 돌린거 최종모델\output\MoCo_seed45\SAE\stage5_out_d4096_gated_sp3200.0_aux0.03125_tied_ep008.pt"
+path = r"C:\python\최종 논문 용\람다랩스로 돌린거 최종모델\output\MoCo_seed87\SAE\stage5_out_d8192_gated_sp800.0_aux0.03125_tied_ep008.pt"
+# weights_only=False를 명시적으로 추가하여 이전 버전 방식으로 로드
+ckpt = torch.load(path, map_location="cpu", weights_only=False)
+
+# 결과 확인
+print("Keys in checkpoint:", ckpt.keys())
+if "args" in ckpt:
+    print("Args found:", ckpt["args"])

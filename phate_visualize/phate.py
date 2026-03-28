@@ -21,6 +21,9 @@
 
 # phate.py의 PAGA는 Leiden clustering 없이 superclass 기준으로 합니다: superclass 기준으로 control GBA가 연결되어 있는지 아닌지 등을 판단.
 
+
+
+
 import os
 import argparse
 import numpy as np
@@ -46,6 +49,10 @@ from sae_project.step02_logging_utils import get_logger, SUPERCLASS_MAP
 
 logger = get_logger("phate_vis")
 
+
+plt.rcParams['svg.fonttype'] = 'none' 
+plt.rcParams['pdf.fonttype'] = 42      
+sns.set_style("ticks")
 
 # ==============================================================================
 # Argument Parser
@@ -155,9 +162,9 @@ def get_args():
     p.add_argument("--num_workers", type=int, default=4)
 
     # Plot
-    p.add_argument("--dpi", type=int, default=200)
-    p.add_argument("--point_size", type=float, default=3.0)
-    p.add_argument("--alpha", type=float, default=0.5)
+    p.add_argument("--dpi", type=int, default=300)
+    p.add_argument("--point_size", type=float, default=1.5)
+    p.add_argument("--alpha", type=float, default=0.2)
 
     return p.parse_args()
 
@@ -364,18 +371,16 @@ CLASS_COLORS = {
 def plot_phate(
     phate_coords: np.ndarray,
     labels: np.ndarray,
-    title: str,
     output_path: str,
-    point_size: float = 3.0,
-    alpha: float = 0.5,
+    point_size: float = 1.5,
+    alpha: float = 0.2,
     dpi: int = 300,
-    pca_variance_explained: float = 0.0,
-    phate_t: int = 0,
-    n_alive: int = 0,
-    n_total: int = 0,
+    info_text: str = "",
 ):
     """Save publication-ready PHATE 2D scatter plot colored by class."""
-    fig, ax = plt.subplots(1, 1, figsize=(6, 6))
+    fig, ax = plt.subplots(1, 1, figsize=(7, 7))
+
+    sns.despine()
 
     for cls in sorted(CLASS_NAMES.keys()):
         mask = labels == cls
@@ -393,41 +398,48 @@ def plot_phate(
             rasterized=True,
         )
 
-    ax.set_xlabel("PHATE 1", fontsize=14)
-    ax.set_ylabel("PHATE 2", fontsize=14)
-
-    # Remove ticks, spines, grid for clean publication look
+    # --- Clean publication style ---
     ax.set_xticks([])
     ax.set_yticks([])
+    ax.set_xlabel("")
+    ax.set_ylabel("")
     for spine in ax.spines.values():
         spine.set_visible(False)
-
     ax.set_aspect("equal", adjustable="datalim")
 
-    # Clean legend
+    # Info text (easily removable in Illustrator as a text object)
+    if info_text:
+        ax.text(0.02, 0.02, info_text, transform=ax.transAxes,
+                fontsize=8, verticalalignment="bottom", fontstyle="italic",
+                color="#555555",
+                bbox=dict(boxstyle="round,pad=0.3", facecolor="white",
+                          edgecolor="#cccccc", alpha=0.85))
+
+    # Legend
     leg = ax.legend(
-        loc="best",
-        markerscale=4,
-        fontsize=11,
-        frameon=True,
-        framealpha=0.9,
-        edgecolor="0.8",
-        handletextpad=0.5,
-        borderpad=0.6,
+        loc="upper right", markerscale=4, fontsize=9,
+        frameon=True, framealpha=0.9, edgecolor="#cccccc",
+        handletextpad=0.3, borderpad=0.4,
     )
     for lh in leg.legend_handles:
         lh.set_alpha(1.0)
 
-    fig.tight_layout()
-    fig.savefig(output_path, dpi=dpi, bbox_inches="tight")
+    fig.tight_layout(pad=0.3)
+    # Save PNG
+    fig.savefig(output_path, dpi=dpi, bbox_inches="tight",
+                facecolor="white", edgecolor="none")
+    # Save PDF
     pdf_path = output_path.rsplit(".", 1)[0] + ".pdf"
-    fig.savefig(pdf_path, bbox_inches="tight")
+    fig.savefig(pdf_path, bbox_inches="tight",
+                facecolor="white", edgecolor="none")
+    # Save SVG (rasterized scatter for small file size)
     svg_path = output_path.rsplit(".", 1)[0] + ".svg"
-    fig.savefig(svg_path, bbox_inches="tight")
+    fig.savefig(svg_path, format="svg", bbox_inches="tight",
+                facecolor="white", edgecolor="none")
     plt.close(fig)
-    logger.info(f"  Saved PHATE plot: {output_path}")
-    logger.info(f"  Saved PHATE PDF:  {pdf_path}")
-    logger.info(f"  Saved PHATE SVG:  {svg_path}")
+    logger.info(f"  Saved PHATE PNG: {output_path}")
+    logger.info(f"  Saved PHATE PDF: {pdf_path}")
+    logger.info(f"  Saved PHATE SVG: {svg_path}")
 
 
 # ==============================================================================
@@ -436,15 +448,14 @@ def plot_phate(
 def plot_phate_superclass(
     phate_coords: np.ndarray,
     superclasses: list,
-    title: str,
     output_path: str,
-    point_size: float = 3.0,
-    alpha: float = 0.5,
+    point_size: float = 1.5,
+    alpha: float = 0.2,
     dpi: int = 300,
     info_text: str = "",
 ):
     """Save publication-ready PHATE 2D scatter plot colored by superclass."""
-    fig, ax = plt.subplots(1, 1, figsize=(6, 6))
+    fig, ax = plt.subplots(1, 1, figsize=(7, 7))
     superclasses_arr = np.array(superclasses)
 
     # Plot order: Control first (background), then mutations
@@ -465,45 +476,48 @@ def plot_phate_superclass(
             rasterized=True,
         )
 
-    ax.set_xlabel("PHATE 1", fontsize=14)
-    ax.set_ylabel("PHATE 2", fontsize=14)
-
-    # Remove ticks, spines, grid for clean publication look
+    # --- Clean publication style ---
     ax.set_xticks([])
     ax.set_yticks([])
+    ax.set_xlabel("")
+    ax.set_ylabel("")
     for spine in ax.spines.values():
         spine.set_visible(False)
-
     ax.set_aspect("equal", adjustable="datalim")
 
-    # Clean legend
+    # Info text (easily removable in Illustrator as a text object)
+    if info_text:
+        ax.text(0.02, 0.02, info_text, transform=ax.transAxes,
+                fontsize=8, verticalalignment="bottom", fontstyle="italic",
+                color="#555555",
+                bbox=dict(boxstyle="round,pad=0.3", facecolor="white",
+                          edgecolor="#cccccc", alpha=0.85))
+
+    # Legend
     leg = ax.legend(
-        loc="best",
-        markerscale=4,
-        fontsize=11,
-        frameon=True,
-        framealpha=0.9,
-        edgecolor="0.8",
-        handletextpad=0.5,
-        borderpad=0.6,
+        loc="upper right", markerscale=4, fontsize=9,
+        frameon=True, framealpha=0.9, edgecolor="#cccccc",
+        handletextpad=0.3, borderpad=0.4,
     )
-    # Make legend markers fully opaque
     for lh in leg.legend_handles:
         lh.set_alpha(1.0)
 
-    fig.tight_layout()
+    fig.tight_layout(pad=0.3)
     # Save PNG
-    fig.savefig(output_path, dpi=dpi, bbox_inches="tight")
-    # Save PDF (vector) for publication
+    fig.savefig(output_path, dpi=dpi, bbox_inches="tight",
+                facecolor="white", edgecolor="none")
+    # Save PDF
     pdf_path = output_path.rsplit(".", 1)[0] + ".pdf"
-    fig.savefig(pdf_path, bbox_inches="tight")
-    # Save SVG for Illustrator editing
+    fig.savefig(pdf_path, bbox_inches="tight",
+                facecolor="white", edgecolor="none")
+    # Save SVG (rasterized scatter for small file size)
     svg_path = output_path.rsplit(".", 1)[0] + ".svg"
-    fig.savefig(svg_path, bbox_inches="tight")
+    fig.savefig(svg_path, format="svg", bbox_inches="tight",
+                facecolor="white", edgecolor="none")
     plt.close(fig)
-    logger.info(f"  Saved PHATE plot: {output_path}")
-    logger.info(f"  Saved PHATE PDF:  {pdf_path}")
-    logger.info(f"  Saved PHATE SVG:  {svg_path}")
+    logger.info(f"  Saved PHATE PNG: {output_path}")
+    logger.info(f"  Saved PHATE PDF: {pdf_path}")
+    logger.info(f"  Saved PHATE SVG: {svg_path}")
 
 
 # ==============================================================================
@@ -616,6 +630,13 @@ def main():
             superclasses = [superclasses[i] for i in keep_indices]
             logger.info(f"  After subsampling: {X.shape[0]} samples")
 
+        # Output directory (needed before PAGA)
+        if args.output_dir:
+            output_dir = args.output_dir
+        else:
+            output_dir = os.path.join(os.path.dirname(args.features_cache), "phate")
+        os.makedirs(output_dir, exist_ok=True)
+
         # ── PAGA connectivity analysis ───────────────────────────────────
         if args.paga:
             import scanpy as sc
@@ -643,29 +664,37 @@ def main():
                     if j > i:
                         logger.info(f"    {gi} ↔ {gj}: {conn[i,j]:.4f}")
 
-            # Plot PAGA
+            # Plot PAGA (publication style)
             fig_paga, ax_paga = plt.subplots(1, 1, figsize=(6, 6))
             sc.pl.paga(
                 adata_paga,
                 color="superclass",
                 ax=ax_paga,
                 show=False,
-                title=f"PAGA – {os.path.basename(args.features_cache)}\n"
-                      f"filter={filter_info}",
+                title="",
                 fontsize=10,
             )
-            plt.show()
+            ax_paga.set_xticks([])
+            ax_paga.set_yticks([])
+            for spine in ax_paga.spines.values():
+                spine.set_visible(False)
+            fig_paga.tight_layout(pad=0.3)
+            paga_png = os.path.join(output_dir, "paga_connectivity.png")
+            fig_paga.savefig(paga_png, dpi=args.dpi, bbox_inches="tight",
+                             facecolor="white", edgecolor="none")
+            paga_svg = paga_png.rsplit(".", 1)[0] + ".svg"
+            fig_paga.savefig(paga_svg, format="svg", bbox_inches="tight",
+                             facecolor="white", edgecolor="none")
+            logger.info(f"  Saved PAGA PNG: {paga_png}")
+            logger.info(f"  Saved PAGA SVG: {paga_svg}")
+            if _IN_COLAB:
+                plt.show()
             plt.close(fig_paga)
 
             del adata_paga
             logger.info("  PAGA analysis complete")
 
-        # Output directory
-        if args.output_dir:
-            output_dir = args.output_dir
-        else:
-            output_dir = os.path.join(os.path.dirname(args.features_cache), "phate")
-        os.makedirs(output_dir, exist_ok=True)
+
 
     # ══════════════════════════════════════════════════════════════════════
     # Mode B: Encoder + SAE extraction (legacy)
@@ -802,12 +831,17 @@ def main():
         png_name = f"phate_{cache_basename}{clean_suffix}_knn{args.knn}_t{actual_t}.png"
         output_path = os.path.join(output_dir, png_name)
 
-        title = ""  # publication-ready: no title
+        # Build info text for quick identification (removable in Illustrator)
+        info = (f"n={X_in.shape[0]:,}  dim={X_in.shape[1]}\n"
+                f"knn={args.knn}  t={actual_t}  {args.knn_dist}")
+        if extra_info:
+            info = extra_info + info
 
         plot_phate_superclass(
             X_phate, superclasses_in,
-            title=title, output_path=output_path,
+            output_path=output_path,
             point_size=args.point_size, alpha=args.alpha, dpi=args.dpi,
+            info_text=info,
         )
 
         npz_path = output_path.replace(".png", "_coords.npz")
