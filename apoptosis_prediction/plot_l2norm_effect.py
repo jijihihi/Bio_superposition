@@ -12,7 +12,7 @@
 #       "--results_dir", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/apoptosis_r2_results",
 #       "--training_config", "MoCo",
 #       "--layer", "stage5_out",
-#       "--model", "Ridge",
+#       "--model", "XGBoost",
 #   ]
 #   from apoptosis_prediction.plot_l2norm_effect import main
 #   main()
@@ -38,6 +38,9 @@ import seaborn as sns
 plt.rcParams['svg.fonttype'] = 'none'
 plt.rcParams['pdf.fonttype'] = 42      
 sns.set_style("ticks")
+
+
+#  정규 근사로 한다.
 
 
 # ==============================================================================
@@ -318,37 +321,40 @@ def plot_l2norm_effect(stats_off, stats_on, wilcoxon_results, null_perm,
                 fontsize=9, color="#D32F2F", fontweight="bold",
                 ha="left", va="center")
 
-        # ── Wilcoxon p-value + effect size r (from individual folds) ──
+        # ── Wilcoxon p-value + effect size r (independently computed) ──
         if grp in wilcoxon_results:
             w = wilcoxon_results[grp]
             pval = w["p_value"]
             n_folds = w["n_pairs"]
-            stars = pval_to_stars(pval)
+            W_stat = w["W_stat"]
 
-            # Effect size: r = Z / sqrt(N)
-            # Approximate Z from p-value (two-sided)
+            # Effect size r: computed directly from W statistic (NOT from p-value)
+            mean_W = n_folds * (n_folds + 1) / 4
+            std_W = np.sqrt(n_folds * (n_folds + 1) * (2 * n_folds + 1) / 24)
+            z_from_W = abs((W_stat - mean_W) / std_W) if std_W > 0 else 0.0
+            effect_r = z_from_W / np.sqrt(n_folds)
+
+            # Cross-validation: also compute Z from p-value for sanity check
             from scipy.stats import norm
-            z_val = abs(norm.ppf(pval / 2)) if pval > 0 else 5.0
-            effect_r = z_val / np.sqrt(n_folds)
+            z_from_p = abs(norm.ppf(pval / 2)) if pval > 0 else 5.0
+            r_from_p = z_from_p / np.sqrt(n_folds)
 
-            # Build annotation
-            if pval < 0.001:
-                p_str = f"{stars}\np<0.001\nr={effect_r:.2f}"
-            else:
-                p_str = f"{stars}\np={pval:.3f}\nr={effect_r:.2f}"
+            p_str = f"p<0.001" if pval < 0.001 else f"p={pval:.3f}"
+            stat_text = f"{p_str},  r={effect_r:.2f}"
+            ax.text(0.98, 0.97, stat_text, transform=ax.transAxes,
+                    fontsize=8, fontweight="bold", color="#333333",
+                    ha="right", va="top")
 
-            y_top = max(seed_mean_off.max(), seed_mean_on.max())
-            y_bot = min(seed_mean_off.min(), seed_mean_on.min())
-            ax.text(0.5, y_top + (y_top - y_bot) * 0.08,
-                    p_str, fontsize=9, fontweight="bold",
-                    ha="center", va="bottom", color="black")
+            print(f"  {gene_label}: Wilcoxon W={W_stat:.1f}, p={pval:.6f}, "
+                  f"r(from W)={effect_r:.3f}, r(from p)={r_from_p:.3f}, "
+                  f"n_pairs={n_folds}")
 
-        # ── Y-axis zoom to data range ──
+        # ── Y-axis: tight zoom to data range ──
         all_vals = np.concatenate([seed_mean_off, seed_mean_on])
         data_min = all_vals.min()
         data_max = all_vals.max()
-        margin = (data_max - data_min) * 0.3
-        ax.set_ylim(data_min - margin, data_max + margin * 1.8)
+        margin = (data_max - data_min) * 0.15
+        ax.set_ylim(data_min - margin, data_max + margin)
 
         # ── Formatting ──
         ax.set_xticks([x_off, x_on])
@@ -481,7 +487,7 @@ def main():
     parser.add_argument(
         "--training_config", type=str, default="MoCo",
         choices=["MoCo", "noNorm"],
-        help="Training config pair (default: MoCo)"
+        help="Training config pair (default: MoCo) or noNorm"
     )
     parser.add_argument(
         "--layer", type=str, default="stage5_out",
@@ -490,7 +496,7 @@ def main():
     )
     parser.add_argument(
         "--model", type=str, default="Ridge",
-        help="Model to plot (default: Ridge)"
+        help="Model to plot (default: Ridge) or XGBoost"
     )
     args = parser.parse_args()
 
