@@ -921,10 +921,25 @@ def visualize_concept(
     overlay_alpha: float = 0.5,
     act_cache: Dict[Tuple[int, int], np.ndarray] = None,
     **kwargs,
-):
+) -> List[Dict]:
     """
     Visualize top-K images for a specific concept.
+
+    Returns:
+        List of dicts — one row per saved image — for building top_k_images.csv.
+        Columns: concept_id, concept_class, rank, img_name, line, gap_val,
+                 max_act, concept_dir, base_filename
+
+    CSV workflow:
+        After step14 runs, use top_k_images.csv to:
+        1) Get the union of img_name values (unique images across all concepts).
+        2) Pass that list to step15_cnn_featuremap_compare.py which, for each
+           image, runs CNN forward_feature_maps() and saves 512 bilinear-
+           interpolated channel heatmaps into one grid PNG named by img_name.
+        3) Load the SAE overlay (step14 output) and the CNN grid (step15 output)
+           side-by-side — no Ctrl+F needed, both are keyed by img_name.
     """
+    csv_rows: List[Dict] = []
     # Include dominant class in directory name if provided
     class_label = kwargs.get("class_label", "")
     if class_label:
@@ -960,6 +975,12 @@ def visualize_concept(
         
         line = bank.lines[bi]
         label = bank.labels[bi]
+        
+        # Extract image name from uid: "{tar_path}:{prefix}" → prefix without extension
+        raw_uid = bank.uids[bi] if bi < len(bank.uids) else ""
+        img_name = raw_uid.split(":")[-1] if ":" in raw_uid else raw_uid
+        img_name = os.path.splitext(img_name)[0]  # strip extension if any
+        img_name = img_name.replace("/", "_").replace("\\", "_")  # sanitize path separators
         
         # Get activation map (use cache if available)
         if act_cache is not None and (bi, concept_id) in act_cache:
@@ -1023,8 +1044,11 @@ def visualize_concept(
         cnn_rgb = np.clip((cnn_np - lo) / (hi - lo) * 255, 0, 255).astype(np.uint8)
         cnn_overlay_rgb = create_overlay(cnn_rgb, heatmap_rgb, alpha=overlay_alpha)
         
-        # Base filename (include max activation value for debugging)
-        base = f"rank{rank:02d}_{line}_gap{gap_val:.4f}_max{max_act:.4f}"
+        # Base filename: {class}_{img_name}__rank{rank}_{line}_gap..._max...
+        # class_label comes from kwargs (e.g. "LRRK2"), line is the specific line name
+        # img_name allows CSV-based lookup to match SAE images with CNN feature maps
+        _cls = class_label if class_label else line
+        base = f"{_cls}_{img_name}__rank{rank:02d}_{line}_gap{gap_val:.4f}_max{max_act:.4f}"
         
         # Save images
         Image.fromarray(orig_rgb, mode="RGB").save(
@@ -1045,8 +1069,22 @@ def visualize_concept(
         Image.fromarray(cnn_overlay_rgb, mode="RGB").save(
             os.path.join(concept_dir, f"{base}_06_cnn_overlay.png")
         )
+
+        # Accumulate CSV row
+        csv_rows.append({
+            "concept_id":    concept_id,
+            "concept_class": class_label if class_label else line,
+            "rank":          rank,
+            "img_name":      img_name,
+            "line":          line,
+            "gap_val":       round(float(gap_val), 6),
+            "max_act":       round(float(max_act), 6),
+            "concept_dir":   os.path.basename(concept_dir),
+            "base_filename": base,
+        })
     
-    logger.info(f"  Concept {concept_id}: saved {min(top_k, len(gap_values))} images to {concept_dir}")
+    logger.info(f"  Concept {concept_id}: saved {len(csv_rows)} images to {concept_dir}")
+    return csv_rows
 
 
 # ==============================================================================
@@ -1414,12 +1452,13 @@ def main():
                     f"{len(concept_ids)} remaining")
 
     logger.info(f"\nPhase 4: Generating visualizations for {len(per_concept_data)} concepts...")
+    all_csv_rows: List[Dict] = []
     for cid in tqdm(concept_ids, desc="Visualizing"):
         if cid not in per_concept_data:
             continue
         cid_gap, cid_valid = per_concept_data[cid]
         cls_label = concept_class_labels.get(cid, "")
-        visualize_concept(
+        rows = visualize_concept(
             encoder, sae, bank, cid, cid_valid, cid_gap,
             top_k=args.top_k,
             output_dir=local_output_dir,
@@ -1431,6 +1470,37 @@ def main():
             act_cache=act_cache,
             class_label=cls_label,
         )
+        all_csv_rows.extend(rows)
+
+    # ===== Save top-K CSV =====
+    # Columns: concept_id, concept_class, rank, img_name, line, gap_val, max_act,
+    #          concept_dir, base_filename
+    # Usage:
+    #   df = pd.read_csv('top_k_images.csv')
+    #   union_imgs = df['img_name'].unique()          # all unique images
+    #   top_imgs   = df[df['rank'] <= 5]['img_name'].unique()  # rank 1-5 only
+    #   → Feed union_imgs into step15_cnn_featuremap.py to generate
+    #     one grid PNG (512 channels x bilinear interp) per image,
+    #     named by img_name — so step14 SAE overlays and step15 CNN maps
+    #     are automatically paired by file name without any manual search.
+    if all_csv_rows:
+        csv_path = os.path.join(local_output_dir, "top_k_images.csv")
+        _csv_fields = [
+            "concept_id", "concept_class", "rank",
+            "img_name", "line", "gap_val", "max_act",
+            "concept_dir", "base_filename",
+        ]
+        with open(csv_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=_csv_fields)
+            writer.writeheader()
+            writer.writerows(all_csv_rows)
+        # Also save union image list (unique img_names across all concepts)
+        union_names = sorted(set(r["img_name"] for r in all_csv_rows))
+        union_path = os.path.join(local_output_dir, "union_images.txt")
+        with open(union_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(union_names))
+        logger.info(f"  Saved CSV: {csv_path} ({len(all_csv_rows)} rows)")
+        logger.info(f"  Union images: {len(union_names)} unique images → {union_path}")
 
     # Copy local results to Drive
     if is_drive and local_output_dir != final_output_dir:

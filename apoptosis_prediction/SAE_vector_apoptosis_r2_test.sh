@@ -23,12 +23,12 @@ MODELS=("ridge" "xgboost")
 # Filter combos: "label|filter_args"
 FILTER_COMBOS=(
     "no_filter|--filter_mode none"
-    "cv0.1|--filter_mode cv --min_cv 0.1"
-    "cv0.2|--filter_mode cv --min_cv 0.2"
-    "cv0.1_de0.58|--filter_mode cv de --min_cv 0.1 --de_min_log2fc 0.58 --de_adj_p 0.05"
-    "cv0.1_de1.0|--filter_mode cv de --min_cv 0.1 --de_min_log2fc 1.0 --de_adj_p 0.05"
-    "cv0.2_de0.58|--filter_mode cv de --min_cv 0.2 --de_min_log2fc 0.58 --de_adj_p 0.05"
-    "cv0.2_de1.0|--filter_mode cv de --min_cv 0.2 --de_min_log2fc 1.0 --de_adj_p 0.05"
+    # "cv0.1|--filter_mode cv --min_cv 0.1"
+    # "cv0.2|--filter_mode cv --min_cv 0.2"
+    # "cv0.1_de0.58|--filter_mode cv de --min_cv 0.1 --de_min_log2fc 0.58 --de_adj_p 0.05"
+    # "cv0.1_de1.0|--filter_mode cv de --min_cv 0.1 --de_min_log2fc 1.0 --de_adj_p 0.05"
+    # "cv0.2_de0.58|--filter_mode cv de --min_cv 0.2 --de_min_log2fc 0.58 --de_adj_p 0.05"
+    # "cv0.2_de1.0|--filter_mode cv de --min_cv 0.2 --de_min_log2fc 1.0 --de_adj_p 0.05"
 )
 
 TOTAL=0

@@ -8,8 +8,10 @@
 # + aggregation at the end
 #
 # Usage:
-#   bash kendall_correlation_coefficient/run_apoptosis_r2_seeds.sh
+#   bash /content/apoptosis_prediction/run_apoptosis_r2_seeds.sh
 # ==============================================================================
+
+# 여기서는 뉴런 필터링 없다.
 
 BASE_DIR="/content/drive/MyDrive/Final_paper/lambda_labs_moco_only"
 APOPTOSIS_CSV="/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv"
@@ -162,15 +164,15 @@ base = "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/apoptosis_r2_re
 
 configs = [
     # (label, dir_pattern, seeds)
-    ("MoCo_l2norm",   "MoCo_seed{}_l2norm",   [42,45,87,95,123,124,256,445,457]),
-    ("MoCo_raw",      "MoCo_seed{}_raw",      [42,45,87,95,123,124,256,445,457]),
-    ("noNorm_l2norm",  "noNorm_seed{}_l2norm", [42,45,87,95,124]),
-    ("noNorm_raw",     "noNorm_seed{}_raw",    [42,45,87,95,124]),
+    ("MoCo_l2norm",   "MoCo_seed{}_l2norm",   [42,87,95,123,124,256,445,457]),
+    ("MoCo_raw",      "MoCo_seed{}_raw",      [42,87,95,123,124,256,445,457]),
+    ("noNorm_l2norm",  "noNorm_seed{}_l2norm", [42,87,124]),
+    ("noNorm_raw",     "noNorm_seed{}_raw",    [42,87,124]),
 ]
 
 layers = ["stage5_mid", "stage5_out", "refine_out"]
 models = ["Ridge", "XGBoost"]
-groups_of_interest = ["All", "All Mutations", "SNCA", "GBA", "LRRK2"]
+groups_of_interest = ["SNCA only", "GBA only", "LRRK2 only"]
 
 # Collect all results
 all_data = {}    # key: (config_label, model, layer, group) → list of r2

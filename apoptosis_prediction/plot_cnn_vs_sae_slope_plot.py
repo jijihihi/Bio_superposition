@@ -10,14 +10,13 @@
 #   import sys
 #   sys.argv = [
 #       "plot_cnn_vs_sae",
-#       "--cnn_results_dir", "/content/drive/MyDrive/.../apoptosis_r2_results",
-#       "--sae_results_dir", "/content/drive/MyDrive/.../apoptosis_r2_results/SAE_vector",
+#       "--cnn_results_dir", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/apoptosis_r2_results",
+#       "--sae_results_dir", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/apoptosis_r2_results/SAE_vector",
 #       "--cnn_config", "MoCo_l2norm",
 #       "--cnn_layer", "stage5_out",
 #       "--sae_l2norm", "l2norm",
-#       "--model", "XGBoost",
 #   ]
-#   from apoptosis_prediction.plot_cnn_vs_sae import main
+#   from apoptosis_prediction.plot_cnn_vs_sae_slope_plot import main
 #   main()
 # ==============================================================================
 
@@ -142,9 +141,8 @@ MODEL_COLORS = {
 def plot_cnn_vs_sae(cnn_folds, sae_folds, output_dir,
                     cnn_config, cnn_layer, sae_l2norm, sae_filter):
     """
-    Dot plot: CNN GAP vs SAE, both Ridge and XGBoost on shared x-axis.
+    Dot plot: CNN GAP vs SAE, one figure per (mutation × model).
     CNN = circles (○), SAE = X markers (×).
-    Each model has its own color for dots and connecting mean line.
     MWU test on individual CV folds (independent samples).
     """
 
@@ -153,14 +151,12 @@ def plot_cnn_vs_sae(cnn_folds, sae_folds, output_dir,
     for grp in GROUPS_OF_INTEREST:
         gene_label = GENE_LABELS[grp]
 
-        x_cnn, x_sae = 0, 1
-        fig, ax = plt.subplots(figsize=(4.5, 5.2))
-        all_y_vals = []
-        has_data = False
-        legend_handles = []
+        for model in MODELS:
+            color_cnn = COLORS["CNN"]
+            color_sae = COLORS["SAE"]
 
-        for m_idx, model in enumerate(MODELS):
-            color = MODEL_COLORS[model]
+            x_cnn, x_sae = 0, 1
+            fig, ax = plt.subplots(figsize=(4.0, 5.2))
 
             # Filter folds
             cnn_f = [r for r in cnn_folds
@@ -176,8 +172,9 @@ def plot_cnn_vs_sae(cnn_folds, sae_folds, output_dir,
                      and (sae_filter is None or r["filter"] == sae_filter)]
 
             if not cnn_f or not sae_f:
+                plt.close(fig)
+                print(f"  ⚠ {gene_label} {model}: no data — skipping")
                 continue
-            has_data = True
 
             # Per-seed means
             cnn_seed_dict = defaultdict(list)
@@ -190,43 +187,35 @@ def plot_cnn_vs_sae(cnn_folds, sae_folds, output_dir,
                 sae_seed_dict[r["sae_seed"]].append(r["r2"])
             sae_means = np.array([np.mean(v) for v in sae_seed_dict.values()])
 
-            # Jitter (slightly offset per model to avoid overlap)
-            offset = -0.05 + m_idx * 0.10  # Ridge left, XGBoost right
-            j_cnn = np.random.default_rng(42 + m_idx).uniform(-0.05, 0.05, size=len(cnn_means))
-            j_sae = np.random.default_rng(99 + m_idx).uniform(-0.05, 0.05, size=len(sae_means))
+            # Jitter
+            j_cnn = np.random.default_rng(42).uniform(-0.06, 0.06, size=len(cnn_means))
+            j_sae = np.random.default_rng(99).uniform(-0.06, 0.06, size=len(sae_means))
 
-            # CNN = circles (○)
-            ax.scatter(x_cnn + offset + j_cnn, cnn_means, s=35, color=color,
+            # Individual seed dots
+            ax.scatter(x_cnn + j_cnn, cnn_means, s=38, color=color_cnn,
                        alpha=0.6, edgecolors="white", linewidths=0.4,
                        marker="o", zorder=4)
-            # SAE = X markers (×)
-            ax.scatter(x_sae + offset + j_sae, sae_means, s=40, color=color,
-                       alpha=0.6, edgecolors=color, linewidths=1.0,
+            ax.scatter(x_sae + j_sae, sae_means, s=42, color=color_sae,
+                       alpha=0.6, edgecolors=color_sae, linewidths=1.0,
                        marker="X", zorder=4)
 
             # Grand means + connecting line
             gc = cnn_means.mean()
             gs = sae_means.mean()
 
-            line_h, = ax.plot([x_cnn + offset, x_sae + offset], [gc, gs],
-                              color=color, linewidth=2.5, zorder=6,
-                              solid_capstyle="round", label=model)
-            ax.scatter([x_cnn + offset], [gc], s=80, color=color,
+            ax.plot([x_cnn, x_sae], [gc, gs],
+                    color="#333333", linewidth=2.5, zorder=6,
+                    solid_capstyle="round")
+            ax.scatter([x_cnn], [gc], s=90, color=color_cnn,
                        edgecolors="white", linewidths=1.5, marker="o", zorder=7)
-            ax.scatter([x_sae + offset], [gs], s=85, color=color,
+            ax.scatter([x_sae], [gs], s=95, color=color_sae,
                        edgecolors="white", linewidths=1.5, marker="X", zorder=7)
 
-            # Annotate means (offset text position per model)
-            ha_cnn = "right" if m_idx == 0 else "right"
-            y_off = 0.008 * (1 if m_idx == 0 else -1)
-            ax.text(x_cnn - 0.18, gc + y_off, f"{gc:.3f}", fontsize=8,
-                    color=color, fontweight="bold", ha="right", va="center")
-            ax.text(x_sae + 0.18, gs + y_off, f"{gs:.3f}", fontsize=8,
-                    color=color, fontweight="bold", ha="left", va="center")
-
-            all_y_vals.extend(cnn_means.tolist())
-            all_y_vals.extend(sae_means.tolist())
-            legend_handles.append(line_h)
+            # Annotate means
+            ax.text(x_cnn - 0.18, gc, f"{gc:.3f}", fontsize=9,
+                    color=color_cnn, fontweight="bold", ha="right", va="center")
+            ax.text(x_sae + 0.18, gs, f"{gs:.3f}", fontsize=9,
+                    color=color_sae, fontweight="bold", ha="left", va="center")
 
             # ── MWU on individual folds ──
             cnn_all = np.array([r["r2"] for r in cnn_f])
@@ -235,58 +224,48 @@ def plot_cnn_vs_sae(cnn_folds, sae_folds, output_dir,
 
             if n1 >= 5 and n2 >= 5:
                 U_stat, pval = mannwhitneyu(sae_all, cnn_all, alternative="two-sided")
-                # Rank-biserial correlation: positive = SAE higher (first arg)
                 r_rb = (2 * U_stat) / (n1 * n2) - 1
 
                 p_str = f"p<0.001" if pval < 0.001 else f"p={pval:.3f}"
-                # Place stats at top, stacked per model
-                y_pos = 0.97 - m_idx * 0.06
-                stat_text = f"{model}: {p_str}, r\u1D63\u1D47={r_rb:.2f}"
-                ax.text(0.98, y_pos, stat_text, transform=ax.transAxes,
-                        fontsize=7.5, fontweight="bold", color=color,
+                stat_text = f"MWU: {p_str}, r\u1D63\u1D47={r_rb:.2f}"
+                ax.text(0.98, 0.97, stat_text, transform=ax.transAxes,
+                        fontsize=8, fontweight="bold", color="#333333",
                         ha="right", va="top")
 
                 print(f"  {gene_label} {model}: MWU U={U_stat:.1f}, p={pval:.6f}, "
                       f"r_rb={r_rb:.3f}, n_cnn={n1}, n_sae={n2}")
 
-        if not has_data:
+            # ── Y-axis ──
+            all_y = np.concatenate([cnn_means, sae_means])
+            data_min = min(all_y.min(), 0)
+            data_max = all_y.max()
+            margin = (data_max - data_min) * 0.12
+            ax.set_ylim(data_min - margin * 0.5, data_max + margin * 2)
+
+            # Zero line
+            ax.axhline(0, color="#CCCCCC", linewidth=0.8, linestyle="-", zorder=1)
+
+            # ── Formatting ──
+            ax.set_xticks([x_cnn, x_sae])
+            ax.set_xticklabels(["CNN GAP", "SAE"], fontsize=13, fontweight="bold")
+            ax.set_ylabel("R² (Cell Death Prediction)", fontsize=10, fontweight="bold")
+            ax.set_title(f"{gene_label} — {model}\nCNN GAP vs SAE",
+                         fontsize=13, fontweight="bold", pad=10)
+            ax.set_xlim(-0.5, 1.5)
+            ax.grid(axis="y", alpha=0.15, zorder=0)
+            ax.set_axisbelow(True)
+            sns.despine(ax=ax)
+
+            fig.tight_layout()
+
+            # ── Save per-mutation per-model ──
+            filt_tag = f"_{sae_filter}" if sae_filter else ""
+            base = f"cnn_vs_sae_{gene_label}_{model}{filt_tag}"
+            for ext in ["pdf", "png", "svg"]:
+                path = os.path.join(output_dir, f"{base}.{ext}")
+                fig.savefig(path, dpi=300 if ext != "png" else 200, bbox_inches="tight")
             plt.close(fig)
-            print(f"  ⚠ {gene_label}: no data — skipping")
-            continue
-
-        # ── Y-axis: include 0 if negatives exist ──
-        all_y = np.array(all_y_vals)
-        data_min = min(all_y.min(), 0)
-        data_max = all_y.max()
-        margin = (data_max - data_min) * 0.12
-        ax.set_ylim(data_min - margin * 0.5, data_max + margin * 2)
-
-        # Zero line
-        ax.axhline(0, color="#CCCCCC", linewidth=0.8, linestyle="-", zorder=1)
-
-        # ── Formatting ──
-        ax.set_xticks([x_cnn, x_sae])
-        ax.set_xticklabels(["CNN GAP", "SAE"], fontsize=13, fontweight="bold")
-        ax.set_ylabel("R² (Cell Death Prediction)", fontsize=10, fontweight="bold")
-        ax.set_title(f"{gene_label} — CNN GAP vs SAE",
-                     fontsize=13, fontweight="bold", pad=10)
-        ax.set_xlim(-0.5, 1.5)
-        ax.grid(axis="y", alpha=0.15, zorder=0)
-        ax.set_axisbelow(True)
-        ax.legend(handles=legend_handles, loc="upper left", fontsize=9,
-                  framealpha=0.8, edgecolor="#DDDDDD")
-        sns.despine(ax=ax)
-
-        fig.tight_layout()
-
-        # ── Save per-mutation ──
-        filt_tag = f"_{sae_filter}" if sae_filter else ""
-        base = f"cnn_vs_sae_{gene_label}{filt_tag}"
-        for ext in ["pdf", "png", "svg"]:
-            path = os.path.join(output_dir, f"{base}.{ext}")
-            fig.savefig(path, dpi=300 if ext != "png" else 200, bbox_inches="tight")
-        plt.close(fig)
-        print(f"  Saved {gene_label}: {base}.svg / .png / .pdf")
+            print(f"  Saved {gene_label} {model}: {base}.svg / .png / .pdf")
 
 
 # ==============================================================================

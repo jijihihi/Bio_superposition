@@ -13,10 +13,16 @@
 #   sys.argv = [
 #       "plot_layer_comparison",
 #       "--results_dir", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/apoptosis_r2_results",
+#       "--config", "noNorm_raw",
+#       "--model", "XGBoost"
 #   ]
 #   from apoptosis_prediction.plot_layer_comparison import main
 #   main()
 # ==============================================================================
+
+
+# XGBoost로 할 때 filter
+
 
 import os
 import sys
@@ -265,21 +271,31 @@ def plot_layer_comparison(stat_dict, folds_data, results_dir, config, model):
             zorder=3,
         )
 
-        # Overlay individual R² points (stripplot-style)
+        # Overlay seed-averaged R² points (mean of 5-fold per seed)
         for grp_idx, grp in enumerate(GROUPS_OF_INTEREST):
             key = (layer, grp)
-            if key in stat_dict:
-                vals = stat_dict[key]["values"]
-                pos = x_centers[grp_idx] + offsets[layer_idx]
-                # Jitter for visibility
-                jitter = np.random.default_rng(42 + layer_idx * 100 + grp_idx).uniform(
-                    -bar_width * 0.3, bar_width * 0.3, size=len(vals))
-                ax.scatter(
-                    pos + jitter, vals,
-                    s=12, color="black", alpha=0.45,
-                    edgecolors="white", linewidths=0.3,
-                    zorder=5,
-                )
+            if key not in stat_dict:
+                continue
+            pos = x_centers[grp_idx] + offsets[layer_idx]
+
+            # Aggregate by seed: mean of folds per seed
+            seed_vals = defaultdict(list)
+            for row in folds_data:
+                if (row["config"] != config or row["model"] != model
+                        or row["group"] != grp or row["layer"] != layer):
+                    continue
+                seed_vals[row["seed"]].append(row["r2"])
+            seed_means = np.array([np.mean(v) for v in seed_vals.values()])
+
+            rng = np.random.default_rng(42 + layer_idx * 100 + grp_idx)
+            jitter = rng.uniform(-bar_width * 0.25, bar_width * 0.25,
+                                 size=len(seed_means))
+            ax.scatter(
+                pos + jitter, seed_means,
+                s=30, color="black", alpha=0.55,
+                edgecolors="white", linewidths=0.4,
+                zorder=5,
+            )
 
     # ── Significance brackets ──
     for grp_idx, grp in enumerate(GROUPS_OF_INTEREST):

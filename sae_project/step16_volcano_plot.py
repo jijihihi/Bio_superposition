@@ -29,9 +29,11 @@
 #     "--sae_cache", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_sparsity3200_loss_L2norm곱해줌/gated_sae_stage5_out_d4096_sp3200.0_aux0.03125_tied_class_gap_means_per_image.npz",
 #     "--output_dir", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/volcano_plots",
 #     "--min_log2fc", "0.58",
-#     "--max_gini", "0.75",
+#     "--adj_p", "1e-40",
+#     "--min_log2fc", "0.58",
+#     "--max_gini", "1.0",
 #     "--mut_only",
-#     "--dead_threshold", "5e-4",
+#     "--dead_threshold", "5e-5"
 # ]
 # from sae_project.step16_volcano_plot import main
 # main()
