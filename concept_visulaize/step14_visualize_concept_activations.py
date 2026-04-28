@@ -111,13 +111,68 @@ spatial activation map에 L2 norm을 적용하는 것은 의미가 없습니다.
 
 
 # ]
-# from sae_project.step14_visualize_concept_activations import main
+# from concept_visulaize.step14_visualize_concept_activations import main
+# main()
+
+
+
+
+
+# %matplotlib inline
+# import logging
+# logging.basicConfig(level=logging.INFO, force=True)
+
+# ##이거하자
+# %matplotlib inline
+# import sys
+# sys.argv = [
+#     "step14",
+#     "--features_cache","/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_sparsity3200_loss_L2norm곱해줌/features_cache_stage5_out_normrestored_all.npz",   # L2 norm 된 상태. gap_csv 만들때와 동일하게. strict 사용.
+#     "--sae_ckpt", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_sparsity3200_loss_L2norm곱해줌/stage5_out_d4096_gated_sp3200.0_aux0.03125_tied_ep008.pt",
+#     "--apoptosis_csv", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv",
+#     "--model_state_path", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/best_model.pt",
+#     "--shard_root", "/content/wds_shards",
+#     "--save_dir", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87",
+#     "--output_dir", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_sparsity3200_loss_L2norm곱해줌/concept_by_gap_csv_d4096_sp3200_max_0.58_superposition_interpretable",
+#     "--concept_ids", "de_filter_csv",
+#    "--max_gini", "1.0",
+#     "--de_min_log2fc", "0.58",
+#     "--mut_only",
+#     "--gap_csv", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_sparsity3200_loss_L2norm곱해줌/gated_sae_stage5_out_d4096_sp3200.0_aux0.03125_tied_class_gap_means.csv"
+#     ]
+# from concept_visulaize.step14_visualize_concept_activations import main
 # main()
 
 # bilinear interpolation을 할때 dead threshold를 설정 안했고 alive 로 그냥 햇기 때문에 "--dead_threshold", "5e-4" 된 상태로 된거. 이거는 usage ema 기준. GAP_csv 뽑아낸 방식 (strict)으로 DE filter한것.abs
 # 그렇다면 sparsity 800 인 경우도, dead threshold 잘 만 설정하면 보기 좋은 애들 많이 나오는거 아닐까?
 
 
+
+
+
+### pseudotime heatmap
+
+# pseudotime heatmap 위홰서 sparsity 800 시각화
+# %matplotlib inline
+# import sys
+# sys.argv = [
+#     "step14",
+#     "--features_cache","/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_seed856_no_L2norm_loss/features_cache_stage5_out_normrestored_all_no_SAE_GAP_L2_norm_again_d8192_sp800.npz",   # L2 norm 된 상태. gap_csv 만들때와 동일하게. strict 사용.
+#     "--sae_ckpt", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_seed856_no_L2norm_loss/stage5_out_d8192_gated_sp800.0_aux0.03125_tied_ep008.pt",
+#     "--apoptosis_csv", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv",
+#     "--model_state_path", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/best_model.pt",
+#     "--shard_root", "/content/wds_shards",
+#     "--save_dir", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87",
+#     "--output_dir", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_seed856_no_L2norm_loss/concept_activation_pseudotime_heatmap",
+#     "--concept_ids", "de_filter_csv",
+#    "--max_gini", "1.0",
+#     "--de_min_log2fc", "0.58",
+#     "--mut_only",
+#     "--gap_csv", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_seed856_no_L2norm_loss/gated_sae_stage5_out_d8192_sp800.0_aux0.03125_tied_class_gap_means.csv",
+#     "--dead_threshold", "1e-5",
+#     ]
+# from concept_visulaize.step14_visualize_concept_activations import main
+# main()
 
 
 # ==============================================================================
@@ -215,21 +270,29 @@ def create_overlay(base_rgb: np.ndarray, heatmap_rgb: np.ndarray, alpha: float =
 # Data Loading
 # ==============================================================================
 
-def load_gap_csv(csv_path: str) -> Dict[int, Dict]:
+def load_gap_csv(csv_path: str, dead_threshold: float = 1e-5) -> Dict[int, Dict]:
     """
     Load GAP means CSV.
+
+    If dead_threshold > 0, recompute is_alive from n_* and total_active_imgs
+    columns: activation_rate = total_active_imgs / total_images.
+    A neuron is dead if activation_rate < dead_threshold.
+
     Returns dict: concept_id -> {
         'is_alive': bool,
         'Control': float, 'SNCA': float, 'GBA': float, 'LRRK2': float,
+        'n_Control': int, ..., 'total_active_imgs': int,
         'max_class': str, 'class_diff': float, 'entropy': float
     }
     """
     concepts = {}
     with open(csv_path, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
+        headers = reader.fieldnames or []
+        has_n_cols = "n_Control" in headers and "total_active_imgs" in headers
         for row in reader:
             cid = int(row["concept_id"])
-            concepts[cid] = {
+            info = {
                 "is_alive": bool(int(row["is_alive"])),
                 "Control": float(row["Control"]),
                 "SNCA": float(row["SNCA"]),
@@ -239,6 +302,42 @@ def load_gap_csv(csv_path: str) -> Dict[int, Dict]:
                 "class_diff": float(row["class_diff"]),
                 "entropy": float(row["entropy"]),
             }
+            if has_n_cols:
+                info["n_Control"] = int(row["n_Control"])
+                info["n_SNCA"] = int(row["n_SNCA"])
+                info["n_GBA"] = int(row["n_GBA"])
+                info["n_LRRK2"] = int(row["n_LRRK2"])
+                info["total_active_imgs"] = int(row["total_active_imgs"])
+            concepts[cid] = info
+
+    # ── Recompute is_alive using dead_threshold ──
+    if dead_threshold > 0 and has_n_cols:
+        # Total images = max(total_active_imgs) across ALL concepts gives a
+        # lower bound, but a better estimate is sum of n_* for the most-active
+        # concept. Use the concept with the highest total_active_imgs as proxy.
+        max_active = max((c["total_active_imgs"] for c in concepts.values()), default=1)
+        # total_images ≈ n_Control + n_SNCA + n_GBA + n_LRRK2 for that concept
+        best_cid = max(concepts, key=lambda k: concepts[k]["total_active_imgs"])
+        best = concepts[best_cid]
+        total_images = best["n_Control"] + best["n_SNCA"] + best["n_GBA"] + best["n_LRRK2"]
+        if total_images == 0:
+            total_images = max_active  # fallback
+        logger.info(f"  Estimated total images: {total_images} "
+                    f"(from concept {best_cid}, total_active={max_active})")
+
+        n_original_alive = sum(1 for c in concepts.values() if c["is_alive"])
+        n_recomputed_dead = 0
+        for cid, info in concepts.items():
+            activation_rate = info["total_active_imgs"] / max(total_images, 1)
+            if activation_rate < dead_threshold:
+                info["is_alive"] = False
+                n_recomputed_dead += 1
+        n_new_alive = sum(1 for c in concepts.values() if c["is_alive"])
+        logger.info(f"  Dead neuron filter (threshold={dead_threshold:.1e}): "
+                    f"original alive={n_original_alive}, "
+                    f"newly killed={n_recomputed_dead}, "
+                    f"final alive={n_new_alive}")
+
     return concepts
 
 
@@ -1128,6 +1227,10 @@ def get_visualization_args():
                         help="Min |log2FC| for DE filtering")
     parser.add_argument("--de_adj_p", type=float, default=0.05,
                         help="Adjusted p-value threshold for DE")
+    parser.add_argument("--dead_threshold", type=float, default=1e-5,
+                        help="Dead neuron threshold: neurons with activation_rate "
+                             "< this value are excluded. Uses total_active_imgs / "
+                             "total_images from gap_csv. Default: 1e-5")
     
     # Visualization options
     parser.add_argument("--top_k", type=int, default=20,
@@ -1170,7 +1273,7 @@ def main():
     alive_concepts = []
     if args.gap_csv and os.path.exists(args.gap_csv):
         logger.info(f"Loading GAP CSV: {args.gap_csv}")
-        gap_info = load_gap_csv(args.gap_csv)
+        gap_info = load_gap_csv(args.gap_csv, dead_threshold=args.dead_threshold)
         logger.info(f"  Total concepts: {len(gap_info)}")
         alive_concepts = [cid for cid, info in gap_info.items() if info["is_alive"]]
         logger.info(f"  Alive concepts: {len(alive_concepts)}")
@@ -1180,7 +1283,7 @@ def main():
             if args.concept_ids == "gini_filter":
                 logger.info("  → Computing GAP info from features_cache for gini_filter")
                 gap_info = compute_gap_info_from_cache(
-                    args.features_cache, dead_threshold=1e-5)
+                    args.features_cache, dead_threshold=args.dead_threshold)
                 alive_concepts = [cid for cid, info in gap_info.items() if info["is_alive"]]
                 logger.info(f"  Alive concepts: {len(alive_concepts)}")
             else:

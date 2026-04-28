@@ -844,9 +844,9 @@ def plot_linearity_distribution_all(df, metric, save_dir, label=''):
 
     # Histogram (normalised density)
     bins = np.linspace(x_lo, x_hi, 80)
-    ax.hist(lin, bins=bins, density=True,
+    ax.hist(lin, bins=bins, density=False,
             color='#5B9BD5', edgecolor='white', linewidth=0.3,
-            alpha=0.55, zorder=1, label='Histogram')
+            alpha=0.7, zorder=1)
     # Reference line at 1.0
     ax.axvline(1.0, color='#E74C3C', linestyle='--', linewidth=1.2,
                label='Perfect (1.0)', zorder=3)
@@ -857,7 +857,7 @@ def plot_linearity_distribution_all(df, metric, save_dir, label=''):
                label=f'Median ({med:.3f})', zorder=3)
 
     ax.set_xlabel('Linearity (sum of components / original)', fontsize=9)
-    ax.set_ylabel('Density', fontsize=9)
+    ax.set_ylabel('Number of neurons', fontsize=9)
     ax.set_title(f'Linearity Distribution – All {len(lin)} Neurons ({metric})',
                  fontsize=10, fontweight='bold')
     ax.set_xlim(x_lo, x_hi)

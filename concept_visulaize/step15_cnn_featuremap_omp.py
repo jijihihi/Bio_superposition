@@ -63,9 +63,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 from PIL import Image, ImageDraw
 from tqdm.auto import tqdm
+import logging
 
 try:
     import matplotlib.cm as _cm
+    import matplotlib.pyplot as plt
 except ImportError:
     raise RuntimeError("pip install matplotlib")
 
@@ -79,6 +81,9 @@ from sae_project.step06_gated_sae import GatedSAE
 
 logger = get_logger("step15_omp")
 
+plt.rcParams['svg.fonttype'] = 'none'
+plt.rcParams['pdf.fonttype'] = 42
+logging.getLogger("fontTools").setLevel(logging.WARNING)
 
 # ══════════════════════════════════════════════════════════════════
 # Viz helpers
@@ -109,6 +114,15 @@ def _label(arr: np.ndarray, text: str, color=(255, 255, 0)) -> np.ndarray:
     ImageDraw.Draw(pil).text((2, 2), text, fill=color)
     return np.array(pil)
 
+def _draw_annotations(arr: np.ndarray,
+                      annotations: List[Tuple[int, int, str, tuple]]) -> np.ndarray:
+    """Draw all text annotations onto a copy of the image (for PNG output)."""
+    pil = Image.fromarray(arr.copy())
+    draw = ImageDraw.Draw(pil)
+    for x, y, text, color in annotations:
+        draw.text((x, y), text, fill=color)
+    return np.array(pil)
+
 def _up(arr2d: np.ndarray, S: int) -> np.ndarray:
     t = torch.from_numpy(arr2d.astype(np.float32)).unsqueeze(0).unsqueeze(0)
     return F.interpolate(t, (S, S), mode="bilinear", align_corners=False).squeeze().numpy()
@@ -131,8 +145,30 @@ def _hsep(w: int, h: int = 2, v: int = 80) -> np.ndarray:
     return np.full((h, w, 3), v, dtype=np.uint8)
 
 
+def _save_as_svg(arr: np.ndarray, path: str, dpi: int = 150,
+                 annotations: Optional[List[Tuple[int, int, str, tuple]]] = None):
+    """Save a numpy RGB array as SVG with editable text annotations.
+
+    Text is rendered as SVG <text> elements (not rasterised), so it can be
+    freely selected, edited, or deleted in Adobe Illustrator.
+    """
+    h, w = arr.shape[:2]
+    fig, ax = plt.subplots(figsize=(w / dpi, h / dpi), dpi=dpi)
+    ax.imshow(arr)
+    ax.axis('off')
+    if annotations:
+        for x_px, y_px, text, color in annotations:
+            mc = tuple(c / 255.0 for c in color)
+            ax.text(x_px, y_px, text, color=mc,
+                    fontsize=6, fontfamily='sans-serif',
+                    verticalalignment='top', horizontalalignment='left')
+    fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
+    fig.savefig(path, format='svg', bbox_inches='tight', pad_inches=0)
+    plt.close(fig)
+
+
 # ══════════════════════════════════════════════════════════════════
-# OMP-IoU: CNN channel → SAE concept list
+# OMP: CNN channel → SAE concept list  (multi-metric)
 # ══════════════════════════════════════════════════════════════════
 
 def _norm_map(arr2d: np.ndarray, plo: float = 50.0, phi: float = 99.9) -> np.ndarray:
@@ -142,57 +178,102 @@ def _norm_map(arr2d: np.ndarray, plo: float = 50.0, phi: float = 99.9) -> np.nda
     return np.clip((arr2d - lo) / max(hi - lo, 1e-8), 0, 1).astype(np.float32)
 
 
-def omp_cnn_to_sae_soft(
-    cnn_norm:       np.ndarray,    # (Hf, Wf) float [0,1] — CNN normalized (median-zeroed)
-    sae_norm_stack: np.ndarray,    # (K, Hf, Wf) float [0,1] — SAE normalized (median-zeroed)
+def _score_soft_iou(residual: np.ndarray, sae_stack: np.ndarray) -> np.ndarray:
+    """Soft IoU: Σ min(r, s) / Σ max(r, s).  Scale-sensitive."""
+    inter = np.minimum(residual[None], sae_stack).sum(axis=(1, 2))
+    union = np.maximum(residual[None], sae_stack).sum(axis=(1, 2))
+    return inter / np.maximum(union, 1e-8)
+
+
+def _score_cosine(residual: np.ndarray, sae_stack: np.ndarray) -> np.ndarray:
+    """Cosine similarity: Σ(r·s) / (‖r‖·‖s‖).  Scale-invariant, shape-only."""
+    r_flat = residual.ravel()
+    r_norm = max(float(np.linalg.norm(r_flat)), 1e-12)
+    dot    = (sae_stack.reshape(sae_stack.shape[0], -1) @ r_flat)  # (K,)
+    s_norm = np.linalg.norm(sae_stack.reshape(sae_stack.shape[0], -1), axis=1)  # (K,)
+    return dot / (r_norm * np.maximum(s_norm, 1e-12))
+
+
+def _score_soft_dice(residual: np.ndarray, sae_stack: np.ndarray) -> np.ndarray:
+    """Soft Dice: 2·Σ(r·s) / (Σr² + Σs²).  More overlap-tolerant than IoU."""
+    r_sq = float((residual ** 2).sum())
+    dot  = (sae_stack.reshape(sae_stack.shape[0], -1)
+            @ residual.ravel())                                     # (K,)
+    s_sq = (sae_stack ** 2).reshape(sae_stack.shape[0], -1).sum(1)  # (K,)
+    return 2 * dot / np.maximum(r_sq + s_sq, 1e-8)
+
+
+_SCORE_FN = {
+    "soft_iou":  _score_soft_iou,
+    "cosine":    _score_cosine,
+    "soft_dice": _score_soft_dice,
+}
+
+_METRIC_LABEL = {
+    "soft_iou":  "sIoU",
+    "cosine":    "cos",
+    "soft_dice":  "dice",
+}
+
+
+def omp_cnn_to_sae(
+    cnn_norm:       np.ndarray,    # (Hf, Wf) float [0,1]
+    sae_norm_stack: np.ndarray,    # (K, Hf, Wf) float [0,1]
     candidate_cids: List[int],
     n:              int = 8,
+    metric:         str = "soft_iou",
 ) -> Tuple[List[int], List[float]]:
     """
-    Soft/continuous OMP — uses actual activation VALUES (not binary masks).
+    Greedy OMP decomposition of a CNN channel using SAE concepts.
 
-    Why this fixes the binary-threshold problem:
-      Binary median threshold: 50% of pixels always selected, including background.
-      Soft IoU: pixels near 0 (background, after median subtraction) contribute ≈0
-               to both numerator and denominator → background ignored naturally.
-
-    Metric:
-      soft_IoU = Σ min(residual, sae) / Σ max(residual, sae)
-      • Strong overlap in bright regions → high soft_IoU
-      • Background (≈0) → contributes ≈0 regardless of how many background pixels
+    Metrics:
+      soft_iou  — Σ min(r,s) / Σ max(r,s)      (scale-sensitive, original)
+      cosine    — r·s / (‖r‖·‖s‖)              (scale-invariant, shape only)
+      soft_dice — 2·Σ(r·s) / (Σr² + Σs²)      (overlap-tolerant)
 
     Residual update:
-      residual ← max(residual - sae_selected, 0)
-      • Subtracts what the selected SAE explained, leaving remainder
-      • Continuous: after round 1 covers nucleus (0.8→0), round 2 focuses on lysosome
+      soft_iou / soft_dice → max(residual - sae_selected, 0)
+      cosine               → residual - proj(residual onto sae)  (true OMP projection)
     """
+    score_fn = _SCORE_FN[metric]
     K        = sae_norm_stack.shape[0]
     residual = cnn_norm.copy().astype(np.float32)
     excl     = np.zeros(K, dtype=bool)
     sel:  List[int]   = []
-    ious: List[float] = []
+    scores: List[float] = []
 
     for _ in range(n):
         if residual.max() < 1e-6:
             break
-        # Soft IoU: Σ min / Σ max  (vectorised over K)
-        soft_inter = np.minimum(residual[None], sae_norm_stack).sum(axis=(1, 2))  # (K,)
-        soft_union = np.maximum(residual[None], sae_norm_stack).sum(axis=(1, 2))  # (K,)
-        soft_iou   = soft_inter / np.maximum(soft_union, 1e-8)
-        soft_iou[excl] = -1.0
 
-        best_k   = int(np.argmax(soft_iou))
-        best_iou = float(soft_iou[best_k])
-        if best_iou < 1e-6:
+        sc = score_fn(residual, sae_norm_stack)  # (K,)
+        sc[excl] = -1.0
+
+        best_k = int(np.argmax(sc))
+        best_v = float(sc[best_k])
+        if best_v < 1e-6:
             break
 
         sel.append(candidate_cids[best_k])
-        ious.append(round(best_iou, 4))
+        scores.append(round(best_v, 4))
         excl[best_k] = True
-        # Soft residual: subtract what SAE explained, clip to 0
-        residual = np.maximum(residual - sae_norm_stack[best_k], 0)
 
-    return sel, ious
+        # Residual update
+        if metric == "cosine":
+            # True OMP: subtract projection of residual onto selected SAE
+            s = sae_norm_stack[best_k]
+            s_flat = s.ravel()
+            s_sq = float((s_flat ** 2).sum())
+            if s_sq > 1e-12:
+                coeff = float(residual.ravel() @ s_flat) / s_sq
+                residual = np.maximum(residual - coeff * s, 0)
+            else:
+                residual = np.maximum(residual - s, 0)
+        else:
+            # Subtraction (soft_iou, soft_dice)
+            residual = np.maximum(residual - sae_norm_stack[best_k], 0)
+
+    return sel, scores
 
 
 def n_needed_for_coverage_soft(
@@ -295,54 +376,53 @@ def make_cnn_omp_block(
     sae_b_stack:    np.ndarray,    # (K, Hf, Wf) bool
     candidate_cids: List[int],
     sel_cids:       List[int],     # OMP result
-    sel_ious:       List[float],
+    sel_scores:     List[float],
     concept_class_map: Dict[int, str],
     cnn_ch:         int,
     n_sae_80pct:    int,
+    metric_label:   str   = "sIoU",
     S:              int   = 128,
     cmap_name:      str   = "jet",
     alpha:          float = 0.5,
-) -> np.ndarray:
-
+) -> Tuple[np.ndarray, List[Tuple[int, int, str, tuple]]]:
     """
-    3-row block for ONE CNN channel — all panels use step14-style overlay:
-      (median 이하 → 0, normalize, heatmap overlay on original)
-
-    OMP 계산 자체: binary mask (median threshold) → IoU 계산 (변경 없음)
-    표시만 overlay 방식으로 통일.
-
-    Row 0 (header):  [CNN ch overlay]  [orig]    (median-zeroed heatmap, same as step14)
-    Row 1 (indiv):   [SAE#A overlay]   [SAE#B overlay]  ...   (OMP 순서, IoU 표시)
-    Row 2 (cumul):   [cumul SAE 1-1]   [cumul SAE 1-2]  ...   (누적합 overlay + cov%)
+    3-row block for ONE CNN channel — all panels use step14-style overlay.
+    Returns (block_image_without_text, annotations).
+    Annotations are (x_px, y_px, text, rgb_color) in block-local coordinates.
     """
     N      = len(sel_cids)
     n_cols = max(N + 2, 4)
     blank  = np.zeros((S, S, 3), dtype=np.uint8)
+    annotations: List[Tuple[int, int, str, tuple]] = []
+    label_color = (255, 255, 0)
 
     # ── Row 0: CNN channel header ──
     cnn_ovl = _overlay_median_zero(cnn_map_ch, orig_s, S, cmap_name, alpha)
-    h1 = _label(cnn_ovl, f"CNN ch{cnn_ch}\nGAP#{gap_rank}={gap_val:.3f}\nSAE×80%={n_sae_80pct}")
-    h2 = _label(orig_s.copy(), "orig")
-    hdr_cells = [h1, h2] + [blank] * max(0, n_cols - 2)
+    h1_text = f"CNN ch{cnn_ch}\nGAP#{gap_rank}={gap_val:.3f}\nSAE\u00d780%={n_sae_80pct}"
+    annotations.append((0 * S + 2, 2, h1_text, label_color))
+    annotations.append((1 * S + 2, 2, "orig", label_color))
+    hdr_cells = [cnn_ovl, orig_s.copy()] + [blank] * max(0, n_cols - 2)
     row0 = np.concatenate(hdr_cells[:n_cols], axis=1)
 
+    # y offsets: row0=0..S-1, thin(h=1) at S, row1=S+1, thin at 2S+1, row2=2S+2
+    row1_y = S + 1
+    row2_y = 2 * S + 2
+
     # ── Row 1: individual SAE overlays (OMP 선택 순서) ──
-    # Soft IoU 기준으로 선택된 SAE — step14 스타일 overlay
-    # IoU: 이번 round의 soft IoU (연속값 기준이므로 배경 오염 없음)
     sae_cells = [blank, blank]
-    for k, (cid, iou_v) in enumerate(zip(sel_cids, sel_ious), 1):
+    for k, (cid, sc_v) in enumerate(zip(sel_cids, sel_scores), 1):
         sae_m   = sae_all[:, :, cid]
         sae_ovl = _overlay_median_zero(sae_m, orig_s, S, cmap_name, alpha)
         cls_lbl = concept_class_map.get(cid, "")
-        sae_cells.append(_label(sae_ovl,
-                                f"#{k} SAE{cid}\n({cls_lbl})\nsoftIoU={iou_v:.2f}"))
+        txt = f"#{k} SAE{cid}\n({cls_lbl})\n{metric_label}={sc_v:.2f}"
+        col = k + 1
+        annotations.append((col * S + 2, row1_y + 2, txt, label_color))
+        sae_cells.append(sae_ovl)
     while len(sae_cells) < n_cols:
         sae_cells.append(blank)
     row1 = np.concatenate(sae_cells[:n_cols], axis=1)
 
     # ── Row 2: cumulative overlay + soft coverage% ──
-    # soft coverage = Σ min(covered_union, cnn_norm) / Σ cnn_norm
-    # 배경(≈0) 픽셀은 기여 없음 → 실제 활성 영역의 몇 %를 누적 SAE가 설명하는지
     cnn_norm_ch = _norm_map(cnn_map_ch)                    # (Hf, Wf) [0,1]
     total_cnn   = max(float(cnn_norm_ch.sum()), 1e-8)
     covered_soft = np.zeros_like(cnn_norm_ch)
@@ -355,18 +435,22 @@ def make_cnn_omp_block(
         covered_soft = np.maximum(covered_soft, sae_n)    # soft union = element-wise max
         cum_ovl      = _overlay_median_zero(cumul_sae, orig_s, S, cmap_name, alpha)
         cov_pct      = 100.0 * float(np.minimum(covered_soft, cnn_norm_ch).sum()) / total_cnn
-        cumul_cells.append(_label(cum_ovl, f"cumul 1-{k}\ncov={cov_pct:.0f}%"))
+        txt = f"cumul 1-{k}\ncov={cov_pct:.0f}%"
+        col = k + 1
+        annotations.append((col * S + 2, row2_y + 2, txt, label_color))
+        cumul_cells.append(cum_ovl)
     while len(cumul_cells) < n_cols:
         cumul_cells.append(blank)
     row2 = np.concatenate(cumul_cells[:n_cols], axis=1)
 
     target_w = S * n_cols
     thin = _hsep(target_w, h=1, v=60)
-    return np.concatenate([
+    block = np.concatenate([
         _pad_w(row0, target_w), thin,
         _pad_w(row1, target_w), thin,
         _pad_w(row2, target_w),
     ], axis=0)
+    return block, annotations
 
 
 
@@ -376,38 +460,53 @@ def make_image_figure(
     sae_map:      np.ndarray,      # (Hf, Wf) — SAE concept activation at native res
     gap_val_csv:  float,
     cls_label:    str,
-    cnn_blocks:   List[np.ndarray],
+    cnn_blocks:   List[Tuple[np.ndarray, List]],
     S:            int   = 128,
     cmap_name:    str   = "jet",
     alpha:        float = 0.5,
-) -> np.ndarray:
+) -> Tuple[np.ndarray, List[Tuple[int, int, str, tuple]]]:
     """
-    Full figure for one (SAE concept, image) pair:
-      [Reference header]
-      [CNN block #1 (GAP rank 1)]
-      [CNN block #2 (GAP rank 2)]
-      ...
+    Full figure for one (SAE concept, image) pair.
+    Returns (figure_image_without_text, annotations).
+    Annotations are (x_px, y_px, text, rgb_color) in figure coordinates.
     """
+    annotations: List[Tuple[int, int, str, tuple]] = []
+    label_color = (255, 255, 0)
+
     # Reference SAE header — ALL stats at native (Hf, Wf), upsample for display only
     sae_ovl = _overlay_median_zero(sae_map, orig_s, S, cmap_name, alpha)
 
-    h1 = _label(orig_s,  "orig")
-    h2 = _label(sae_ovl, f"SAE#{sae_cid} ({cls_label})\ngap={gap_val_csv:.3f}")
+    h1 = orig_s
+    h2 = sae_ovl
+    annotations.append((2, 2, "orig", label_color))
+    annotations.append((S + 2, 2,
+                         f"SAE#{sae_cid} ({cls_label})\ngap={gap_val_csv:.3f}",
+                         label_color))
 
     if not cnn_blocks:
-        return np.concatenate([h1, h2], axis=1)
+        fig = np.concatenate([h1, h2], axis=1)
+        return fig, annotations
 
-    max_w = max(b.shape[1] for b in cnn_blocks)
+    blocks     = [b[0] for b in cnn_blocks]
+    blk_annots = [b[1] for b in cnn_blocks]
+    max_w = max(b.shape[1] for b in blocks)
     hdr   = _pad_w(np.concatenate([h1, h2], axis=1), max_w)
     thick = _hsep(max_w, h=5, v=180)  # bright thick separator
     thin  = _hsep(max_w, h=2, v=90)
 
     parts = [hdr, thick]
-    for i, blk in enumerate(cnn_blocks):
+    y_cursor = S + 5  # header height + thick separator height
+    for i, (blk, ba) in enumerate(zip(blocks, blk_annots)):
         parts.append(_pad_w(blk, max_w))
-        if i < len(cnn_blocks) - 1:
+        for (ax, ay, txt, col) in ba:
+            annotations.append((ax, y_cursor + ay, txt, col))
+        y_cursor += blk.shape[0]
+        if i < len(blocks) - 1:
             parts.append(thin)
-    return np.concatenate(parts, axis=0)
+            y_cursor += 2
+
+    fig = np.concatenate(parts, axis=0)
+    return fig, annotations
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -456,6 +555,15 @@ def get_args():
                         "        (negative = 'not detected here', ignored)\n"
                         "  abs:  |x|        — magnitude regardless of sign\n"
                         "        (positive/negative equally meaningful, e.g. ETF geometry)")
+    p.add_argument("--save_svg", action="store_true",
+                   help="Additionally save figures as SVG for Illustrator editing")
+    p.add_argument("--omp_metric", type=str, default="soft_iou",
+                   choices=["soft_iou", "cosine", "soft_dice"],
+                   help="OMP scoring metric.\n"
+                        "  soft_iou:  Σmin(r,s)/Σmax(r,s) — scale-sensitive (original)\n"
+                        "  cosine:    r·s/(‖r‖·‖s‖)       — scale-invariant, shape only\n"
+                        "  soft_dice: 2Σ(r·s)/(Σr²+Σs²)   — overlap-tolerant\n"
+                        "Default: soft_iou")
     return p.parse_args()
 
 
@@ -589,6 +697,8 @@ def main():
         os.makedirs(concept_dir, exist_ok=True)
 
         summary_figures: List[np.ndarray] = []
+        summary_clean_figs: List[np.ndarray] = []
+        summary_fig_annots: List[List] = []
         poly_rows: List[dict] = []
 
         # Inner loop: image
@@ -636,7 +746,7 @@ def main():
 
             orig_s  = _resize(_fiji(img_u16), args.img_size)
 
-            cnn_blocks: List[np.ndarray] = []
+            cnn_blocks: List[Tuple[np.ndarray, List]] = []
 
             # ── Inner-inner loop: per CNN channel ──
             for gap_rank, cnn_ch in enumerate(top_cnn_chs, 1):
@@ -655,30 +765,32 @@ def main():
                 cnn_norm_ch = _norm_map(cnn_map_ch_proc)        # (Hf, Wf) float [0,1]
                 ch_gap      = float(ch_gap_vals[cnn_ch])
 
-                # Soft OMP: CNN channel (normalized) ← SAE concept maps (normalized)
-                # soft_IoU 사용 → 배경(≈0) 픽셀은 IoU에 거의 기여 없음
-                sel_cids_omp, sel_ious_omp = omp_cnn_to_sae_soft(
+                # OMP: CNN channel (normalized) ← SAE concept maps (normalized)
+                sel_cids_omp, sel_scores_omp = omp_cnn_to_sae(
                     cnn_norm=cnn_norm_ch,
                     sae_norm_stack=sae_norm_stack,
                     candidate_cids=selected_cids,
                     n=args.n_select,
+                    metric=args.omp_metric,
                 )
 
                 # Soft polysemanticity: how many SAE needed to cover 80% of CNN activation energy?
                 n_sae_80 = n_needed_for_coverage_soft(
                     cnn_norm_ch, sae_norm_stack, selected_cids, sel_cids_omp, threshold=0.80)
 
-                blk = make_cnn_omp_block(
+                metric_lbl = _METRIC_LABEL[args.omp_metric]
+                blk, blk_annots = make_cnn_omp_block(
                     orig_s=orig_s, cnn_map_ch=cnn_map_ch_proc, cnn_b_ch=None,
                     gap_rank=gap_rank, gap_val=ch_gap,
                     sae_all=sae_all, sae_b_stack=None,
                     candidate_cids=selected_cids,
-                    sel_cids=sel_cids_omp, sel_ious=sel_ious_omp,
+                    sel_cids=sel_cids_omp, sel_scores=sel_scores_omp,
                     concept_class_map=concept_class_map,
                     cnn_ch=cnn_ch, n_sae_80pct=n_sae_80,
+                    metric_label=metric_lbl,
                     S=args.img_size, cmap_name=args.cmap, alpha=args.overlay_alpha,
                 )
-                cnn_blocks.append(blk)
+                cnn_blocks.append((blk, blk_annots))
 
                 poly_rows.append({
                     "img_name":    img_name, "rank_in_sae": rank, "line": line,
@@ -686,32 +798,41 @@ def main():
                     "gap_val":     round(ch_gap, 5),
                     "n_sae_80pct": n_sae_80,
                     "omp_cids":    ",".join(str(c) for c in sel_cids_omp),
-                    "omp_ious":    ",".join(str(v) for v in sel_ious_omp),
+                    "omp_scores":  ",".join(str(v) for v in sel_scores_omp),
+                    "omp_metric":  args.omp_metric,
                 })
 
                 # Log per OMP step
-                for k, (omp_cid, omp_iou) in enumerate(zip(sel_cids_omp, sel_ious_omp), 1):
+                for k, (omp_cid, omp_sc) in enumerate(zip(sel_cids_omp, sel_scores_omp), 1):
                     all_log.append({
                         "sae_concept_id": cid, "sae_class": cls_lbl,
                         "img_name": img_name,  "rank_in_sae": rank, "line": line,
                         "cnn_channel": cnn_ch, "gap_rank": gap_rank, "gap_val": round(ch_gap, 5),
                         "omp_order":  k, "omp_sae_cid": omp_cid,
                         "omp_sae_class": concept_class_map.get(omp_cid, ""),
-                        "omp_iou": omp_iou, "n_sae_80pct": n_sae_80,
+                        "omp_score": omp_sc, "omp_metric": args.omp_metric,
+                        "n_sae_80pct": n_sae_80,
                     })
 
             # ── Assemble per-image figure ──
-            fig = make_image_figure(
+            fig_clean, fig_annots = make_image_figure(
                 orig_s=orig_s, sae_cid=cid, sae_map=sae_map,
                 gap_val_csv=gap_csv, cls_label=cls_lbl,
                 cnn_blocks=cnn_blocks,
                 S=args.img_size, cmap_name=args.cmap, alpha=args.overlay_alpha,
             )
-            summary_figures.append(fig)
+            fig_labeled = _draw_annotations(fig_clean, fig_annots)
+            summary_figures.append(fig_labeled)
+            summary_clean_figs.append(fig_clean)
+            summary_fig_annots.append(fig_annots)
 
             fname = (f"{cls_lbl or line}_{img_name}"
                      f"__rank{rank:02d}_omp.png")
-            Image.fromarray(fig).save(os.path.join(concept_dir, fname))
+            Image.fromarray(fig_labeled).save(os.path.join(concept_dir, fname))
+            if args.save_svg:
+                _save_as_svg(fig_clean, os.path.join(
+                    concept_dir, fname.replace('.png', '.svg')),
+                    annotations=fig_annots)
 
         # ── Summary panel (all images vertically stacked) ──
         if summary_figures:
@@ -719,11 +840,23 @@ def main():
             panel = np.concatenate([_pad_w(f, max_w) for f in summary_figures], axis=0)
             Image.fromarray(panel).save(
                 os.path.join(concept_dir, "summary_panel.png"))
+            if args.save_svg:
+                panel_clean = np.concatenate(
+                    [_pad_w(f, max_w) for f in summary_clean_figs], axis=0)
+                panel_annots: List[Tuple[int, int, str, tuple]] = []
+                y_off = 0
+                for fc, fa in zip(summary_clean_figs, summary_fig_annots):
+                    for (ax, ay, txt, col) in fa:
+                        panel_annots.append((ax, y_off + ay, txt, col))
+                    y_off += fc.shape[0]
+                _save_as_svg(panel_clean, os.path.join(
+                    concept_dir, "summary_panel.svg"),
+                    annotations=panel_annots)
 
         # ── Polysemanticity CSV ──
         if poly_rows:
             pf = ["img_name", "rank_in_sae", "line", "cnn_channel", "gap_rank",
-                  "gap_val", "n_sae_80pct", "omp_cids", "omp_ious"]
+                  "gap_val", "n_sae_80pct", "omp_cids", "omp_scores", "omp_metric"]
             with open(os.path.join(concept_dir, f"concept{cid:04d}_polysemanticity.csv"),
                       "w", newline="", encoding="utf-8") as f:
                 w = csv.DictWriter(f, fieldnames=pf)
@@ -739,7 +872,8 @@ def main():
     if all_log:
         gfields = ["sae_concept_id", "sae_class", "img_name", "rank_in_sae", "line",
                    "cnn_channel", "gap_rank", "gap_val",
-                   "omp_order", "omp_sae_cid", "omp_sae_class", "omp_iou", "n_sae_80pct"]
+                   "omp_order", "omp_sae_cid", "omp_sae_class",
+                   "omp_score", "omp_metric", "n_sae_80pct"]
         with open(os.path.join(local_out, "omp_log_all.csv"),
                   "w", newline="", encoding="utf-8") as f:
             w = csv.DictWriter(f, fieldnames=gfields)
