@@ -256,11 +256,11 @@ def minmax_normalize(x: np.ndarray, eps: float = 1e-6) -> np.ndarray:
     return (x - mn) / (mx - mn)
 
 
-def create_overlay(base_rgb: np.ndarray, heatmap_rgb: np.ndarray, alpha: float = 0.5) -> np.ndarray:
+def create_overlay(base_rgb: np.ndarray, heatmap_rgb: np.ndarray, alpha: float = 0.5, base_alpha: float = 1.0) -> np.ndarray:
     """
     Blend heatmap onto base image.
     """
-    base = base_rgb.astype(np.float32)
+    base = base_rgb.astype(np.float32) * base_alpha
     heat = heatmap_rgb.astype(np.float32)
     blended = base * (1 - alpha) + heat * alpha
     return blended.clip(0, 255).astype(np.uint8)
@@ -1018,6 +1018,7 @@ def visualize_concept(
     img_size: int = 128,
     cmap_name: str = "jet",
     overlay_alpha: float = 0.5,
+    base_alpha: float = 1.0,
     act_cache: Dict[Tuple[int, int], np.ndarray] = None,
     **kwargs,
 ) -> List[Dict]:
@@ -1122,7 +1123,7 @@ def visualize_concept(
         orig_rgb = linear_uint16_to_uint8_rgb(img_u16)
         bright_rgb = fiji_linear_scaling_to_uint8(img_u16)  # 10%~99.5% linear scaling
         heatmap_rgb = apply_colormap_01(act_norm, cmap_name=cmap_name)
-        overlay_rgb = create_overlay(bright_rgb, heatmap_rgb, alpha=overlay_alpha)
+        overlay_rgb = create_overlay(bright_rgb, heatmap_rgb, alpha=overlay_alpha, base_alpha=base_alpha)
         
         # CNN input view: SafeInstanceNormalize → global scale to uint8
         # Key: scale all 3 channels together (not per-channel) to show
@@ -1141,7 +1142,7 @@ def visualize_concept(
         if hi - lo < 1e-6:
             hi = lo + 1e-6
         cnn_rgb = np.clip((cnn_np - lo) / (hi - lo) * 255, 0, 255).astype(np.uint8)
-        cnn_overlay_rgb = create_overlay(cnn_rgb, heatmap_rgb, alpha=overlay_alpha)
+        cnn_overlay_rgb = create_overlay(cnn_rgb, heatmap_rgb, alpha=overlay_alpha, base_alpha=base_alpha)
         
         # Base filename: {class}_{img_name}__rank{rank}_{line}_gap..._max...
         # class_label comes from kwargs (e.g. "LRRK2"), line is the specific line name
@@ -1241,6 +1242,8 @@ def get_visualization_args():
                         help="Only visualize mutation-high concepts (skip Control-only, remap Control_X→X)")
     parser.add_argument("--overlay_alpha", type=float, default=0.5,
                         help="Overlay blend alpha (0-1)")
+    parser.add_argument("--base_alpha", type=float, default=1.0,
+                        help="Base image alpha (0-1) to darken the background")
     
     # Model config
     parser.add_argument("--which_layer", type=str, default="stage5_out",
@@ -1570,6 +1573,7 @@ def main():
             img_size=args.img_size,
             cmap_name=args.cmap,
             overlay_alpha=args.overlay_alpha,
+            base_alpha=args.base_alpha,
             act_cache=act_cache,
             class_label=cls_label,
         )

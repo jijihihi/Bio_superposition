@@ -82,6 +82,8 @@ except ImportError:
 
 sns.set_theme(style="whitegrid", font_scale=1.05)
 
+# "Sliding Window Regression" 으로 에러바 표시한다. 지금 2RMSD bin나눠서 slidding하면서 구해서 직선 근처에 표시해준다.
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # CLI
@@ -149,11 +151,23 @@ def get_args():
     p.add_argument("--color_sae",  type=str,   default="#E8833A")
     p.add_argument("--alpha",      type=float, default=0.12)
     p.add_argument("--point_size", type=float, default=1.0)
+    p.add_argument("--inlier_alpha", type=float, default=0.05,
+                   help="Alpha transparency for inlier scatter points")
+    p.add_argument("--outlier_alpha", type=float, default=0.8,
+                   help="Alpha transparency for outlier scatter points")
+    p.add_argument("--rmsd_alpha", type=float, default=0.15,
+                   help="Alpha transparency for 2*RMSD band")
+    p.add_argument("--x_clip_pct", type=float, default=0.5,
+                   help="Percentage of top X-axis (cosine distance) values to clip from the plot.")
+    p.add_argument("--fit_clip_pct", type=float, default=1.0,
+                   help="Percentage of top X-axis values to exclude from the linear fit calculation.")
 
     # ── Output ──
     p.add_argument("--output_dir", type=str, default="./gam_plots")
     p.add_argument("--dpi",        type=int, default=200)
     p.add_argument("--no_svg",     action="store_true")
+    p.add_argument("--scatter_only", action="store_true",
+                   help="Skip full sweeps and only generate the scatter/regression plot for the selected seeds.")
     p.add_argument("--check_version", action="store_true",
                    help="Print version and exit immediately.")
 
@@ -613,6 +627,13 @@ def plot_scatter_gam(display_data, corr_rows_by_model, args, out_dir):
 
     fig, axes = plt.subplots(1, n_cols, figsize=(5.5 * n_cols, 5.2), squeeze=False)
 
+    global_y_max = 0.0
+    for model in models:
+        _, dpt, _, _, _ = display_data[model]
+        if len(dpt) > 0:
+            global_y_max = max(global_y_max, float(np.nanmax(dpt)))
+    y_lim = global_y_max * 1.06
+
     for col_i, model in enumerate(models):
         cos, dpt, ci, cj, seed_label = display_data[model]
         color = colors.get(model, "#666")
@@ -621,6 +642,16 @@ def plot_scatter_gam(display_data, corr_rows_by_model, args, out_dir):
         mask = np.ones(len(cos), dtype=bool)
         x_cls = cos[mask].astype(np.float32)
         y_cls = dpt[mask].astype(np.float32)
+        
+        print(f"    [Debug {model}] Raw Cosine Dist - Min: {x_cls.min():.4f}, Max: {x_cls.max():.4f}, Mean: {x_cls.mean():.4f}, 99.5th Pctl: {np.percentile(x_cls, 99.5):.4f}")
+        
+        if args.x_clip_pct > 0 and len(x_cls) > 0:
+            x_thresh = np.percentile(x_cls, 100.0 - args.x_clip_pct)
+            clip_mask = x_cls <= x_thresh
+            n_before = len(x_cls)
+            x_cls = x_cls[clip_mask]
+            y_cls = y_cls[clip_mask]
+            print(f"    [Debug {model}] After clipping top {args.x_clip_pct}% (> {x_thresh:.4f}): Max becomes {x_cls.max():.4f} (removed {n_before - len(x_cls)} pairs)")
 
         if len(x_cls) < 20:
             ax.set_visible(False)
@@ -629,52 +660,92 @@ def plot_scatter_gam(display_data, corr_rows_by_model, args, out_dir):
         budget   = args.n_sample
         n_disp   = max(min(budget, len(x_cls)), min(80_000, len(x_cls)))
         idx_disp = rng.choice(len(x_cls), n_disp, replace=False)
-        ax.scatter(
-            x_cls[idx_disp], y_cls[idx_disp],
-            c=color, alpha=args.alpha, s=args.point_size,
-            linewidths=0, rasterized=True)
+        
+        x_disp = x_cls[idx_disp]
+        y_disp = y_cls[idx_disp]
 
-        adj_r2  = float("nan")
-        has_gam = False
-        try:
-            x_pred, y_line, y_lo, y_hi, r2, adj_r2 = fit_gam(
-                x_cls, y_cls,
-                args.n_splines, args.gam_lam, args.poly_degree, args.seed,
-                clip_pct=args.gam_clip_pct, ci_width=args.gam_ci_width)
-            ax.plot(x_pred, y_line, color="black", linewidth=2.2, zorder=5,
-                    label=f"GAM  adj-R²={adj_r2:.3f}")
-            if args.gam_ci_width > 0 and np.isfinite(y_lo).any():
-                ax.fill_between(x_pred, y_lo, y_hi, alpha=0.18, color="black", zorder=4)
-            has_gam = True
-        except Exception as e:
-            print(f"  [{model}/Global] GAM failed: {e}")
+        # 1. Linear Fit instead of GAM
+        if args.fit_clip_pct > 0 and len(x_cls) > 0:
+            fit_thresh = np.percentile(x_cls, 100.0 - args.fit_clip_pct)
+            fit_mask = x_cls <= fit_thresh
+            x_fit = x_cls[fit_mask]
+            y_fit = y_cls[fit_mask]
+        else:
+            x_fit = x_cls
+            y_fit = y_cls
 
-        xy_max = max(float(x_cls.max()), float(y_cls.max())) * 1.05
+        coeffs = np.polyfit(x_fit, y_fit, 1)
+        
+        y_pred_all = np.polyval(coeffs, x_cls)
+        y_pred_fit = np.polyval(coeffs, x_fit)
+        ss_res = float(np.sum((y_fit - y_pred_fit)**2))
+        ss_tot = float(np.sum((y_fit - np.mean(y_fit))**2))
+        r2 = 1.0 - (ss_res / ss_tot) if ss_tot > 0 else np.nan
+
+        # 2. Sliding RMSD calculation
+        eval_x = np.linspace(float(x_cls.min()), float(x_cls.max()), 200)
+        window_size = (x_cls.max() - x_cls.min()) * 0.1
+        rmsd_list = []
+        residuals = y_cls - y_pred_all
+        for ex in eval_x:
+            w_mask = (x_cls >= ex - window_size/2) & (x_cls <= ex + window_size/2)
+            if w_mask.sum() > 5:
+                rmsd_list.append(np.sqrt(np.mean(residuals[w_mask]**2)))
+            else:
+                rmsd_list.append(np.nan)
+        rmsd_array = np.array(rmsd_list)
+        
+        valid_mask = np.isfinite(rmsd_array)
+        if valid_mask.sum() > 0:
+            rmsd_array = np.interp(eval_x, eval_x[valid_mask], rmsd_array[valid_mask])
+        else:
+            rmsd_array = np.zeros_like(eval_x)
+
+        y_line = np.polyval(coeffs, eval_x)
+
+        # 3. Identify Outliers for display
+        y_pred_disp = np.polyval(coeffs, x_disp)
+        res_disp = y_disp - y_pred_disp
+        rmsd_disp = np.interp(x_disp, eval_x, rmsd_array)
+        outlier_mask = np.abs(res_disp) > 2 * rmsd_disp
+        inlier_mask = ~outlier_mask
+
+        # 4. Plot Scatter for Inliers, and Scatter for Outliers
+        ax.scatter(x_disp[inlier_mask], y_disp[inlier_mask], 
+                   c=color, alpha=args.inlier_alpha, s=args.point_size, 
+                   linewidths=0, rasterized=True, label="Inliers (≤2σ)")
+        
+        ax.scatter(x_disp[outlier_mask], y_disp[outlier_mask], 
+                   c=color, alpha=args.outlier_alpha, s=args.point_size * 2.5, 
+                   linewidths=0, rasterized=True, label="Outliers (>2σ)")
+
+        ax.plot(eval_x, y_line, color="black", linewidth=2.2, zorder=5, 
+                label=f"Linear Fit R²={r2:.3f}")
+        ax.fill_between(eval_x, y_line - 2*rmsd_array, y_line + 2*rmsd_array, 
+                        alpha=args.rmsd_alpha, color="gray", zorder=4, label="±2 RMSD")
+
+        xy_max = max(float(x_cls.max()), global_y_max) * 1.05
         ax.plot([0, xy_max], [0, xy_max], color="#aaaaaa", linewidth=1.0, linestyle="--", alpha=0.65)
 
         x_lim = float(x_cls.max()) * 1.06
-        y_lim = float(y_cls.max()) * 1.06
         ax.set_xlim(-x_lim * 0.01, x_lim)
         ax.set_ylim(-y_lim * 0.01, y_lim)
 
-        cls_rows = [r for r in corr_rows_by_model.get(model, []) if r.get("class") == "_ALL_"]
-        if cls_rows:
-            rho_m = float(np.nanmean([r.get("spearman", np.nan) for r in cls_rows]))
-            tau_m = float(np.nanmean([r.get("kendall",  np.nan) for r in cls_rows]))
-        else:
-            st    = compute_corr(x_cls, y_cls, args.n_corr_subsample, args.seed)
-            rho_m = st["spearman"]
-            tau_m = st["kendall"]
+        # 5. Compute Correlation for THIS specific seed
+        st = compute_corr(x_cls, y_cls, args.n_corr_subsample, args.seed)
+        pr_m = st["pearson"]
+        rho_m = st["spearman"]
+        tau_m = st["kendall"]
 
         rw_sp = np.nan
         if hasattr(args, "_rw_summ"):
             rw_sp = args._rw_summ.get(model, {}).get("_ALL_", {}).get("rw_sp", np.nan)
 
-        ann = f"Global ρ={rho_m:.3f}  τ={tau_m:.3f}"
+        ann = f"Seed: {seed_label}\n"
+        ann += f"r={pr_m:.3f}  ρ={rho_m:.3f}  τ={tau_m:.3f}"
         if np.isfinite(rw_sp):
-            ann += f"\nRow-wise ρ={rw_sp:.3f}"
-        if has_gam:
-            ann += f"\nadj-R²={adj_r2:.3f}"
+            ann += f"\nRow-wise ρ (avg)={rw_sp:.3f}"
+        ann += f"\nLinear R²={r2:.3f}"
         ann += f"\nn_disp={n_disp:,}"
 
         ax.text(0.04, 0.96, ann, transform=ax.transAxes, fontsize=8.0, va="top",
@@ -685,8 +756,7 @@ def plot_scatter_gam(display_data, corr_rows_by_model, args, out_dir):
         if col_i == 0:
             ax.set_ylabel("DPT geodesic", fontsize=11)
         ax.set_title(f"{model}  │  All Classes", fontsize=12, fontweight="bold")
-        if has_gam:
-            ax.legend(fontsize=9, loc="lower right")
+        ax.legend(fontsize=9, loc="lower right")
         sns.despine(ax=ax)
 
     fig.suptitle("Global Geometry: Cosine vs DPT (All Pairs)", fontsize=14, fontweight="bold", y=1.02)
@@ -1257,27 +1327,28 @@ def main():
         sys.exit(1)
 
     # ── 2. Multi-seed per-class correlations ───────────────────────────────
-    print(f"\n{'─'*60}")
-    print(f"  Multi-seed × per-class correlations")
-    print(f"{'─'*60}")
     rows_by_model = {}
     summaries     = {}
-    for model, paths in seed_paths.items():
-        print(f"\n  [{model}]")
-        rows = sweep_all_seeds(paths, args)
-        rows_by_model[model] = rows
-        summaries[model] = summarise_rows(rows, label=model)
+    if not args.scatter_only:
+        print(f"\n{'─'*60}")
+        print(f"  Multi-seed × per-class correlations")
+        print(f"{'─'*60}")
+        for model, paths in seed_paths.items():
+            print(f"\n  [{model}]")
+            rows = sweep_all_seeds(paths, args)
+            rows_by_model[model] = rows
+            summaries[model] = summarise_rows(rows, label=model)
 
-    # CNN vs SAE comparison
-    if "CNN" in summaries and "SAE" in summaries:
-        print_cnn_sae_comparison(summaries["CNN"], summaries["SAE"])
+        # CNN vs SAE comparison
+        if "CNN" in summaries and "SAE" in summaries:
+            print_cnn_sae_comparison(summaries["CNN"], summaries["SAE"])
 
-    # Save CSVs
-    save_stats_csv(rows_by_model, summaries, args.output_dir)
+        # Save CSVs
+        save_stats_csv(rows_by_model, summaries, args.output_dir)
 
-    # Save summary JSON
-    with open(os.path.join(args.output_dir, "corr_summary.json"), "w") as f:
-        json.dump(summaries, f, indent=2, default=str)
+        # Save summary JSON
+        with open(os.path.join(args.output_dir, "corr_summary.json"), "w") as f:
+            json.dump(summaries, f, indent=2, default=str)
 
     # ── 3. Load selected seeds for scatter / GAM / sliding window ──────────
     print(f"\n{'─'*60}")
@@ -1296,33 +1367,40 @@ def main():
         display_data[model] = (cos, dpt, ci, cj, seed_label)
 
     # ── 3.5. Row-wise (per-anchor) correlations ────────────────────────
-    print(f"\n{'-'*60}")
-    print(f"  Row-wise correlation sweep (all points as anchors)")
-    rw_raw = sweep_rowwise_seeds(seed_paths, args)
-    rw_summ = summarise_rowwise(rw_raw)
+    if not args.scatter_only:
+        print(f"\n{'-'*60}")
+        print(f"  Row-wise correlation sweep (all points as anchors)")
+        rw_raw = sweep_rowwise_seeds(seed_paths, args)
+        rw_summ = summarise_rowwise(rw_raw)
 
-    # Attach summary to args so plot_scatter_gam can read it via getattr
-    args._rw_summ = rw_summ
+        # Attach summary to args so plot_scatter_gam can read it via getattr
+        args._rw_summ = rw_summ
 
-    # Save row-wise CSV
-    rw_csv = os.path.join(args.output_dir, "rowwise_corr.csv")
-    import csv as _csv2
-    with open(rw_csv, "w", newline="", encoding="utf-8") as f:
-        w = _csv2.writer(f)
-        w.writerow(["model", "class", "rw_spearman_mean", "rw_spearman_sem",
-                    "rw_pearson_mean",  "rw_pearson_sem",  "n_seeds"])
-        for model, cls_dict in rw_summ.items():
-            for cls, v in sorted(cls_dict.items()):
-                w.writerow([model, cls,
-                             f"{v['rw_sp']:.6f}", f"{v.get('rw_sp_sem',np.nan):.6f}",
-                             f"{v['rw_pr']:.6f}", f"{v.get('rw_pr_sem',np.nan):.6f}",
-                             v.get('n_seeds', '?')])
-    print(f"  Saved row-wise CSV: {rw_csv}")
+        # Save row-wise CSV
+        rw_csv = os.path.join(args.output_dir, "rowwise_corr.csv")
+        import csv as _csv2
+        with open(rw_csv, "w", newline="", encoding="utf-8") as f:
+            w = _csv2.writer(f)
+            w.writerow(["model", "class", "rw_spearman_mean", "rw_spearman_sem",
+                        "rw_pearson_mean",  "rw_pearson_sem",  "n_seeds"])
+            for model, cls_dict in rw_summ.items():
+                for cls, v in sorted(cls_dict.items()):
+                    w.writerow([model, cls,
+                                 f"{v['rw_sp']:.6f}", f"{v.get('rw_sp_sem',np.nan):.6f}",
+                                 f"{v['rw_pr']:.6f}", f"{v.get('rw_pr_sem',np.nan):.6f}",
+                                 v.get('n_seeds', '?')])
+        print(f"  Saved row-wise CSV: {rw_csv}")
 
     # ── 4. Figure 1: Global Scatter + GAM ────────────────────────────────
     print(f"\n{'-'*60}")
-    print(f"  Figure 1: Global Scatter + GAM (All Classes Combined)")
+    print(f"  Figure 1: Global Scatter + Linear Regression (All Classes Combined)")
     plot_scatter_gam(display_data, rows_by_model, args, args.output_dir)
+
+    if args.scatter_only:
+        print(f"\n{'='*70}")
+        print(f"  [--scatter_only] Skip remaining. Done → {args.output_dir}")
+        print(f"{'='*70}\n")
+        return
 
     # ── 5. Figure 2: Sliding window ────────────────────────────────────────
     print(f"\n{'─'*60}")
