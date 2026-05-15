@@ -722,7 +722,7 @@ def plot_scatter_gam(display_data, corr_rows_by_model, args, out_dir):
         ax.plot(eval_x, y_line, color="black", linewidth=2.2, zorder=5, 
                 label=f"Linear Fit R²={r2:.3f}")
         ax.fill_between(eval_x, y_line - 2*rmsd_array, y_line + 2*rmsd_array, 
-                        alpha=args.rmsd_alpha, color="gray", zorder=4, label="±2 RMSD")
+                        alpha=args.rmsd_alpha, color="gray", zorder=4, label="±2 RMSD", linewidth=0)
 
         xy_max = max(float(x_cls.max()), global_y_max) * 1.05
         ax.plot([0, xy_max], [0, xy_max], color="#aaaaaa", linewidth=1.0, linestyle="--", alpha=0.65)
@@ -1089,7 +1089,7 @@ def plot_global_scatter_gam(seed_paths, args, out_dir):
                 clip_pct=args.gam_clip_pct, ci_width=args.gam_ci_width)
             ax.plot(x_pred, y_line, color="black", linewidth=2.2, zorder=5, label=f"GAM  adj-R²={adj_r2:.3f}")
             if np.isfinite(y_lo).any():
-                ax.fill_between(x_pred, y_lo, y_hi, alpha=0.18, color="black", zorder=4)
+                ax.fill_between(x_pred, y_lo, y_hi, alpha=0.18, color="black", zorder=4, linewidth=0)
             has_gam = True
         except Exception as e:
             print(f"    [{model}] GAM failed: {e}")

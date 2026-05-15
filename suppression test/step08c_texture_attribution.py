@@ -91,7 +91,11 @@
 #       --n_shuffle_repeats 3
 # ==============================================================================
 
+# GAP-sclar norm 한다. fmap / gap_norm
+# Token L2 norm 한다.
+# Token L2 norm 저장 후 복원.
 
+## fmap → [GAP-scalar norm] → [per-image centering] → [token L2 저장] → [F.normalize] → SAE → [× token_l2 복원]
 
 
 # python -m suppression_test.step08c_texture_attribution \
@@ -936,6 +940,31 @@ def main():
 
     # ── Save (early, before any optional post-processing that might crash) ──
     npz_path = os.path.join(out_dir, f"texture_attribution_ps{ps}_blur{bs:.1f}.npz")
+    np.savez_compressed(
+        npz_path,
+        # ── Metadata ──
+        alive_mask=alive_mask,
+        usage_ema=usage_ema,
+        topk_indices=topk_indices,
+        patch_size=ps,
+        blur_sigma=bs,
+        blur_kernel_size=bk,
+        n_shuffle_repeats=n_rep,
+        top_k=k_actual,
+        seam_margin=args.seam_margin,
+        # ── Per-metric per-neuron data ──
+        **save_data,
+    )
+    n_keys = len(save_data) + 9  # 9 metadata keys
+    logger.info(f"\nSaved: {npz_path}")
+    logger.info(f"  {n_keys} arrays, file size: {os.path.getsize(npz_path)/1e6:.1f} MB")
+    logger.info("Done!")
+
+
+if __name__ == "__main__":
+    main()
+e:
+        npz_path = os.path.join(out_dir, f"texture_attribution_ps{ps}_blur{bs:.1f}.npz")
     np.savez_compressed(
         npz_path,
         # ── Metadata ──

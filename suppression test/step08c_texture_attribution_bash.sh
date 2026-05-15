@@ -5,6 +5,11 @@
 # kernel_size = blur_sigma * 6 + 1
 # ==============================================================================
 
+USE_CNN=false
+if [ "$1" == "--use_cnn" ]; then
+    USE_CNN=true
+fi
+
 CONCEPT_IDS="0018,0037,0048,0080,0094,0101,0117,0134,0144,0186,0203,0243,0266,0277,0294,0300,0301,0306,0326,0329,0331,0337,0358,0363,0375,0405,0416,0441,0474,0484,0491,0522,0528,0539,0546,0581,0602,0615,0621,0679,0807,0814,0824,0825,0833,0849,0889,0914,0930,0932,0952,0962,0968,1048,1049,1070,1086,1090,1093,1105,1127,1128,1146,1181,1196,1203,1218,1219,1226,1240,1257,1265,1304,1322,1326,1332,1335,1341,1366,1368,1372,1380,1398,1408,1412,1416,1434,1438,1447,1450,1461,1464,1475,1508,1512,1539,1555,1558,1578,1581,1607,1613,1636,1647,1659,1667,1673,1688,1699,1756,1765,1783,1802,1803,1811,1815,1866,1879,1885,1903,1945,1948,1953,1962,1975,1978,1995,2003,2010,2019,2048,2052,2055,2057,2066,2154,2169,2173,2182,2183,2184,2198,2221,2274,2278,2290,2291,2314,2315,2338,2348,2352,2363,2420,2421,2424,2495,2558,2567,2587,2598,2632,2683,2687,2716,2746,2748,2773,2800,2805,2814,2828,2837,2864,2872,2879,2903,2926,2954,2956,2959,2967,2990,3001,3012,3035,3087,3105,3129,3135,3154,3179,3181,3207,3221,3241,3249,3259,3261,3272,3300,3301,3315,3323,3336,3338,3370,3378,3403,3439,3451,3462,3466,3472,3481,3500,3533,3563,3592,3625,3627,3637,3655,3656,3683,3713,3736,3779,3781,3788,3791,3820,3837,3838,3845,3847,3887,3900,3922,3934,3979,4014,4035,4080,4090"
 for PS in 4 8 16; do
     # blur_sigma = patch_size / 2
@@ -16,10 +21,9 @@ for PS in 4 8 16; do
     echo "  patch_size=$PS  blur_sigma=$SIGMA  kernel=$KERNEL"
     echo "=============================================="
 
-    python -m suppression_test.step08c_texture_attribution \
+    CMD="python -m suppression_test.step08c_texture_attribution \
         --model_state_path /home/ubuntu/model-east3/outputs/MoCo_seed87/best_model.pt \
-        --concept_ids "$CONCEPT_IDS" \
-        --sae_ckpt /home/ubuntu/model-east3/outputs/MoCo_seed87/SAE/stage5_out_d4096_gated_sp3200.0_aux0.03125_tied_ep008.pt \
+        --concept_ids \"$CONCEPT_IDS\" \
         --save_dir /home/ubuntu/model-east3/outputs/MoCo_seed87/SAE \
         --shard_root /home/ubuntu/model-east3/wds_shards_tar \
         --samples_per_class 1000 \
@@ -27,7 +31,17 @@ for PS in 4 8 16; do
         --blur_sigma $SIGMA \
         --blur_kernel_size $KERNEL \
         --n_shuffle_repeats 3 \
-        --seam_margin 0
+        --seam_margin 0"
+        
+    if [ "$USE_CNN" == "true" ]; then
+        CMD="$CMD --use_cnn"
+        echo "Running for CNN..."
+    else
+        CMD="$CMD --sae_ckpt /home/ubuntu/model-east3/outputs/MoCo_seed87/SAE/stage5_out_d4096_gated_sp3200.0_aux0.03125_tied_ep008.pt"
+        echo "Running for SAE..."
+    fi
+
+    eval $CMD
 done
 
 echo "All done!"

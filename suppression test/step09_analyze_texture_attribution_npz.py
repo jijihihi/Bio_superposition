@@ -94,6 +94,16 @@ def load_npz(path):
         rows.append(row)
 
     df = pd.DataFrame(rows)
+
+    # === Merge REF into LOCAL (User requested: 12 -> 9 components) ===
+    if has_rotation:
+        print("  Merging _ref into _local to reduce 12 components to 9...")
+        for m in ["gap", "l2sq"]:
+            for ch in ["R", "G", "B"]:
+                df[f"{m}_{ch}_local"] += df[f"{m}_{ch}_ref"]
+        has_rotation = False
+        comp_names = COMPONENT_NAMES_9
+
     df.attrs["has_rotation"] = has_rotation
     df.attrs["comp_names"] = comp_names
 
@@ -257,7 +267,7 @@ def plot_category_scatter(df, label=""):
 def compare_conditions(dfs, comp_list=None):
     """Compare same neurons across different conditions (patch_size/blur_sigma)."""
     if comp_list is None:
-        comp_list = COMPONENT_NAMES_12
+        comp_list = list(dfs.values())[0].attrs.get("comp_names", COMPONENT_NAMES_9)
 
     labels = list(dfs.keys())
     if len(labels) < 2:

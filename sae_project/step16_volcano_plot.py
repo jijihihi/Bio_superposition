@@ -48,6 +48,7 @@ _IN_COLAB = "google.colab" in sys.modules
 if not _IN_COLAB:
     matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+plt.rcParams['svg.fonttype'] = 'none'
 from matplotlib.lines import Line2D
 
 from scipy.stats import mannwhitneyu
@@ -334,6 +335,151 @@ def plot_volcano_comparison(
 
 
 # ==============================================================================
+# Combinations Table and Venn
+# ==============================================================================
+def plot_combinations_table_and_venn(cnn_selected, sae_selected, n_total_cnn, n_alive_sae, output_dir, dpi=300):
+    mutations = ["GBA", "LRRK2", "SNCA"]
+    import itertools
+    from collections import Counter
+    
+    # Extract only the mutation parts
+    def get_mut_comb(label):
+        muts = set(label.split("_")) & {"SNCA", "GBA", "LRRK2"}
+        return "_".join(sorted(muts)) if muts else "Control_Only"
+        
+    cnn_counts = Counter([get_mut_comb(label) for _, label, _, _ in cnn_selected])
+    sae_counts = Counter([get_mut_comb(label) for _, label, _, _ in sae_selected])
+    
+    combinations = []
+    for r in range(1, 4):
+        for comb in itertools.combinations(mutations, r):
+            combinations.append("_".join(sorted(comb)))
+            
+    # Remove Control_Only from DE sum
+    cnn_de_total = sum(cnn_counts.get(c, 0) for c in combinations)
+    sae_de_total = sum(sae_counts.get(c, 0) for c in combinations)
+    
+    cnn_none = n_total_cnn - cnn_de_total
+    sae_none = n_alive_sae - sae_de_total
+    
+    # 1. Print table to logger
+    logger.info("\n" + "=" * 60)
+    logger.info("INTERSECTION COUNTS (All 8 Combinations)")
+    logger.info("=" * 60)
+    logger.info(f"{'Combination':<20s} | {'CNN Count':<10s} | {'SAE Count':<10s}")
+    logger.info("-" * 46)
+    logger.info(f"{'None':<20s} | {cnn_none:<10d} | {sae_none:<10d}")
+    for comb in combinations:
+        logger.info(f"{comb:<20s} | {cnn_counts.get(comb, 0):<10d} | {sae_counts.get(comb, 0):<10d}")
+    logger.info("=" * 60)
+    
+    # 2. Plot Table and Bar Chart
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+    
+    # --- Subplot 1: Table ---
+    ax_tab = axes[0]
+    ax_tab.axis("off")
+    
+    cell_text = []
+    cell_text.append(["None (Not DE)", str(cnn_none), str(sae_none)])
+    for comb in combinations:
+        cell_text.append([comb.replace("_", " & "), str(cnn_counts.get(comb, 0)), str(sae_counts.get(comb, 0))])
+        
+    table = ax_tab.table(cellText=cell_text,
+                         colLabels=["Combination", "CNN GAP", "SAE"],
+                         loc="center",
+                         cellLoc="center",
+                         bbox=[0.1, 0, 0.9, 1])
+    table.auto_set_font_size(False)
+    table.set_fontsize(11)
+    
+    for (row, col), cell in table.get_celld().items():
+        if row == 0:
+            cell.set_text_props(weight='bold')
+            cell.set_facecolor('#f0f0f0')
+            
+    ax_tab.set_title("Intersection Counts Table", fontsize=14, fontweight="bold")
+    
+    # --- Subplot 2: Grouped Bar Chart ---
+    ax_bar = axes[1]
+    x = np.arange(len(combinations))
+    width = 0.35
+    
+    cnn_vals = [cnn_counts.get(comb, 0) for comb in combinations]
+    sae_vals = [sae_counts.get(comb, 0) for comb in combinations]
+    
+    ax_bar.bar(x - width/2, cnn_vals, width, label="CNN GAP", color="#5B9BD5", edgecolor="white")
+    ax_bar.bar(x + width/2, sae_vals, width, label="SAE", color="#ED7D31", edgecolor="white")
+    
+    ax_bar.set_ylabel("Count", fontsize=12)
+    ax_bar.set_title("DE Features per Combination (Excluding 'None')", fontsize=14, fontweight="bold")
+    ax_bar.set_xticks(x)
+    ax_bar.set_xticklabels([c.replace("_", "\n") for c in combinations], fontsize=10)
+    ax_bar.legend(fontsize=10)
+    ax_bar.grid(True, alpha=0.15, axis="y")
+    
+    fig.tight_layout()
+    out_path = os.path.join(output_dir, "combinations_table_bar.svg")
+    fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
+    plt.close(fig)
+    logger.info(f"  Saved combinations plot: {out_path}")
+
+    # --- 3. Venn Diagram ---
+    try:
+        from matplotlib_venn import venn3, venn3_circles
+        fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+        
+        subsets_cnn = (
+            cnn_counts.get("GBA", 0),
+            cnn_counts.get("LRRK2", 0),
+            cnn_counts.get("GBA_LRRK2", 0),
+            cnn_counts.get("SNCA", 0),
+            cnn_counts.get("GBA_SNCA", 0),
+            cnn_counts.get("LRRK2_SNCA", 0),
+            cnn_counts.get("GBA_LRRK2_SNCA", 0)
+        )
+        if sum(subsets_cnn) > 0:
+            # Fake subset sizes to force perfectly equal circles
+            v1 = venn3(subsets=(1, 1, 1, 1, 1, 1, 1), set_labels=('GBA', 'LRRK2', 'SNCA'), ax=axes[0])
+            venn3_circles(subsets=(1, 1, 1, 1, 1, 1, 1), ax=axes[0], linewidth=1)
+            # Overwrite the labels with real values
+            ids = ['100', '010', '110', '001', '101', '011', '111']
+            for i, sid in enumerate(ids):
+                lbl = v1.get_label_by_id(sid)
+                if lbl:
+                    lbl.set_text(str(subsets_cnn[i]))
+        axes[0].set_title(f"CNN GAP (Total DE: {cnn_de_total})", fontsize=14, fontweight="bold")
+        
+        subsets_sae = (
+            sae_counts.get("GBA", 0),
+            sae_counts.get("LRRK2", 0),
+            sae_counts.get("GBA_LRRK2", 0),
+            sae_counts.get("SNCA", 0),
+            sae_counts.get("GBA_SNCA", 0),
+            sae_counts.get("LRRK2_SNCA", 0),
+            sae_counts.get("GBA_LRRK2_SNCA", 0)
+        )
+        if sum(subsets_sae) > 0:
+            v2 = venn3(subsets=(1, 1, 1, 1, 1, 1, 1), set_labels=('GBA', 'LRRK2', 'SNCA'), ax=axes[1])
+            venn3_circles(subsets=(1, 1, 1, 1, 1, 1, 1), ax=axes[1], linewidth=1)
+            # Overwrite the labels with real values
+            for i, sid in enumerate(ids):
+                lbl = v2.get_label_by_id(sid)
+                if lbl:
+                    lbl.set_text(str(subsets_sae[i]))
+        axes[1].set_title(f"SAE (Total DE: {sae_de_total})", fontsize=14, fontweight="bold")
+        
+        fig.suptitle("DE Features Venn Diagram", fontsize=16, fontweight="bold", y=1.05)
+        fig.tight_layout()
+        venn_path = os.path.join(output_dir, "combinations_venn.svg")
+        fig.savefig(venn_path, dpi=dpi, bbox_inches="tight")
+        plt.close(fig)
+        logger.info(f"  Saved Venn diagram: {venn_path}")
+    except ImportError:
+        logger.warning("  matplotlib-venn not installed. Skipping Venn diagram. Install it via 'pip install matplotlib-venn'.")
+
+
+# ==============================================================================
 # Summary bar chart: absolute count of class-specific features
 # ==============================================================================
 def plot_de_summary_bar(de_results_cnn, de_results_sae, mutations,
@@ -529,7 +675,13 @@ def main():
     logger.info("CNN GAP: Loading cache and running step14-style DE filter")
     X_cnn, sc_cnn, _ = load_features(
         args.cnn_gap_cache, apply_l2_norm=args.gap_l2_norm)
-    logger.info(f"  CNN GAP: {X_cnn.shape[1]} channels, {X_cnn.shape[0]} images")
+    
+    # [수정됨] Toy Models of Superposition 대응: 
+    # CNN GAP이 음수일 수 있으므로, '활성화의 크기(Magnitude)'를 보기 위해 절대값을 취함.
+    # 이렇게 하면 양방향으로 중첩(Superposition)된 채널은 모든 클래스에서 활성화된 것으로 간주되어 특이적(Specific) 피처에서 자연스럽게 탈락됨.
+    X_cnn = np.abs(X_cnn)
+    
+    logger.info(f"  CNN GAP: {X_cnn.shape[1]} channels, {X_cnn.shape[0]} images (Applied np.abs for magnitude)")
 
     cnn_selected, cnn_per_mut_de = select_cnn_de_like_step14(
         X_cnn, sc_cnn, args.min_log2fc, args.max_gini, args.mut_only
@@ -607,7 +759,14 @@ def main():
     )
 
     # ==========================================================================
-    # 5) Print summary
+    # 5) Combinations Table and Venn Diagram
+    # ==========================================================================
+    plot_combinations_table_and_venn(
+        cnn_selected, sae_selected, X_cnn.shape[1], n_alive_sae, args.output_dir, args.dpi
+    )
+
+    # ==========================================================================
+    # 6) Print summary
     # ==========================================================================
     logger.info(f"\n{'='*60}")
     logger.info("SUMMARY: CNN GAP Channels vs SAE Neurons")
