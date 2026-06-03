@@ -34,7 +34,7 @@ from collections import defaultdict
 # ]
 
 EXPERIMENTS = {
-    # "SNCA": {
+    # "SNCA_AST18": {
     #     "rows": [6, 7],
     #     "input_dirs": [
     #         r"C:\Users\admin\Desktop\professor_data\New_data\003001__2022-05-16T12_26_57-Measurement_1_C19_SNCA\Images",
@@ -43,6 +43,38 @@ EXPERIMENTS = {
     #         r"C:\Users\admin\Desktop\professor_data\New_data\003003__2022-05-16T14_09_08-Measurement 1_C19_SNCA\Images",
     #     ]
     # },
+
+
+########################################################
+    # "SNCA_AST18_isogenic": {
+    #     "rows": [4, 5],
+    #     "input_dirs": [
+    #         r"D:\professor_data\New_data\003001__2022-05-16T12_26_57-Measurement_1_C19_SNCA\Images",
+    #         r"D:\professor_data\New_data\003001__2022-05-16T15_49_01-Measurement 2_C19_SNCA\Images",
+    #         r"D:\professor_data\New_data\003002__2022-05-16T13_20_55-Measurement 1_C19_SNCA\Images",
+    #         r"D:\professor_data\New_data\003003__2022-05-16T14_09_08-Measurement 1_C19_SNCA\Images",
+    #     ]
+    # },
+
+
+    # "SNCA-G51D": {
+    #     "rows": [4, 5],
+    #     "input_dirs": [
+    #         r"D:\160822\Minee_160822_plate1_005001_2022-08-16T10_54_01-Measurement 1\Images",
+    #         r"D:\160822\Minee_160822_plate2_005002_2022-08-16T11_43_12-Measurement 1\Images",
+    #         r"D:\160822\Minee_160822_plate3_005003_2022-08-16T12_31_25-Measurement 1\Images",
+    #     ]
+    # },
+
+    # "SNCA-G51D_isogenic": {
+    #     "rows": [6, 7],
+    #     "input_dirs": [
+    #         r"D:\160822\Minee_160822_plate1_005001_2022-08-16T10_54_01-Measurement 1\Images",
+    #         r"D:\160822\Minee_160822_plate2_005002_2022-08-16T11_43_12-Measurement 1\Images",
+    #         r"D:\160822\Minee_160822_plate3_005003_2022-08-16T12_31_25-Measurement 1\Images",
+    #     ]
+    # },
+#############################################################
 
     # "GBA": {
     #     "rows": [5, 6, 7], 
@@ -53,15 +85,40 @@ EXPERIMENTS = {
     #     ]
     # },
 
-    "Diverse_GBA": {
-        "rows": [4], 
-        "input_dirs": [
-            ##r"C:\Users\admin\Desktop\professor_data\005004__2022-08-16T13_36_04-Measurement 1_diverse\Images",  플레이트 이상
-            r"C:\Users\admin\Desktop\professor_data\005005__2022-08-16T14_22_56-Measurement 1_diverse\Images",
-            ##r"C:\Users\admin\Desktop\professor_data\005006__2022-08-16T15_10_03-Measurement 1_diverse\Images",  플레이트 이상
-            r"C:\Users\admin\Desktop\professor_data\005007__2022-08-16T16_06_39-Measurement 1_diverse\Images",
-        ]
-    },
+
+
+
+#######################################
+    # "GBA_346": {
+    #     "rows": [5, 6, 7], 
+    #     "input_dirs": [
+    #         r"D:\003007__2022-05-16T18_01_40-Measurement 1_GBA_346\Images",
+    #         r"D:\003008__2022-05-16T18_01_40-Measurement 1_GBA_346\Images",
+    #         r"D:\003009__2022-05-16T18_01_40-Measurement 1_GBA_346\Images",
+    #     ]
+    # },
+
+    # "GBA_WIMP4": {
+    #     "rows": [5, 6, 7], 
+    #     "input_dirs": [
+    #         r"D:\003014__2022-05-17T18_48_31-Measurement 1\Images",
+    #         r"D:\003016__2022-05-17T20_24_27-Measurement 1\Images"
+    #     ]
+    # },
+######################################
+
+    
+ 
+
+    # "Diverse_GBA": {
+    #     "rows": [4], 
+    #     "input_dirs": [
+    #         ##r"C:\Users\admin\Desktop\professor_data\005004__2022-08-16T13_36_04-Measurement 1_diverse\Images",  플레이트 이상
+    #         r"C:\Users\admin\Desktop\professor_data\005005__2022-08-16T14_22_56-Measurement 1_diverse\Images",
+    #         ##r"C:\Users\admin\Desktop\professor_data\005006__2022-08-16T15_10_03-Measurement 1_diverse\Images",  플레이트 이상
+    #         r"C:\Users\admin\Desktop\professor_data\005007__2022-08-16T16_06_39-Measurement 1_diverse\Images",
+    #     ]
+    # },
 
     # "PINK1": {
     #     "rows": [2, 3, 4],
@@ -103,15 +160,15 @@ EXPERIMENTS = {
     # },
 
 
-    "Diverse_C18": {
-        "rows": [3], 
-        "input_dirs": [
-            ##r"C:\Users\admin\Desktop\professor_data\005004__2022-08-16T13_36_04-Measurement 1_diverse\Images",  플레이트 이상
-            r"C:\Users\admin\Desktop\professor_data\005005__2022-08-16T14_22_56-Measurement 1_diverse\Images",
-            ##r"C:\Users\admin\Desktop\professor_data\005006__2022-08-16T15_10_03-Measurement 1_diverse\Images",  플레이트 이상
-            r"C:\Users\admin\Desktop\professor_data\005007__2022-08-16T16_06_39-Measurement 1_diverse\Images",
-        ]
-    },
+    # "Diverse_C18": {
+    #     "rows": [3], 
+    #     "input_dirs": [
+    #         ##r"C:\Users\admin\Desktop\professor_data\005004__2022-08-16T13_36_04-Measurement 1_diverse\Images",  플레이트 이상
+    #         r"C:\Users\admin\Desktop\professor_data\005005__2022-08-16T14_22_56-Measurement 1_diverse\Images",
+    #         ##r"C:\Users\admin\Desktop\professor_data\005006__2022-08-16T15_10_03-Measurement 1_diverse\Images",  플레이트 이상
+    #         r"C:\Users\admin\Desktop\professor_data\005007__2022-08-16T16_06_39-Measurement 1_diverse\Images",
+    #     ]
+    # },
 
     # "Control_SNCA_C19": {
     #     "rows": [2, 3], 
@@ -132,6 +189,45 @@ EXPERIMENTS = {
     #     ]
     # },
 
+   "alpha_syn_3hr": {
+        "rows": [2, 3, 4, 5, 6, 7], 
+        "cols": [6, 7],
+        "input_dirs": [
+            r"D:\150822\minee150822 plate2__2022-08-15T16_18_44-Measurement 1\Images"
+
+        ]
+    },
+
+   "alpha_syn_1day": {
+        "rows": [2, 3, 4, 5, 6, 7], 
+        "cols": [8],
+        "input_dirs": [
+            r"D:\090822\minee plate 1 090822__2022-08-09T16_31_17-Measurement 1\Images",
+            r"D:\150822\minee150822 plate3__2022-08-15T17_05_37-Measurement 1\Images"
+
+        ]
+    },
+
+   "alpha_syn_3day": {
+        "rows": [2, 3, 4, 5, 6, 7], 
+        "cols": [3],
+        "input_dirs": [
+            r"D:\090822\minee plate 1 090822__2022-08-09T16_31_17-Measurement 1\Images",
+            r"D:\150822\minee150822 plate3__2022-08-15T17_05_37-Measurement 1\Images"
+
+        ]
+    },
+
+   "alpha_syn_7day": {
+        "rows": [2, 3, 4, 5, 6, 7], 
+        "cols": [3],
+        "input_dirs": [
+            r"D:\090822\minee plate 2 090822__2022-08-09T17_35_08-Measurement 1\Images",
+            r"D:\150822\minee150822 plate4__2022-08-15T17_52_28-Measurement 1\Images"
+
+
+        ]
+    },
 
 
 }
@@ -151,39 +247,34 @@ class ImageMetadata:
 
     @property
     def group_key(self) -> Tuple[str, str, int, int, int, int]:
-        """그룹화를 위한 고유 키 (그룹명, ID 포함)"""
-        # <--- 3. 여기서 self.group_name을 포함해 총 6개를 반환해야 합니다.
         return (self.group_name, self.folder_id, self.row, self.col, self.fraction, self.channel)
 
-# --- 2. 사용자 설정 ---
-
-
-
-# 결과 저장 경로 설정
-BASE_OUTPUT_DIR = r"C:\Users\admin\Desktop\MIP"           # 이 아래에 그룹별 폴더가 생성됨
+# --- 3. 기본 사용자 설정 ---
+BASE_OUTPUT_DIR = r"C:\Users\admin\Desktop\MIP"
 BASE_CYTOX_DIR = r"C:\Users\admin\Desktop\MIP_cytox"
 
-
-COLS_RANGE = range(2, 12)
+# 개별 실험 설정에 "cols"가 없을 때 사용할 기본 컬럼 범위
+DEFAULT_COLS_RANGE = range(2, 12) 
 Z_STACK_COUNT = 5
 
-# --- 3. 로직 함수 ---
-
+# --- 4. 로직 함수 ---
 def extract_folder_id(path: str) -> str:
     parent_folder = os.path.basename(os.path.dirname(path))
     match = re.match(r'(\d+)', parent_folder)
     return match.group(1) if match else "Unknown"
-# --- 수정된 함수 1: 파일 스캔에도 진행 바 추가 ---
+
 def parse_files(group_name: str, config: dict) -> List[ImageMetadata]:
-    """특정 실험 그룹의 설정을 받아 파일을 수집"""
+    """특정 실험 그룹의 설정을 받아 파일 수집 (Row와 Col 모두 필터링)"""
     file_pattern = re.compile(r'r(\d+)c(\d+)f(\d+)p(\d+)-ch(\d+)')
     deduplicated_files = {}
+    
+    # 💡 그룹 설정에 'cols'가 있으면 그것을 쓰고, 없으면 기본 범위(2~11)를 사용합니다.
     target_rows = config['rows']
+    target_cols = config.get('cols', DEFAULT_COLS_RANGE)
     directories = config['input_dirs']
 
-    print(f"[{group_name}] 파일 스캔 중... (Target Rows: {target_rows})")
+    print(f"[{group_name}] 파일 스캔 중... (Rows: {list(target_rows)}, Cols: {list(target_cols)})")
     
-    # 폴더별로 진행 상황을 보여줍니다
     for folder in directories:
         if not os.path.exists(folder):
             print(f"경고: 경로 없음 - {folder}")
@@ -192,12 +283,13 @@ def parse_files(group_name: str, config: dict) -> List[ImageMetadata]:
         f_id = extract_folder_id(folder)
         filenames = os.listdir(folder)
         
-        # [수정됨] 파일 목록을 순회할 때 tqdm 추가 (leave=False는 완료 후 바를 지워 화면을 깔끔하게 함)
         for filename in tqdm(filenames, desc=f"Scanning {f_id}", leave=False):
             match = file_pattern.search(filename)
             if match:
                 r, c, f, p, ch = map(int, match.groups())
-                if r in target_rows and c in COLS_RANGE:
+                
+                # 💡 Row 조건과 변경된 Column 조건을 모두 만족하는지 검사합니다.
+                if r in target_rows and c in target_cols:
                     file_key = (f_id, r, c, f, p, ch)
                     deduplicated_files[file_key] = ImageMetadata(
                         group_name=group_name,
@@ -206,7 +298,6 @@ def parse_files(group_name: str, config: dict) -> List[ImageMetadata]:
                     )
     return list(deduplicated_files.values())
 
-# --- 수정된 함수 2: MIP 계산 단계에도 진행 바 추가 ---
 def run_pipeline():
     summary_data = []
 
@@ -229,11 +320,8 @@ def run_pipeline():
         for img in images:
             grouped_data[img.group_key].append(img)
 
-        # 3. MIP 처리 (가장 오래 걸리는 부분)
+        # 3. MIP 처리
         final_results = defaultdict(dict)
-        
-        # [수정됨] 계산 루프에 tqdm 추가
-        # list(grouped_data.items())로 변환해야 tqdm이 전체 길이를 알고 예상 시간을 계산해줍니다.
         process_loop = tqdm(list(grouped_data.items()), desc="Calculating MIP")
         
         for key, stack in process_loop:
@@ -242,7 +330,6 @@ def run_pipeline():
             sorted_stack = sorted(stack, key=lambda x: x.plane)[:Z_STACK_COUNT]
             if len(sorted_stack) < Z_STACK_COUNT: continue
             
-            # 이미지 로딩 및 Max Projection
             try:
                 img_data = np.array([tifffile.imread(m.full_path) for m in sorted_stack])
                 mip_img = np.max(img_data, axis=0).astype(np.uint16)
@@ -252,7 +339,6 @@ def run_pipeline():
 
         # 4. 저장 및 요약
         save_count = 0
-        # 기존에 있던 저장 단계 tqdm (유지)
         for (f_id, r, c, f), channels in tqdm(final_results.items(), desc=f"Saving {group_name}"):
             filename_prefix = f"{f_id}_r{r:02d}c{c:02d}f{f:02d}"
             
@@ -274,9 +360,9 @@ def run_pipeline():
         
         print(f"✅ {group_name} 완료! 총 {save_count}개의 이미지가 생성되었습니다.")
 
-    df = pd.DataFrame(summary_data)
-    # df.to_csv(os.path.join(BASE_OUTPUT_DIR, "processing_summary.csv"), index=False)
-    # print(f"\n📄 전체 처리 내역이 'processing_summary.csv'에 저장되었습니다.")
+    if summary_data:
+        df = pd.DataFrame(summary_data)
+        # df.to_csv(os.path.join(BASE_OUTPUT_DIR, "processing_summary.csv"), index=False)
 
 if __name__ == "__main__":
     run_pipeline()

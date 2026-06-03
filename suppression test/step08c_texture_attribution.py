@@ -193,6 +193,7 @@ from sae_project.step05_model_encoder import (
 from sae_project.step06_gated_sae import GatedSAE
 
 # Reuse from step08
+# pyrefly: ignore [missing-import]
 from suppression_test.step08_channel_attribution import (
     lr_swap_channels, ud_swap_channels,
     build_combined_seam_mask,

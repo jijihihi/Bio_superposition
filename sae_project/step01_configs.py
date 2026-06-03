@@ -96,8 +96,7 @@ def get_args(args_list=None):
                    help="optional L1 on activations (top-k already sparse)")
 
     # ============== Gated SAE Configuration ==============
-    p.add_argument("--use_gated_sae", action="store_true",
-                   help="Use Gated SAE instead of Top-K SAE")
+
     
     # Sparsity warmup
     p.add_argument("--sparsity_warmup_steps", type=int, default=100,

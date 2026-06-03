@@ -14,6 +14,10 @@ def get_args():
     parser.add_argument("--output_dir", type=str, default=r"C:\Users\admin\Desktop\cropped_image\Rejected_cropped_image", 
                         help="Directory to move REJECTED patches to.")
     
+    # [추가] QC를 수행할 특정 하위 폴더 목록 지정 (기본값 설정)
+    parser.add_argument("--target_dirs", nargs='+', default=["GBA_346", "GBA_WIMP4"], 
+                        help="List of specific subfolders inside input_dir to process for QC.")
+    
     # [0] 채널 표준편차 합
     parser.add_argument("--min_std_sum", type=float, default=3500.0, 
                         help="Reject if sum of 3 channel std is below this.")
@@ -27,11 +31,9 @@ def get_args():
                         help="Reject if Laplacian variance is below this.")
 
     # [3] 배경 필터링 설정 (Fiji Style Linear Scaling)
-    # 상위 n% (Max Cutoff용)
     parser.add_argument("--max_saturation_percent", type=float, default=0.5, 
                         help="Percentile to saturate at the top (e.g., 0.5 means top 0.5%% pixels are mapped to 65535).")
     
-    # [추가됨] 하위 n% (Min Cutoff용 - 배경 제거 기준)
     parser.add_argument("--min_saturation_percent", type=float, default=10.0, 
                         help="Percentile to saturate at the bottom (e.g., 10.0 means bottom 10%% pixels are mapped to 0).")
 
@@ -43,25 +45,17 @@ def get_args():
     return parser.parse_args()
 
 def check_quality_combined(img, args):
-    """
-    QC Pipeline:
-    1. Signal Sum Check
-    2. Laplacian Variance Check
-    3. Linear Scaling Background Check (Min-Max Stretching with configurable cutoffs)
-    """
     if img.ndim == 2:
         img = img[..., np.newaxis]
     
     h, w, c = img.shape
     
-    # Step 0: Channel Std Sum Check (배경이 많은 이미지 필터링)
     channel_stds = [np.std(img[..., i].astype(np.float32)) for i in range(c)]
     std_sum = sum(channel_stds)
     
     if std_sum < args.min_std_sum:
         return True, f"Low Variation (std_sum={std_sum:.0f})"
     
-    # Step 1: Signal Sum Check [cite: 6, 7]
     top_5_idx = int(h * w * 0.15)
     total_signal = 0
     for i in range(c):
@@ -73,14 +67,12 @@ def check_quality_combined(img, args):
     if total_signal < args.min_signal_sum:
         return True, f"Weak Signal Sum ({total_signal:.0f})"
 
-    # Step 2: Laplacian Variance Check [cite: 8]
     flat_max = np.max(img, axis=2).astype(np.float64)
     laplacian_var = cv2.Laplacian(flat_max, cv2.CV_64F).var()
     
     if laplacian_var < args.min_laplacian_var:
         return True, f"Blurry ({laplacian_var:.0f})"
 
-    # Step 3: Fiji-Style Linear Scaling [cite: 9, 10, 11, 12, 13, 14]
     scaled_img = np.zeros_like(img, dtype=np.float32)
     target_max = 65535.0
     MIN_STD_THRESHOLD = 655.0 
@@ -92,20 +84,13 @@ def check_quality_combined(img, args):
         if raw_std < MIN_STD_THRESHOLD:
             scaled_channel = channel 
         else:
-            # [변경됨] args에서 설정한 min/max saturation percent 사용
-            # Min Cutoff: 하위 n% (배경 제거)
             min_cutoff = np.percentile(channel, args.min_saturation_percent)
-            
-            # Max Cutoff: 상위 n% (세포 신호 보존)
             max_cutoff = np.percentile(channel, 100 - args.max_saturation_percent)
             
             if max_cutoff <= min_cutoff:
                 scaled_channel = channel * 0 
             else:
-                # 배경 빼기 (Min Cutoff 이하 0으로)
                 channel_shifted = channel - min_cutoff
-                
-                # 스케일링
                 scale_factor = target_max / (max_cutoff - min_cutoff)
                 scaled_channel = channel_shifted * scale_factor
             
@@ -125,22 +110,39 @@ def check_quality_combined(img, args):
 
 def run_filtering(args):
     print("🚀 Starting Combined QC Pipeline...")
+    print(f"   - Targets:         {', '.join(args.target_dirs)}") # 지정 폴더 출력
     print(f"   0. Std Sum         < {args.min_std_sum}")
     print(f"   1. Signal Sum      < {args.min_signal_sum}")
     print(f"   2. Laplacian Var   < {args.min_laplacian_var}")
     print(f"   3. Background Frac > {args.max_bg_fraction*100:.0f}%")
-    print(f"      (Scaling: Min {args.min_saturation_percent}% ~ Max Top {args.max_saturation_percent}%)") # 설정값 출력 확인용 추가
+    print(f"      (Scaling: Min {args.min_saturation_percent}% ~ Max Top {args.max_saturation_percent}%)")
     
     stats = {"Total": 0, "Rejected": 0, "Passed": 0}
     files_to_process = []
     
-    for root, dirs, files in os.walk(args.input_dir):
-        if os.path.abspath(args.output_dir) in os.path.abspath(root): continue
-        for f in files:
-            if f.lower().endswith(('.tif', '.tiff')):
-                files_to_process.append(os.path.join(root, f))
+    # [수정] 전체 폴더를 돌지 않고 지정한 하위 폴더 경로 목록을 먼저 생성
+    target_paths = [os.path.join(args.input_dir, d) for d in args.target_dirs]
     
-    print(f"   - Found {len(files_to_process)} patches.")
+    for target_path in target_paths:
+        if not os.path.exists(target_path):
+            print(f"⚠️ Warning: Target directory not found, skipping: {target_path}")
+            continue
+            
+        # 지정된 하위 폴더 내부만 순회
+        for root, dirs, files in os.walk(target_path):
+            # 탈락 폴더가 탐색 범위에 걸리는 것 방지
+            if os.path.abspath(args.output_dir) in os.path.abspath(root): 
+                continue
+                
+            for f in files:
+                if f.lower().endswith(('.tif', '.tiff')):
+                    files_to_process.append(os.path.join(root, f))
+    
+    print(f"   - Found {len(files_to_process)} patches in target folders.")
+    
+    if not files_to_process:
+        print("❌ No images to process. Exiting.")
+        return
 
     for file_path in tqdm(files_to_process, desc="Processing"):
         stats["Total"] += 1
@@ -162,8 +164,11 @@ def run_filtering(args):
 
     print("\n" + "="*50)
     print("📊 Final Summary")
-    print(f"✅ Passed:   {stats['Passed']} ({(stats['Passed']/stats['Total'])*100:.1f}%)")
-    print(f"❌ Rejected: {stats['Rejected']} ({(stats['Rejected']/stats['Total'])*100:.1f}%)")
+    if stats['Total'] > 0:
+        print(f"✅ Passed:   {stats['Passed']} ({(stats['Passed']/stats['Total'])*100:.1f}%)")
+        print(f"❌ Rejected: {stats['Rejected']} ({(stats['Rejected']/stats['Total'])*100:.1f}%)")
+    else:
+        print("   No images were processed.")
     print("="*50)
 
 if __name__ == "__main__":

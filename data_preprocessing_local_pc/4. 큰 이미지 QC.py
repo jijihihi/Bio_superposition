@@ -113,8 +113,13 @@ def run_filtering(args):
     stats = {"Total": 0, "Rejected_Metric": 0, "Rejected_Background": 0, "Kept": 0, "Missing": 0}
     
     # Iterate through CSV records
-    for idx, row in tqdm(df.iterrows(), total=len(df), desc="Filtering"):
+    for idx, row in df.iterrows():
         stats["Total"] += 1
+        
+        # 100장마다 진행 상황 화면에 강제 출력
+        if stats["Total"] % 100 == 0:
+            print(f"⏳ 진행 중... ({stats['Total']}/{len(df)})", end="\r", flush=True)
+            
         full_path = row["Full_Path"]
         filename = row["Filename"]
         

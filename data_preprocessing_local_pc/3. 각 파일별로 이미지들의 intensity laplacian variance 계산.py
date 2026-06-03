@@ -18,13 +18,14 @@ def get_args():
     parser.add_argument(
         "--input_dir", 
         type=str, 
-        required=True, 
+        default=r"C:\Users\admin\Desktop\MIP",
+        #required=True, 
         help="Path to the root directory containing image folders."
     )
     parser.add_argument(
         "--output_dir", 
         type=str, 
-        default="./QC_Output", 
+        default=r"C:\Users\admin\Desktop\MIP\QC_Output", 
         help="Directory to save QC results and plots."
     )
     parser.add_argument(
@@ -73,11 +74,14 @@ def calculate_channel_metrics(img):
     return metrics
 
 def find_image_files(root_dir, pattern):
-    """Recursively finds all files matching the pattern."""
+    """Recursively finds all files matching the pattern (Case-Insensitive)."""
     files = []
+    # 패턴을 소문자로 통일 (예: *.tif)
+    pattern = pattern.lower() 
     for root, _, filenames in os.walk(root_dir):
         for filename in filenames:
-            if glob.fnmatch.fnmatch(filename, pattern):
+            # 파일 확장자도 소문자로 변경하여 비교
+            if filename.lower().endswith('.tif') or filename.lower().endswith('.tiff'):
                 files.append(os.path.join(root, filename))
     return sorted(files)
 

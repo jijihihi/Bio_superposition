@@ -11,6 +11,9 @@
 #   Mount Drive, set NPZ_PATHS below, run all cells.
 # ==============================================================================
 
+# local shape과 refrance frame 값이 합쳐져서 local shape으로 나오게끔 되어 있다
+
+
 import numpy as np
 import pandas as pd
 import matplotlib

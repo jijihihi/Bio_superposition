@@ -71,6 +71,8 @@ def get_args():
     p.add_argument("--use_all_data", action="store_true",
                    help="Load train+val+test (default: val+test only). "
                         "Also sets samples_per_class=0 if not explicitly set")
+    p.add_argument("--ignore_splits", action="store_true",
+                   help="Ignore train/val/test split CSVs and use ALL images found in shard_root")
     p.add_argument("--seed", type=int, default=42)
 
     # Encoder architecture
@@ -174,59 +176,63 @@ def make_balanced_loader(args, refs, uid_to_refidx, samples_per_class, seed,
     include_train: if True, also loads train_split.csv
     samples_per_class: 0 = use ALL (no sampling)
     """
-    csv_paths = []
-    if include_train:
-        csv_paths.append(os.path.join(args.save_dir, "train_split.csv"))
-    csv_paths.append(os.path.join(args.save_dir, "val_split.csv"))
-    csv_paths.append(os.path.join(args.save_dir, "test_split.csv"))
-
-    all_uids = []
-    for csv_path in csv_paths:
-        if os.path.exists(csv_path):
-            uids = load_split_csv(csv_path)
-            all_uids.extend(uids)
-            logger.info(f"  Loaded {csv_path}: {len(uids)} UIDs")
-        else:
-            logger.warning(f"  Not found (skipping): {csv_path}")
-
-    if not all_uids:
-        raise FileNotFoundError(f"No val/test CSVs in {args.save_dir}")
-
-    # Normalize UIDs for cross-machine path matching
-    KNOWN_ROOTS = [
-        "/home/ubuntu/model-east3/wds_shards_tar/",
-        "/home/ubuntu/model-east3/wds_shards_tar\\",
-        args.shard_root.rstrip("/\\") + "/",
-        args.shard_root.rstrip("/\\") + "\\",
-    ]
-
-    def uid_to_relative(uid: str) -> str:
-        for root in KNOWN_ROOTS:
-            if uid.startswith(root):
-                return uid[len(root):]
-        for cls_prefix in ["Control/", "SNCA/", "GBA/", "LRRK2/"]:
-            idx = uid.find(cls_prefix)
-            if idx >= 0:
-                return uid[idx:]
-        return uid
-
-    rel_to_refidx = {}
-    for uid, ridx in uid_to_refidx.items():
-        rel_key = uid_to_relative(uid)
-        rel_to_refidx[rel_key] = ridx
-
-    refidx_list = []
-    n_missing = 0
-    for uid in all_uids:
-        rel_key = uid_to_relative(uid)
-        if rel_key in rel_to_refidx:
-            refidx_list.append(rel_to_refidx[rel_key])
-        else:
-            n_missing += 1
-
-    if n_missing > 0:
-        logger.warning(f"  {n_missing}/{len(all_uids)} UIDs not matched (path mismatch?)")
-    logger.info(f"  Matched: {len(refidx_list)}/{len(all_uids)} UIDs")
+    if getattr(args, "ignore_splits", False):
+        refidx_list = list(range(len(refs)))
+        logger.info(f"  [!] --ignore_splits is ON: Using all {len(refs)} images found in shard_root, bypassing CSVs.")
+    else:
+        csv_paths = []
+        if include_train:
+            csv_paths.append(os.path.join(args.save_dir, "train_split.csv"))
+        csv_paths.append(os.path.join(args.save_dir, "val_split.csv"))
+        csv_paths.append(os.path.join(args.save_dir, "test_split.csv"))
+    
+        all_uids = []
+        for csv_path in csv_paths:
+            if os.path.exists(csv_path):
+                uids = load_split_csv(csv_path)
+                all_uids.extend(uids)
+                logger.info(f"  Loaded {csv_path}: {len(uids)} UIDs")
+            else:
+                logger.warning(f"  Not found (skipping): {csv_path}")
+    
+        if not all_uids:
+            raise FileNotFoundError(f"No val/test CSVs in {args.save_dir}")
+    
+        # Normalize UIDs for cross-machine path matching
+        KNOWN_ROOTS = [
+            "/home/ubuntu/model-east3/wds_shards_tar/",
+            "/home/ubuntu/model-east3/wds_shards_tar\\",
+            args.shard_root.rstrip("/\\") + "/",
+            args.shard_root.rstrip("/\\") + "\\",
+        ]
+    
+        def uid_to_relative(uid: str) -> str:
+            for root in KNOWN_ROOTS:
+                if uid.startswith(root):
+                    return uid[len(root):]
+            for cls_prefix in ["Control/", "SNCA/", "GBA/", "LRRK2/"]:
+                idx = uid.find(cls_prefix)
+                if idx >= 0:
+                    return uid[idx:]
+            return uid
+    
+        rel_to_refidx = {}
+        for uid, ridx in uid_to_refidx.items():
+            rel_key = uid_to_relative(uid)
+            rel_to_refidx[rel_key] = ridx
+    
+        refidx_list = []
+        n_missing = 0
+        for uid in all_uids:
+            rel_key = uid_to_relative(uid)
+            if rel_key in rel_to_refidx:
+                refidx_list.append(rel_to_refidx[rel_key])
+            else:
+                n_missing += 1
+    
+        if n_missing > 0:
+            logger.warning(f"  {n_missing}/{len(all_uids)} UIDs not matched (path mismatch?)")
+        logger.info(f"  Matched: {len(refidx_list)}/{len(all_uids)} UIDs")
 
     # Group by class
     class_to_indices = defaultdict(list)
