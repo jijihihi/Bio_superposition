@@ -234,24 +234,44 @@ def make_balanced_loader(args, refs, uid_to_refidx, samples_per_class, seed,
             logger.warning(f"  {n_missing}/{len(all_uids)} UIDs not matched (path mismatch?)")
         logger.info(f"  Matched: {len(refidx_list)}/{len(all_uids)} UIDs")
 
-    # Group by class
-    class_to_indices = defaultdict(list)
+    # Group by class AND line to ensure strict balancing among lines within the same class
+    class_to_lines = defaultdict(lambda: defaultdict(list))
     for i, ridx in enumerate(refidx_list):
         label = int(refs[ridx].label)
-        class_to_indices[label].append(i)
+        line = refs[ridx].line
+        class_to_lines[label][line].append(i)
 
     rng = np.random.default_rng(seed)
     selected = []
-    for cls in sorted(class_to_indices.keys()):
-        pool = class_to_indices[cls]
+    
+    for cls in sorted(class_to_lines.keys()):
+        lines_dict = class_to_lines[cls]
+        num_lines = len(lines_dict)
+        
         if samples_per_class > 0:
-            n_take = min(samples_per_class, len(pool))
-            chosen = rng.choice(pool, size=n_take, replace=False).tolist()
+            target_total = samples_per_class
+            base_take = target_total // num_lines
+            remainder = target_total % num_lines
+            
+            sorted_lines = sorted(lines_dict.keys())
+            class_selected = []
+            
+            for idx, line_name in enumerate(sorted_lines):
+                pool = lines_dict[line_name]
+                take_for_this_line = base_take + (1 if idx < remainder else 0)
+                n_take = min(take_for_this_line, len(pool))
+                chosen = rng.choice(pool, size=n_take, replace=False).tolist()
+                class_selected.extend(chosen)
+                logger.info(f"    Line {line_name} (Class {cls}): {n_take}/{len(pool)} selected")
+                
+            selected.extend(class_selected)
+            logger.info(f"  Class {cls} Total: {len(class_selected)} selected (across {num_lines} lines)")
         else:
-            chosen = pool
-            n_take = len(pool)
-        selected.extend(chosen)
-        logger.info(f"  Class {cls}: {n_take}/{len(pool)} selected")
+            class_selected = []
+            for line_name in sorted(lines_dict.keys()):
+                class_selected.extend(lines_dict[line_name])
+            selected.extend(class_selected)
+            logger.info(f"  Class {cls}: {len(class_selected)} selected (all)")
 
     selected_refidx = [refidx_list[i] for i in selected]
 
@@ -347,7 +367,10 @@ def main():
     output_dir = args.output_dir if args.output_dir else os.path.join(args.save_dir, "CNN_GAP")
     os.makedirs(output_dir, exist_ok=True)
 
-    all_tag = "_all" if use_all else ""
+    if getattr(args, "ignore_splits", False):
+        all_tag = "_withnewclass"
+    else:
+        all_tag = "_all" if use_all else ""
     out_path = os.path.join(output_dir, f"cnn_gap_{which_layer}{all_tag}.npz")
 
     logger.info(f"\n{'='*60}")

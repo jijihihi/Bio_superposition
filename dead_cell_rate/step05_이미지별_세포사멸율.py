@@ -42,7 +42,7 @@ def get_args():
     
     # Fixed threshold from Multi-Otsu
     parser.add_argument(
-        "--threshold", type=float, default=39217.8199851941,
+        "--threshold", type=float, default=39217.8199851941,  #지금 코드에 있는거 기반은 38704.2570189115 이거 나온다. 1.3% 정도 차이로 크지 않다.
         help="Fixed threshold value (Multi-Otsu result)"
     )
     

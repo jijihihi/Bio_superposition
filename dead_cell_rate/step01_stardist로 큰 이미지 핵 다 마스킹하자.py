@@ -64,7 +64,8 @@ def parse_args():
         "--folders",
         type=str,
         nargs="+",
-        default=["Control_C4", "Control_GBA_C19", "Control_SNCA_C19", "SNCA", "GBA", "LRRK2", "PINK1"],  # 원하는 폴더 이름으로 수정
+        #default=["Control_C4", "Control_GBA_C19", "Control_SNCA_C19", "SNCA", "GBA", "LRRK2", "PINK1"],  # 원하는 폴더 이름으로 수정
+        default=["GBA_346", "GBA_WIMP4", "SNCAx3_isogenic", "SNCA-G51D", "SNCA-G51D_isogenic", "SNCAx3"],
         help="List of folder names to process (e.g., Control_C18 SNCA GBA)"
     )
     parser.add_argument(
@@ -121,7 +122,7 @@ def parse_args():
 
 def segment_nuclei(args):
     """
-    Main nuclei segmentation function.
+    Main nuclei segmentation function with Resume capability.
     
     Args:
         args: Parsed command-line arguments
@@ -136,10 +137,35 @@ def segment_nuclei(args):
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    csv_output_path = args.csv_output if args.csv_output else output_dir / "nuclei_count_results.csv"
-    
+    # [수정] args.csv_output이 없거나 폴더 경로인 경우 자동으로 파일명을 붙여 Path 객체로 만듭니다.
+    if args.csv_output is None:
+        csv_output_path = output_dir / "nuclei_count_results.csv"
+    else:
+        temp_path = Path(args.csv_output)
+        if temp_path.is_dir() or temp_path.suffix == "":
+            csv_output_path = temp_path / "nuclei_count_results.csv"
+        else:
+            csv_output_path = temp_path
+            
+    # [수정] 기존 CSV 파일이 있다면 기존 데이터를 로드하여 결과 유실을 방지합니다.
     results_data = []
+    existing_records = set() # (폴더명, 파일명) 중복 체크용
     
+    if csv_output_path.exists() and csv_output_path.is_file():
+        try:
+            with open(csv_output_path, 'r', encoding='utf-8') as csvfile:
+                reader = csv.reader(csvfile)
+                header = next(reader, None) # 헤더 건너뛰기
+                if header:
+                    for row in reader:
+                        if len(row) >= 6:
+                            results_data.append(row)
+                            # 어떤 파일들이 이미 CSV에 기록되었는지 추적
+                            existing_records.add((row[0], row[1]))
+            print(f"ℹ️ 기존 CSV에서 {len(results_data)}개의 분석 기록을 불러왔습니다.")
+        except Exception as e:
+            print(f"⚠️ 기존 CSV 파일을 읽는 중 오류 발생 (새로 작성함): {e}")
+
     # Process each specified folder
     for folder_name in args.folders:
         folder_path = input_dir / folder_name
@@ -171,22 +197,28 @@ def segment_nuclei(args):
         print(f"  - 발견된 이미지 수: {len(tif_files)}")
         
         for tif_path in tif_files:
+            base_filename = tif_path.stem
+            expected_mask_path = Path(mask_output_dir) / f"{base_filename}_mask.tif"
+            
+            # 🔄 이미 처리된 파일인지 체크 (마스크 파일 존재 여부 & CSV 기록 여부)
+            if expected_mask_path.exists():
+                print(f"  - ⏭️ {tif_path.name}: 이미 처리된 파일입니다. (Skip)")
+                continue
+                
             try:
                 # Load image
                 data_cube = tifffile.imread(tif_path)
                 
                 # Handle different image dimensions
                 if data_cube.ndim == 2:
-                    # Grayscale image - use directly
                     nuc_ch_data = data_cube
                 elif data_cube.ndim == 3:
-                    # Check if it's (H, W, C) or (C, H, W)
                     if data_cube.shape[2] <= 4:  # Likely (H, W, C)
                         if data_cube.shape[2] <= args.nuc_channel:
                             print(f"  - ⚠️ '{tif_path.name}' 파일에서 핵 채널({args.nuc_channel})을 찾을 수 없어 건너뜁니다.")
                             continue
                         nuc_ch_data = data_cube[:, :, args.nuc_channel]
-                    else:  # Likely (C, H, W) - need to check further
+                    else:  # Likely (C, H, W)
                         if data_cube.shape[0] <= args.nuc_channel:
                             print(f"  - ⚠️ '{tif_path.name}' 파일에서 핵 채널({args.nuc_channel})을 찾을 수 없어 건너뜁니다.")
                             continue
@@ -248,10 +280,8 @@ def segment_nuclei(args):
                     segmentation_mask[labels == label_id] = label_id
                 
                 # Save mask TIF
-                base_filename = tif_path.stem
                 try:
-                    output_mask_path = mask_output_dir / f"{base_filename}_mask.tif"
-                    tifffile.imwrite(output_mask_path, segmentation_mask)
+                    tifffile.imwrite(expected_mask_path, segmentation_mask)
                 except Exception as tif_error:
                     print(f"  - ‼️ 마스크 TIF 저장 중 오류: {tif_error}")
                 
@@ -296,9 +326,8 @@ def segment_nuclei(args):
     
     print(f"\n--- ✅ 처리 완료 ---")
     print(f"   처리된 폴더: {len(args.folders)}개")
-    print(f"   처리된 이미지: {len(results_data)}장")
+    print(f"   총 누적 이미지: {len(results_data)}장")
     print(f"   출력 경로: {output_dir}")
-
 
 if __name__ == '__main__':
     args = parse_args()

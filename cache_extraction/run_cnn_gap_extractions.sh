@@ -80,7 +80,7 @@ for SEED in "${SEEDS[@]}"; do
         echo "[$COUNT/$TOTAL] seed=${SEED} layer=${LAYER}"
         echo "=================================================================="
 
-        python -m kendall_correlation_coefficient.extract_cnn_gap \
+        python -m cache_extraction.extract_cnn_gap \
             --save_dir "$SEED_DIR" \
             --model_state_path "$MODEL" \
             --shard_root "$SHARD" \

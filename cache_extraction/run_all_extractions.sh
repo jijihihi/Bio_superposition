@@ -65,7 +65,7 @@ for SAE_SUBDIR in "${SAE_DIRS[@]}"; do
         echo "  SAE:    $SAE_CKPT"
         echo "  Output: $OUTPUT"
         ## 람다랩스에서 kendall_correlation_coefficient.extract_features 이거는 로컬에서 extract_features_lambda_labs 이것과 동일하다.
-        python -m kendall_correlation_coefficient.extract_features \ 
+        python -m cache_extraction.extract_features \ 
             --sae_ckpt "$SAE_CKPT" \
             --save_dir "${SEED_DIR}" \
             --model_state_path "$MODEL" \

@@ -42,15 +42,16 @@ def get_args():
     )
     parser.add_argument(
         "--output_dir", type=str,
-        default=r"C:\Users\admin\Desktop\세포사멸율_data",
+        default=r"C:\Users\admin\Desktop\세포사멸율_data_new_class",
         help="Output directory for cropped results"
     )
     
     # Folder selection
     parser.add_argument(
         "--folders", type=str, nargs="+",
-        default=["Control_C4", "Control_C18", "Control_GBA_C19", "Control_SNCA_C19", 
-                 "SNCA", "GBA", "LRRK2"],
+        #default=["Control_C4", "Control_C18", "Control_GBA_C19", "Control_SNCA_C19", 
+               #  "SNCA", "GBA", "LRRK2"],
+        default=["GBA_346", "GBA_WIMP4", "SNCAx3_isogenic", "SNCA-G51D", "SNCA-G51D_isogenic", "SNCAx3"],
         help="List of folder names to process"
     )
     
