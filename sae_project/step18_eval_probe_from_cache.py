@@ -9,6 +9,8 @@ from tqdm import tqdm
 import pandas as pd
 import argparse
 import re
+from sae_project.step09_sae_eval import train_linear_probe
+from sae_project.step04_data_bank import load_split_csv
 
 class LinearProbe(nn.Module):
     """Simple linear probe for classification."""
@@ -19,85 +21,14 @@ class LinearProbe(nn.Module):
     def forward(self, x):
         return self.net(x)
 
-def train_linear_probe(
-    X_train: np.ndarray, y_train: np.ndarray,
-    X_test: np.ndarray, y_test: np.ndarray,
-    num_classes: int = 4, epochs: int = 50, lr: float = 0.1,
-    batch_size: int = 256, device=None,
-):
-    if device is None:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
-    n_alive = X_train.shape[1]
-    if n_alive == 0:
-        return 0.0, 0.0
-
-    rng = np.random.default_rng(42)
-    # 클래스 불균형을 맞추기 위해 가장 적은 클래스의 샘플 수에 맞춰 학습 (Balanced Training)
-    class_indices = {c: np.where(y_train == c)[0] for c in range(num_classes)}
-    min_class_count = min(len(v) for v in class_indices.values() if len(v) > 0)
-    samples_per_class = min_class_count
-
-    probe = LinearProbe(n_alive, num_classes).to(device)
-    optimizer = optim.SGD(probe.parameters(), lr=lr, momentum=0.9)
-    criterion = nn.CrossEntropyLoss()
-
-    probe.train()
-    for epoch in range(epochs):
-        epoch_indices = []
-        for c in range(num_classes):
-            c_idx = class_indices.get(c, [])
-            if len(c_idx) == 0:
-                continue
-            sampled = rng.choice(c_idx, size=samples_per_class, replace=False)
-            epoch_indices.extend(sampled.tolist())
-        
-        if not epoch_indices:
-            continue
-            
-        epoch_indices = np.array(epoch_indices)
-        rng.shuffle(epoch_indices)
-
-        for s in range(0, len(epoch_indices), batch_size):
-            ii = epoch_indices[s:s+batch_size]
-            xb = torch.from_numpy(X_train[ii]).float().to(device)
-            yb = torch.from_numpy(y_train[ii]).long().to(device)
-
-            optimizer.zero_grad()
-            logits = probe(xb)
-            loss = criterion(logits, yb)
-            loss.backward()
-            optimizer.step()
-
-    probe.eval()
-    with torch.no_grad():
-        X_te = torch.from_numpy(X_test).float().to(device)
-        y_te = torch.from_numpy(y_test).long().to(device)
-        test_pred = probe(X_te).argmax(dim=1)
-        test_acc = (test_pred == y_te).float().mean().item()
-        
-        eval_indices = []
-        for c in range(num_classes):
-            c_idx = class_indices.get(c, [])
-            if len(c_idx) == 0:
-                continue
-            sampled = rng.choice(c_idx, size=min(samples_per_class, len(c_idx)), replace=False)
-            eval_indices.extend(sampled.tolist())
-            
-        eval_indices = np.array(eval_indices)
-        X_tr_eval = torch.from_numpy(X_train[eval_indices]).float().to(device)
-        y_tr_eval = torch.from_numpy(y_train[eval_indices]).long().to(device)
-        train_pred = probe(X_tr_eval).argmax(dim=1)
-        train_acc = (train_pred == y_tr_eval).float().mean().item()
-
-    return train_acc, test_acc
-
 def main():
     parser = argparse.ArgumentParser(description="Run Linear Probe on cached SAE representations with Dead Neuron Threshold")
     parser.add_argument("--cache_dir", type=str, default="/home/ubuntu/model-east3/caches", 
                         help="Root directory containing the extracted npz caches")
-    parser.add_argument("--save_csv", type=str, default="sae_linear_probe_1e5_results.csv",
+    parser.add_argument("--save_csv", type=str, default="sae_linear_probe_results.csv",
                         help="Output CSV file name")
+    parser.add_argument("--model_base_dir", type=str, default="/home/ubuntu/model-east3/outputs",
+                        help="Base directory containing MoCo_seedXX folders to find train/val/test CSV splits")
     parser.add_argument("--dead_threshold", type=float, default=1e-5,
                         help="usage_ema threshold to filter dead neurons (e.g., 1e-5)")
     parser.add_argument("--num_classes", type=int, default=4,
@@ -120,21 +51,27 @@ def main():
     
     for fpath in tqdm(sae_files, desc="Evaluating"):
         # CNN Seed, Dimension, Lambda 추출
-        match = re.search(r'CNN_seed(\d+).*?SAE_dim(\d+)_lambda(\d+)', fpath)
-        cnn_seed = int(match.group(1)) if match else -1
-        dim = int(match.group(2)) if match else -1
-        lam = int(match.group(3)) if match else -1
+        # 지원하는 패턴: CNN_seed42, SAE_dim4096_lambda800 또는 sae_gap_d4096_lam800
+        m_seed = re.search(r'(?:CNN_seed|seed)(\d+)', fpath)
+        m_dim = re.search(r'(?:SAE_dim|_d)(\d+)', fpath)
+        m_lam = re.search(r'(?:_lambda|_lam)(\d+)', fpath)
+        
+        cnn_seed = int(m_seed.group(1)) if m_seed else -1
+        dim = int(m_dim.group(1)) if m_dim else -1
+        lam = int(m_lam.group(1)) if m_lam else -1
         
         try:
             data = np.load(fpath, allow_pickle=True)
             X_all = data['X_all']
             y_all = data['y']
+            lines_all = data['lines']
             usage_ema = data['usage_ema']
             
             # 1. 원래 학습에 쓰였던 4개 클래스 (0, 1, 2, 3) 데이터만 걸러내기
             orig_mask = y_all < args.num_classes
             X_orig = X_all[orig_mask]
             y_orig = y_all[orig_mask]
+            uids_all = data['uids']
             
             if len(X_orig) == 0:
                 print(f"  Skipping {fpath}: No original classes (y < {args.num_classes}) found.")
@@ -145,15 +82,62 @@ def main():
             n_alive = int(alive_mask.sum())
             X_orig = X_orig[:, alive_mask]
             
-            # 3. Train/Test 분할 (80% Train, 20% Test) - 랜덤 시드 42 고정
-            X_train, X_test, y_train, y_test = train_test_split(
-                X_orig, y_orig, test_size=0.2, random_state=42, stratify=y_orig
-            )
+            # 3. Train/Test 분할 (실제 모델이 학습에 사용했던 train_split.csv 기반)
+            # cache에서 저장된 uid와 각 split에 해당하는 uid를 매칭하여 X_train과 X_test를 완벽 분리합니다.
+            model_dir = os.path.join(args.model_base_dir, f"MoCo_seed{cnn_seed}")
+            train_csv = os.path.join(model_dir, "train_split.csv")
+            val_csv = os.path.join(model_dir, "val_split.csv")
+            test_csv = os.path.join(model_dir, "test_split.csv")
             
-            # 4. Linear Probe 훈련 (step09_sae_eval.py 와 완벽하게 동일한 구조)
-            train_acc, test_acc = train_linear_probe(
-                X_train, y_train, X_test, y_test, num_classes=args.num_classes
+            if not os.path.exists(train_csv):
+                print(f"  Skipping {fpath}: train_split.csv not found at {train_csv}")
+                continue
+                
+            train_uids = set(load_split_csv(train_csv))
+            val_uids = set(load_split_csv(val_csv)) if os.path.exists(val_csv) else set()
+            test_uids = set(load_split_csv(test_csv)) if os.path.exists(test_csv) else set()
+            eval_uids = val_uids.union(test_uids)
+            
+            # npz 안에 저장된 uids 기반으로 인덱스 찾기
+            # 캐시에 저장된 uid는 상대 경로일 수 있으므로 끝부분만 매칭하거나, 그대로 매칭
+            def _normalize_uid(u):
+                return u.replace("\\", "/")
+            
+            train_uids_norm = {_normalize_uid(u) for u in train_uids}
+            eval_uids_norm = {_normalize_uid(u) for u in eval_uids}
+            
+            train_idx, eval_idx = [], []
+            for i, u in enumerate(uids_all[orig_mask]):
+                un = _normalize_uid(str(u))
+                if un in train_uids_norm or any(un.endswith(tu) for tu in train_uids_norm):
+                    train_idx.append(i)
+                elif un in eval_uids_norm or any(un.endswith(eu) for eu in eval_uids_norm):
+                    eval_idx.append(i)
+            
+            if len(train_idx) == 0 or len(eval_idx) == 0:
+                print(f"  Skipping {fpath}: Train({len(train_idx)}) or Eval({len(eval_idx)}) missing after UID matching.")
+                continue
+            
+            X_train = X_orig[train_idx]
+            y_train = y_orig[train_idx]
+            X_test = X_orig[eval_idx]
+            y_test = y_orig[eval_idx]
+            
+            # 4. Linear Probe 훈련 (step09_sae_eval.py 와 완벽하게 동일한 구조: 스케일 보정을 위해 벡터 L2 정규화 후 분류기 학습)
+            import torch.nn.functional as F
+            X_train_t = torch.from_numpy(X_train).float()
+            X_test_t = torch.from_numpy(X_test).float()
+            X_train = F.normalize(X_train_t, dim=1, eps=1e-12).numpy()
+            X_test = F.normalize(X_test_t, dim=1, eps=1e-12).numpy()
+            
+            # step09_sae_eval의 train_linear_probe는 dict를 반환함: {"train_acc": X, "test_acc": Y, "d_probe": Z, ...}
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            probe_results = train_linear_probe(
+                X_train, y_train, X_test, y_test, num_classes=args.num_classes,
+                device=device, normalize_repr=False, verbose=False
             )
+            train_acc = probe_results["train_acc"]
+            test_acc = probe_results["test_acc"]
             
             results.append({
                 "File": os.path.basename(fpath),

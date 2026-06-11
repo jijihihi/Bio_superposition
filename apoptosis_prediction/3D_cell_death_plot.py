@@ -10,7 +10,7 @@
 # SAE → smooth surface + gradient std (의미론적 유사성 반영)
 #
 # 기존 함수 재사용:
-#   load_cache()              ← local_linearity_knn.py
+#   load_cache()              ← local_knn_std.py
 #   load_and_match_apoptosis() ← dpt_kendall.py
 #   SUPERCLASS_MAP, get_logger ← sae_project.step02_logging_utils
 #
@@ -45,7 +45,7 @@ from matplotlib.colors import Normalize, PowerNorm
 import matplotlib.gridspec as gridspec
 import seaborn as sns
 
-from apoptosis_prediction.local_linearity_knn import load_cache
+from apoptosis_prediction.local_knn_std import load_cache
 from kendall_correlation_coefficient.dpt_kendall import load_and_match_apoptosis
 from sae_project.step02_logging_utils import get_logger, SUPERCLASS_MAP
 
@@ -66,7 +66,7 @@ sns.set_style("ticks")
 logging.getLogger("fontTools").setLevel(logging.WARNING)
 logging.getLogger("fontTools.subset").setLevel(logging.WARNING)
 
-# Consistent source colors (matches local_linearity_knn.py, plot_cnn_vs_sae)
+# Consistent source colors (matches local_knn_std.py, plot_cnn_vs_sae)
 SOURCE_COLORS = {"CNN": "#4C72B0", "SAE": "#DD8452"}
 MUTATION_COLORS = {"SNCA": "#E8553A", "GBA": "#1DB954", "LRRK2": "#9B59B6",
                    "Control": "#2176AE"}

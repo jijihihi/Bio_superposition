@@ -9,7 +9,7 @@
 # CNN feature vector와 SAE feature vector 각각에 대해 수행.
 #
 # Usage (Colab):
-# !python -m apoptosis_prediction.local_linearity_knn \
+# !python -m apoptosis_prediction.local_knn_std \
 #     --cnn_cache "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/CNN_GAP/cnn_gap_stage5_out_all.npz" \
 #     --sae_cache "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_seed856_no_L2norm_loss/features_cache_stage5_out_normrestored_all_no_SAE_GAP_L2_norm_again_d8192_sp800.npz" \
 #     --apoptosis_csv "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv" \
@@ -43,7 +43,7 @@ from scipy import stats
 
 from sae_project.step02_logging_utils import get_logger, SUPERCLASS_MAP
 
-logger = get_logger("local_linearity_knn")
+logger = get_logger("local_knn_std")
 
 plt.rcParams['svg.fonttype'] = 'none'
 plt.rcParams['pdf.fonttype'] = 42
@@ -539,7 +539,7 @@ def main():
         out_dir = args.output_dir
     else:
         ref_cache = args.cnn_cache or args.sae_cache
-        out_dir = os.path.join(os.path.dirname(ref_cache), "local_linearity_knn")
+        out_dir = os.path.join(os.path.dirname(ref_cache), "local_knn_std")
     os.makedirs(out_dir, exist_ok=True)
 
     # ── Load feature caches ──────────────────────────────────────────

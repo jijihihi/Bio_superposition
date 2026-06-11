@@ -106,6 +106,8 @@ def get_args():
     p.add_argument("--use_all_data", action="store_true",
                    help="Load train+val+test (default: val+test only). "
                         "Also sets samples_per_class=0 if not explicitly set")
+    p.add_argument("--test_only", action="store_true",
+                   help="Load strictly ONLY test_split.csv")
     p.add_argument("--ignore_splits", action="store_true",
                    help="Ignore train/val/test split CSVs and use ALL images found in shard_root")
     p.add_argument("--seed", type=int, default=42)
@@ -256,10 +258,13 @@ def make_balanced_loader(args, refs, uid_to_refidx, samples_per_class, seed,
         logger.info(f"  [!] --ignore_splits is ON: Using all {len(refs)} images found in shard_root, bypassing CSVs.")
     else:
         csv_paths = []
-        if include_train:
-            csv_paths.append(os.path.join(args.save_dir, "train_split.csv"))
-        csv_paths.append(os.path.join(args.save_dir, "val_split.csv"))
-        csv_paths.append(os.path.join(args.save_dir, "test_split.csv"))
+        if getattr(args, "test_only", False):
+            csv_paths.append(os.path.join(args.save_dir, "test_split.csv"))
+        else:
+            if include_train:
+                csv_paths.append(os.path.join(args.save_dir, "train_split.csv"))
+            csv_paths.append(os.path.join(args.save_dir, "val_split.csv"))
+            csv_paths.append(os.path.join(args.save_dir, "test_split.csv"))
     
         all_uids = []
         for csv_path in csv_paths:
@@ -349,21 +354,29 @@ def make_balanced_loader(args, refs, uid_to_refidx, samples_per_class, seed,
             logger.info(f"  Class {cls}: {len(class_selected)} selected (all)")
 
     selected_refidx = [refidx_list[i] for i in selected]
-
+    
+    # [CRITICAL FIX] Batch Centering Bug
+    # 학습 중 Linear Probe 평가(step09_sae_eval.py)에서는 StrictPlateBalancedBatchSamplerOnBank를 사용하여 
+    # 배치마다 모든 클래스가 정확히 동일한 비율(예: 16:16:16:16)로 들어가도록 보장했습니다.
+    # 따라서 배치 평균(batch mean)이 완벽한 글로벌 평균으로 작용하여 신호가 보존되었습니다.
+    # 단순 rng.shuffle()은 순수 무작위라 배치 내 클래스 불균형이 발생하여 노이즈가 낄 수 있으므로,
+    # 학습 때와 완전히 똑같이 StrictPlateBalancedBatchSamplerOnBank를 적용합니다.
     bank = InMemoryTarBank(refs, selected_refidx, args.img_size)
     ib = list(range(len(selected_refidx)))
     ds = InMemorySixteenBitDataset(bank, ib, args.img_size, augment=False)
 
+    from sae_project.step04_data_bank import StrictPlateBalancedBatchSamplerOnBank
+    sampler = StrictPlateBalancedBatchSamplerOnBank(bank, batch_size=args.batch_size, seed=args.seed)
+
     loader = DataLoader(
         ds,
-        batch_size=args.batch_size,
-        shuffle=False,
+        batch_sampler=sampler,
         num_workers=args.num_workers,
         pin_memory=torch.cuda.is_available(),
         worker_init_fn=seed_worker,
         collate_fn=collate_skip_none,
     )
-    logger.info(f"  Total: {len(selected)} images")
+    logger.info(f"  Total: {len(selected)} images (StrictPlateBalancedBatchSampler)")
     return loader
 
 

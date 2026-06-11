@@ -45,7 +45,7 @@ get_sae_cache() {
 
 
 
-# !python -m apoptosis_prediction.local_linearity_knn \
+# !python -m apoptosis_prediction.local_knn_std \
 #     --cnn_cache "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/CNN_GAP/cnn_gap_stage5_out_all.npz" \
 #     --sae_cache "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_seed856_no_L2norm_loss/features_cache_stage5_out_normrestored_all_no_SAE_GAP_L2_norm_again_d8192_sp800.npz" \
 #     --apoptosis_csv "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv" \
@@ -75,7 +75,7 @@ run_raw() {
         OUT="$BASE_OUT/raw/cnn_seed_${CNN_SEED}"
 
         echo "── KNN Std: CNN (cnn_seed=$CNN_SEED) ──"
-        python -m apoptosis_prediction.local_linearity_knn \
+        python -m apoptosis_prediction.local_knn_std \
             --cnn_cache "$CNN_CACHE" \
             --apoptosis_csv "$APOPTOSIS_CSV" \
             --k_neighbors $K_NEIGHBORS_KNN \
@@ -103,7 +103,7 @@ run_raw() {
     done
 
 
-# !python -m apoptosis_prediction.local_linearity_knn \
+# !python -m apoptosis_prediction.local_knn_std \
 #     --cnn_cache "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/CNN_GAP/cnn_gap_stage5_out_all.npz" \
 #     --sae_cache "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_seed856_no_L2norm_loss/features_cache_stage5_out_normrestored_all_no_SAE_GAP_L2_norm_again_d8192_sp800.npz" \
 #     --apoptosis_csv "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv" \
@@ -122,7 +122,7 @@ run_raw() {
         OUT="$BASE_OUT/raw/sae_seed_${SAE_SEED}"
 
         echo "── KNN Std: SAE (sae_seed=$SAE_SEED) ──"
-        python -m apoptosis_prediction.local_linearity_knn \
+        python -m apoptosis_prediction.local_knn_std \
             --sae_cache "$SAE_CACHE" \
             --apoptosis_csv "$APOPTOSIS_CSV" \
             --k_neighbors $K_NEIGHBORS_KNN \
@@ -193,7 +193,7 @@ run_de_sweep() {
             echo "── CNN: cnn_seed=$CNN_SEED, DE log2fc=$LOG2FC ──"
 
             # KNN Std
-            python -m apoptosis_prediction.local_linearity_knn \
+            python -m apoptosis_prediction.local_knn_std \
                 --cnn_cache "$CNN_CACHE" \
                 --apoptosis_csv "$APOPTOSIS_CSV" \
                 --k_neighbors $K_NEIGHBORS_KNN \
@@ -278,7 +278,7 @@ run_dpt_matched() {
             OUT="$BASE_OUT/dpt_matched/cnn_seed_${CNN_SEED}/log2fc_${LOG2FC}"
 
             echo "── KNN Std: CNN (cnn_seed=$CNN_SEED, log2fc=$LOG2FC) ──"
-            python -m apoptosis_prediction.local_linearity_knn \
+            python -m apoptosis_prediction.local_knn_std \
                 --cnn_cache "$CNN_CACHE" \
                 --apoptosis_csv "$APOPTOSIS_CSV" \
                 --k_neighbors $K_NEIGHBORS_KNN \
@@ -314,7 +314,7 @@ run_dpt_matched() {
             OUT="$BASE_OUT/dpt_matched/sae_seed_${SAE_SEED}/log2fc_${LOG2FC}"
 
             echo "── KNN Std: SAE (sae_seed=$SAE_SEED, log2fc=$LOG2FC) ──"
-            python -m apoptosis_prediction.local_linearity_knn \
+            python -m apoptosis_prediction.local_knn_std \
                 --sae_cache "$SAE_CACHE" \
                 --apoptosis_csv "$APOPTOSIS_CSV" \
                 --k_neighbors $K_NEIGHBORS_KNN \

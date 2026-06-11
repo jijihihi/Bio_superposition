@@ -68,7 +68,7 @@ ALPHAS = [0.01, 0.1, 1.0, 10.0, 100.0]
 
 
 # ==============================================================================
-# Argument Parser — mirrors dpt_kendall.py + local_linearity_knn.py
+# Argument Parser — mirrors dpt_kendall.py + local_knn_std.py
 # ==============================================================================
 def get_args():
     p = argparse.ArgumentParser(
