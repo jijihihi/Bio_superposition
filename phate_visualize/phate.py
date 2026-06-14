@@ -44,6 +44,7 @@ if not _IN_COLAB:
     matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import phate
+import seaborn as sns
 
 from sae_project.step02_logging_utils import get_logger, SUPERCLASS_MAP
 
@@ -126,6 +127,8 @@ def get_args():
     # Sampling
     p.add_argument("--samples_per_class", type=int, default=10000,
                    help="Max images to sample per class")
+    p.add_argument("--classes", type=str, nargs="+", default=[],
+                   help="Specific classes to plot (e.g. 'Control' 'GBA' or numbers depending on cache). Empty=all")
     p.add_argument("--seed", type=int, default=42)
 
     # PHATE
@@ -612,10 +615,29 @@ def main():
             logger.info("  Filter: none")
 
         n_alive = X.shape[1]  # update after filtering
+        
+        # ── Filter by specific classes ───────────────────────────────────
+        if args.classes:
+            # Map "0", "1" etc. to "Control", "SNCA" if needed
+            mapped_classes = []
+            for c in args.classes:
+                if c.isdigit() and int(c) in CLASS_NAMES:
+                    mapped_classes.append(CLASS_NAMES[int(c)])
+                else:
+                    mapped_classes.append(c)
+                    
+            keep_indices = []
+            for i, sc in enumerate(superclasses):
+                # Try to match string representation
+                if str(sc) in mapped_classes:
+                    keep_indices.append(i)
+            X = X[keep_indices]
+            superclasses = [superclasses[i] for i in keep_indices]
+            logger.info(f"  After class filtering {mapped_classes}: {X.shape[0]} samples")
 
         # ── Subsample per class (AFTER neuron filtering) ─────────────────
         spc = args.samples_per_class
-        if spc > 0 and X.shape[0] > spc * 4:
+        if spc > 0 and X.shape[0] > spc:
             rng = np.random.RandomState(args.seed)
             superclasses_arr_tmp = np.array(superclasses)
             keep_indices = []

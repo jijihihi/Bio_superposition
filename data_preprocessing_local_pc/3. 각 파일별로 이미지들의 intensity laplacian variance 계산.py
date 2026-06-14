@@ -18,14 +18,14 @@ def get_args():
     parser.add_argument(
         "--input_dir", 
         type=str, 
-        default=r"C:\Users\admin\Desktop\MIP",
+        default=r"D:\From_C_drive\MIP",
         #required=True, 
         help="Path to the root directory containing image folders."
     )
     parser.add_argument(
         "--output_dir", 
         type=str, 
-        default=r"C:\Users\admin\Desktop\MIP\QC_Output", 
+        default=r"D:\From_C_drive\MIP\QC_Output",
         help="Directory to save QC results and plots."
     )
     parser.add_argument(

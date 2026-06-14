@@ -12,8 +12,8 @@ def get_args():
         description="Filter microscopy images based on QC metrics (CSV) and background analysis, then move rejected files."
     )
     # 경로 설정
-    parser.add_argument("--root_dir", type=str, default=r"C:\Users\admin\Desktop\MIP", help="Root directory containing image folders.")
-    parser.add_argument("--csv_path", type=str, default=r"C:\Users\admin\Desktop\MIP\QC_Output\qc_metrics_raw_per_channel.csv", help="Path to the QC metrics CSV file.")
+    parser.add_argument("--root_dir", type=str, default=r"D:\From_C_drive\MIP", help="Root directory containing image folders.")
+    parser.add_argument("--csv_path", type=str, default=r"D:\From_C_drive\MIP\QC_Output\qc_metrics_raw_per_channel.csv", help="Path to the QC metrics CSV file.")
     parser.add_argument("--reject_dir_name", type=str, default="Rejected_Images", help="Name of the folder to store rejected images (created inside root_dir).")
     
     # 임계값 설정 (User Requirements)

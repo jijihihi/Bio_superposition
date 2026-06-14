@@ -104,15 +104,20 @@ def main():
                 return u.replace("\\", "/")
             
             train_uids_norm = {_normalize_uid(u) for u in train_uids}
-            eval_uids_norm = {_normalize_uid(u) for u in eval_uids}
+            val_uids_norm = {_normalize_uid(u) for u in val_uids}
+            test_uids_norm = {_normalize_uid(u) for u in test_uids}
             
-            train_idx, eval_idx = [], []
+            train_idx, val_idx, test_idx = [], [], []
             for i, u in enumerate(uids_all[orig_mask]):
                 un = _normalize_uid(str(u))
                 if un in train_uids_norm or any(un.endswith(tu) for tu in train_uids_norm):
                     train_idx.append(i)
-                elif un in eval_uids_norm or any(un.endswith(eu) for eu in eval_uids_norm):
-                    eval_idx.append(i)
+                elif un in val_uids_norm or any(un.endswith(vu) for vu in val_uids_norm):
+                    val_idx.append(i)
+                elif un in test_uids_norm or any(un.endswith(tu) for tu in test_uids_norm):
+                    test_idx.append(i)
+                    
+            eval_idx = val_idx + test_idx
             
             if len(train_idx) == 0 or len(eval_idx) == 0:
                 print(f"  Skipping {fpath}: Train({len(train_idx)}) or Eval({len(eval_idx)}) missing after UID matching.")
@@ -145,6 +150,9 @@ def main():
                 "Dimension": dim,
                 "Lambda": lam,
                 "N_Alive": n_alive,
+                "N_Train": len(train_idx),
+                "N_Val": len(val_idx),
+                "N_Test": len(test_idx),
                 "Train_Acc": train_acc,
                 "Test_Acc": test_acc
             })

@@ -456,21 +456,25 @@ def load_val_split_csv(csv_path: str) -> List[str]:
 #   - O(n²) double-centering, torch tensors throughout
 #   - linear_CKA: center each kernel only once (2 centering calls)
 # ==============================================================================
-def _center_kernel(K: torch.Tensor) -> torch.Tensor:
-    """Center kernel matrix K using double-centering. O(n²)."""
-    row_mean = K.mean(dim=1, keepdim=True)
-    col_mean = K.mean(dim=0, keepdim=True)
-    total_mean = K.mean()
-    return K - row_mean - col_mean + total_mean
-
 def linear_CKA(X: torch.Tensor, Y: torch.Tensor) -> float:
-    """Linear CKA on torch tensors. Centers each kernel once."""
-    K_X = _center_kernel(X @ X.T)
-    K_Y = _center_kernel(Y @ Y.T)
+    """Linear CKA on torch tensors using the feature-space formulation.
+    This avoids the O(N^2) memory explosion of the kernel-space formulation 
+    by computing DxD covariance matrices instead of NxN kernel matrices."""
+    # 1. Column center X and Y in double precision to prevent floating point inaccuracies
+    X_c = X.double()
+    X_c = X_c - X_c.mean(dim=0, keepdim=True)
+    Y_c = Y.double()
+    Y_c = Y_c - Y_c.mean(dim=0, keepdim=True)
     
-    hsic_xy = (K_X * K_Y).sum()
-    hsic_xx = (K_X * K_X).sum()
-    hsic_yy = (K_Y * K_Y).sum()
+    # 2. Compute covariance-like matrices
+    C_XY = X_c.T @ Y_c  # (D_X, D_Y)
+    C_XX = X_c.T @ X_c  # (D_X, D_X)
+    C_YY = Y_c.T @ Y_c  # (D_Y, D_Y)
+    
+    # 3. Frobenius norms squared
+    hsic_xy = (C_XY ** 2).sum()
+    hsic_xx = (C_XX ** 2).sum()
+    hsic_yy = (C_YY ** 2).sum()
     
     return float(hsic_xy / (torch.sqrt(hsic_xx * hsic_yy) + 1e-10))
 
@@ -609,8 +613,111 @@ def sample_balanced_per_class(refs: List[SampleRef], ref_indices: List[int],
 # ==============================================================================
 # Main Analysis (Multi-Model Support)
 # ==============================================================================
+def run_cka_on_caches(args):
+    """Run CKA directly on pre-extracted .npz caches."""
+    logger.info(f"Loading {len(args.caches)} caches for CKA analysis...")
+    
+    all_features = []
+    all_labels = None
+    model_names = []
+    
+    for i, path in enumerate(args.caches):
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"Cache not found: {path}")
+            
+        data = np.load(path, allow_pickle=True)
+        if "X_all" in data:
+            X = data["X_all"]
+            if "usage_ema" in data:
+                alive_mask = data["usage_ema"] >= args.dead_threshold
+                X = X[:, alive_mask]
+                logger.info(f"[{i+1}] {path}: alive SAE neurons: {alive_mask.sum()}/{len(alive_mask)}")
+        elif "X_gap" in data:
+            X = data["X_gap"]
+            logger.info(f"[{i+1}] {path}: CNN features")
+        else:
+            raise KeyError(f"Cache {path} missing X_all or X_gap")
+            
+        y = data["y"]
+        if all_labels is None:
+            # We only use classes 0, 1, 2, 3 and sample up to args.samples_per_class per class
+            target_classes = [0, 1, 2, 3]
+            rng = np.random.default_rng(args.seed)
+            sub_indices = []
+            
+            for cls in target_classes:
+                cls_idx = np.where(y == cls)[0]
+                n_take = min(args.samples_per_class, len(cls_idx))
+                if len(cls_idx) > n_take:
+                    cls_idx = rng.choice(cls_idx, n_take, replace=False)
+                sub_indices.extend(cls_idx)
+                
+            sub_indices = np.sort(sub_indices)
+            all_labels = y[sub_indices]
+            logger.info(f"Subsampled {len(sub_indices)} images for CKA (up to {args.samples_per_class} per class for classes {target_classes}).")
+            
+        else:
+            assert np.array_equal(y[sub_indices], all_labels), f"Label mismatch in {path}!"
+            
+        # Apply subsampling
+        X = X[sub_indices]
+        
+        if args.gap_l2_norm:
+            norms = np.linalg.norm(X, axis=1, keepdims=True)
+            norms = np.where(norms == 0, 1e-12, norms)
+            X = X / norms
+            
+        all_features.append(torch.tensor(X, dtype=torch.float32))
+        
+        # Extract name from path
+        name = os.path.basename(os.path.dirname(path))
+        if not name or name == ".":
+            name = f"model_{i}"
+        model_names.append(name)
+        
+    num_models = len(args.caches)
+    def compute_and_save_cka(features_list, filename_suffix, title):
+        logger.info("\n" + "="*60)
+        logger.info(title)
+        logger.info("="*60)
+        
+        cka_matrix = np.eye(num_models)
+        for i in range(num_models):
+            for j in range(i + 1, num_models):
+                cka_val = linear_CKA(features_list[i], features_list[j])
+                cka_matrix[i, j] = cka_matrix[j, i] = cka_val
+                logger.info(f"  {model_names[i]} vs {model_names[j]}: {cka_val:.4f}")
+                
+        os.makedirs(args.output_dir, exist_ok=True)
+        csv_path = os.path.join(args.output_dir, f"cka_matrix_caches_{filename_suffix}.csv")
+        with open(csv_path, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow([""] + model_names)
+            for i, name in enumerate(model_names):
+                writer.writerow([name] + [f"{cka_matrix[i, j]:.4f}" for j in range(num_models)])
+        logger.info(f"Saved CKA matrix to: {csv_path}")
+        return cka_matrix
+        
+    # 1. Global CKA
+    global_cka = compute_and_save_cka(all_features, "global", "Computing Global CKA Matrix (Classes 0,1,2,3)")
+    
+    # 2. Per-class CKA
+    class_names_dict = {0: "Control", 1: "SNCA", 2: "GBA", 3: "LRRK2"}
+    target_classes = [0, 1, 2, 3]
+    for cls in target_classes:
+        mask = (all_labels == cls)
+        if mask.sum() > 0:
+            cls_features = [feat[mask] for feat in all_features]
+            cls_name = class_names_dict[cls]
+            compute_and_save_cka(cls_features, f"class_{cls_name}", f"Computing CKA Matrix for Class: {cls_name} (n={mask.sum()})")
+    
+    return global_cka
+
 def run_cka_analysis(args):
     """Run CKA analysis between multiple models (pairwise comparison)"""
+    if getattr(args, "caches", None):
+        return run_cka_on_caches(args)
+        
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"Using device: {device}")
     
@@ -875,8 +982,14 @@ def get_args():
     p = argparse.ArgumentParser("CKA Analysis for Model Similarity (Multi-Model Support)")
     
     # Model checkpoints (supports 2 or more)
-    p.add_argument("--ckpt_paths", type=str, nargs="+", required=True,
+    p.add_argument("--ckpt_paths", type=str, nargs="*", default=[],
                    help="Paths to model checkpoints (2 or more). Example: --ckpt_paths model1.pt model2.pt model3.pt")
+    
+    # Caches (bypasses model loading)
+    p.add_argument("--caches", type=str, nargs="*", default=[],
+                   help="Paths to pre-extracted .npz caches. Bypasses encoder inference entirely.")
+    p.add_argument("--dead_threshold", type=float, default=1e-5)
+    p.add_argument("--gap_l2_norm", action="store_true")
     
     # Data paths
     p.add_argument("--shard_root", type=str, default=DEFAULT_SHARD_ROOT,
@@ -893,6 +1006,8 @@ def get_args():
     # Sampling
     p.add_argument("--num_samples", type=int, default=1000,
                    help="Total samples (num_samples/4 per class), 0=use all validation data")
+    p.add_argument("--samples_per_class", type=int, default=5000,
+                   help="Number of samples to extract per class specifically for cache mode")
     p.add_argument("--seed", type=int, default=42)
     
     # Encoder architecture (must match all models)

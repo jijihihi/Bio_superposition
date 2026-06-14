@@ -9,13 +9,13 @@ from tqdm import tqdm
 def get_args():
     parser = argparse.ArgumentParser(description="QC: Signal + Laplacian + Linear Scaling BG Check.")
     
-    parser.add_argument("--input_dir", type=str, default=r"C:\Users\admin\Desktop\cropped_image", 
+    parser.add_argument("--input_dir", type=str, default=r"D:\From_C_drive\cropped_image", 
                         help="Directory containing cropped patches.")
-    parser.add_argument("--output_dir", type=str, default=r"C:\Users\admin\Desktop\cropped_image\Rejected_cropped_image", 
+    parser.add_argument("--output_dir", type=str, default=r"D:\From_C_drive\cropped_image\Rejected_cropped_image", 
                         help="Directory to move REJECTED patches to.")
     
     # [추가] QC를 수행할 특정 하위 폴더 목록 지정 (기본값 설정)
-    parser.add_argument("--target_dirs", nargs='+', default=["GBA_346", "GBA_WIMP4"], 
+    parser.add_argument("--target_dirs", nargs='+', default=["GBA_346", "GBA_WIMP4", "SNCA-G51D", "SNCA-G51D_isogenic", "SNCAx3_isogenic", "alpha_syn_1day", "alpha_syn_7day"], 
                         help="List of specific subfolders inside input_dir to process for QC.")
     
     # [0] 채널 표준편차 합

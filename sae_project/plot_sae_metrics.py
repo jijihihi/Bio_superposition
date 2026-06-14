@@ -351,25 +351,31 @@ def main():
         
         def format_row(name, dim, lam):
             sub = df[(df["Dimension"].astype(float) == float(dim)) & (df["Lambda"].astype(float) == float(lam))]
-            if sub.empty:
-                return None
-            l0_m, l0_s = sub["L0"].mean(), sub["L0"].std()
-            alive_m, alive_s = sub["N_Alive"].mean(), sub["N_Alive"].std()
-            fvu_m, fvu_s = sub["FVU"].mean(), sub["FVU"].std()
-            acc_m, acc_s = sub["Test_Acc"].mean(), sub["Test_Acc"].std()
-            
-            ip_m, ip_s = (sub["Mean_IP"].mean(), sub["Mean_IP"].std()) if "Mean_IP" in sub.columns else (np.nan, np.nan)
-            
-            return [
-                name,
-                f"{int(dim)}",
-                f"{int(lam)}",
-                f"{l0_m:.1f} ± {l0_s:.1f}",
-                f"{alive_m:.1f} ± {alive_s:.1f}" if not pd.isna(alive_m) else "N/A",
-                f"{fvu_m:.4f} ± {fvu_s:.4f}" if not pd.isna(fvu_m) else "N/A",
-                f"{acc_m:.2f} ± {acc_s:.2f}" if not pd.isna(acc_m) else "N/A",
-                f"{ip_m:.3f} ± {ip_s:.3f}" if not pd.isna(ip_m) else "N/A"
-            ]
+                if sub.empty:
+                    return None
+                l0_m, l0_s = sub["L0"].mean(), sub["L0"].std()
+                alive_m, alive_s = sub["N_Alive"].mean(), sub["N_Alive"].std()
+                fvu_m, fvu_s = sub["FVU"].mean(), sub["FVU"].std()
+                
+                # --- [수정 구간] Test_Acc 백분율(%) 변환 로직 추가 ---
+                acc_vals = sub["Test_Acc"].astype(float)
+                if not acc_vals.empty and acc_vals.mean() <= 1.0:
+                    acc_vals = acc_vals * 100
+                acc_m, acc_s = acc_vals.mean(), acc_vals.std()
+                # --------------------------------------------------
+                
+                ip_m, ip_s = (sub["Mean_IP"].mean(), sub["Mean_IP"].std()) if "Mean_IP" in sub.columns else (np.nan, np.nan)
+                
+                return [
+                    name,
+                    f"{int(dim)}",
+                    f"{int(lam)}",
+                    f"{l0_m:.1f} ± {l0_s:.1f}",
+                    f"{alive_m:.1f} ± {alive_s:.1f}" if not pd.isna(alive_m) else "N/A",
+                    f"{fvu_m:.4f} ± {fvu_s:.4f}" if not pd.isna(fvu_m) else "N/A",
+                    f"{acc_m:.2f} ± {acc_s:.2f}" if not pd.isna(acc_m) else "N/A",
+                    f"{ip_m:.3f} ± {ip_s:.3f}" if not pd.isna(ip_m) else "N/A"
+                ]
 
         r = format_row("CNN Proxy", 600, 50)
         if r: table_data.append(r)

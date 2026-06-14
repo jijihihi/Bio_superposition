@@ -10,9 +10,9 @@ def get_args():
         description="Generate patches from high-resolution microscopy images while preserving directory structure."
     )
     # 경로 설정
-    parser.add_argument("--input_dir", type=str, default=r"C:\Users\admin\Desktop\MIP", 
+    parser.add_argument("--input_dir", type=str, default=r"D:\From_C_drive\MIP", 
                         help="Root directory containing the filtered (good) images.")
-    parser.add_argument("--output_dir", type=str, default=r"C:\Users\admin\Desktop\cropped_image", 
+    parser.add_argument("--output_dir", type=str, default=r"D:\From_C_drive\cropped_image", 
                         help="Root directory where cropped patches will be saved.")
     
     # 패치 설정 (8x8 그리드를 위해 128 설정 유지)
@@ -20,7 +20,7 @@ def get_args():
     parser.add_argument("--overlap", type=int, default=0, help="Overlap between patches in pixels (default: 0 for non-overlapping).")
     
     # 처리할 특정 폴더 지정 (기존 exclude_dirs 대신 target_dirs로 변경)
-    parser.add_argument("--target_dirs", nargs='+', default=["GBA_346", "GBA_WIMP4"], 
+    parser.add_argument("--target_dirs", nargs='+', default=["GBA_346", "GBA_WIMP4", "SNCA-G51D", "SNCA-G51D_isogenic", "SNCAx3_isogenic", "alpha_syn_1day", "alpha_syn_7day"], 
                         help="List of specific subfolders inside input_dir to process.")
     
     return parser.parse_args()

@@ -60,18 +60,18 @@ EXPERIMENTS = {
     # "SNCA-G51D": {
     #     "rows": [4, 5],
     #     "input_dirs": [
-    #         r"D:\160822\Minee_160822_plate1_005001_2022-08-16T10_54_01-Measurement 1\Images",
-    #         r"D:\160822\Minee_160822_plate2_005002_2022-08-16T11_43_12-Measurement 1\Images",
-    #         r"D:\160822\Minee_160822_plate3_005003_2022-08-16T12_31_25-Measurement 1\Images",
+    #         r"D:\160822\005001_2022-08-16T10_54_01-Measurement 1\Images",
+    #         r"D:\160822\005002_2022-08-16T11_43_12-Measurement 1\Images",
+    #         r"D:\160822\005003_2022-08-16T12_31_25-Measurement 1\Images",
     #     ]
     # },
 
     # "SNCA-G51D_isogenic": {
     #     "rows": [6, 7],
     #     "input_dirs": [
-    #         r"D:\160822\Minee_160822_plate1_005001_2022-08-16T10_54_01-Measurement 1\Images",
-    #         r"D:\160822\Minee_160822_plate2_005002_2022-08-16T11_43_12-Measurement 1\Images",
-    #         r"D:\160822\Minee_160822_plate3_005003_2022-08-16T12_31_25-Measurement 1\Images",
+    #         r"D:\160822\005001_2022-08-16T10_54_01-Measurement 1\Images",
+    #         r"D:\160822\005002_2022-08-16T11_43_12-Measurement 1\Images",
+    #         r"D:\160822\005003_2022-08-16T12_31_25-Measurement 1\Images",
     #     ]
     # },
 #############################################################
@@ -88,13 +88,13 @@ EXPERIMENTS = {
 
 
 
-#######################################
+#######################################  "D:\003008__2022-05-16T18_49_33-Measurement 1_GBA_346"
     # "GBA_346": {
     #     "rows": [5, 6, 7], 
     #     "input_dirs": [
     #         r"D:\003007__2022-05-16T18_01_40-Measurement 1_GBA_346\Images",
-    #         r"D:\003008__2022-05-16T18_01_40-Measurement 1_GBA_346\Images",
-    #         r"D:\003009__2022-05-16T18_01_40-Measurement 1_GBA_346\Images",
+    #         r"D:\003008__2022-05-16T18_49_33-Measurement 1_GBA_346\Images",
+    #         r"D:\003009__2022-05-16T19_37_25-Measurement 1_GBA_346\Images",
     #     ]
     # },
 
@@ -102,7 +102,7 @@ EXPERIMENTS = {
     #     "rows": [5, 6, 7], 
     #     "input_dirs": [
     #         r"D:\003014__2022-05-17T18_48_31-Measurement 1\Images",
-    #         r"D:\003016__2022-05-17T20_24_27-Measurement 1\Images"
+    #         r"D:\003016__2022-05-17T20_24_27-Measurement 1\Images",
     #     ]
     # },
 ######################################
@@ -189,21 +189,13 @@ EXPERIMENTS = {
     #     ]
     # },
 
-   "alpha_syn_3hr": {
-        "rows": [2, 3, 4, 5, 6, 7], 
-        "cols": [6, 7],
-        "input_dirs": [
-            r"D:\150822\minee150822 plate2__2022-08-15T16_18_44-Measurement 1\Images"
-
-        ]
-    },
 
    "alpha_syn_1day": {
         "rows": [2, 3, 4, 5, 6, 7], 
         "cols": [8],
         "input_dirs": [
-            r"D:\090822\minee plate 1 090822__2022-08-09T16_31_17-Measurement 1\Images",
-            r"D:\150822\minee150822 plate3__2022-08-15T17_05_37-Measurement 1\Images"
+            r"D:\090822\001001__2022-08-09T16_31_17-Measurement 1\Images",
+           
 
         ]
     },
@@ -212,8 +204,8 @@ EXPERIMENTS = {
         "rows": [2, 3, 4, 5, 6, 7], 
         "cols": [3],
         "input_dirs": [
-            r"D:\090822\minee plate 1 090822__2022-08-09T16_31_17-Measurement 1\Images",
-            r"D:\150822\minee150822 plate3__2022-08-15T17_05_37-Measurement 1\Images"
+            r"D:\090822\001001__2022-08-09T16_31_17-Measurement 1\Images",
+            
 
         ]
     },
@@ -222,8 +214,8 @@ EXPERIMENTS = {
         "rows": [2, 3, 4, 5, 6, 7], 
         "cols": [3],
         "input_dirs": [
-            r"D:\090822\minee plate 2 090822__2022-08-09T17_35_08-Measurement 1\Images",
-            r"D:\150822\minee150822 plate4__2022-08-15T17_52_28-Measurement 1\Images"
+            r"D:\090822\001002__2022-08-09T17_35_08-Measurement 1\Images",
+           
 
 
         ]
@@ -250,8 +242,8 @@ class ImageMetadata:
         return (self.group_name, self.folder_id, self.row, self.col, self.fraction, self.channel)
 
 # --- 3. 기본 사용자 설정 ---
-BASE_OUTPUT_DIR = r"C:\Users\admin\Desktop\MIP"
-BASE_CYTOX_DIR = r"C:\Users\admin\Desktop\MIP_cytox"
+BASE_OUTPUT_DIR = r"D:\From_C_drive\MIP"
+BASE_CYTOX_DIR = r"D:\From_C_drive\MIP_cytox"
 
 # 개별 실험 설정에 "cols"가 없을 때 사용할 기본 컬럼 범위
 DEFAULT_COLS_RANGE = range(2, 12) 

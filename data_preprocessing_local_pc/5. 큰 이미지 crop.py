@@ -10,9 +10,9 @@ def get_args():
         description="Generate patches from high-resolution microscopy images while preserving directory structure."
     )
     # 경로 설정
-    parser.add_argument("--input_dir", type=str, default=r"C:\Users\admin\Desktop\MIP", 
+    parser.add_argument("--input_dir", type=str, default=r"D:\From_C_drive\MIP", 
                         help="Root directory containing the filtered (good) images.")
-    parser.add_argument("--output_dir", type=str, default=r"C:\Users\admin\Desktop\cropped_image", 
+    parser.add_argument("--output_dir", type=str, default=r"D:\From_C_drive\cropped_image",
                         help="Root directory where cropped patches will be saved.")
     
     # 패치 설정

@@ -216,17 +216,19 @@ def make_balanced_loader(args, refs, uid_to_refidx, samples_per_class, seed,
                     return uid[idx:]
             return uid
     
-        rel_to_refidx = {}
-        for uid, ridx in uid_to_refidx.items():
-            rel_key = uid_to_relative(uid)
-            rel_to_refidx[rel_key] = ridx
-    
+        rel_to_refidx = {uid_to_relative(k): v for k, v in uid_to_refidx.items()}
         refidx_list = []
         n_missing = 0
         for uid in all_uids:
             rel_key = uid_to_relative(uid)
             if rel_key in rel_to_refidx:
                 refidx_list.append(rel_to_refidx[rel_key])
+                
+        # [NEW] CSV 파일에 없는 OOD 클래스 (Label 4 이상)는 폴더에 있는 모든 이미지를 무조건 포함!
+        # (이미 targz_to_wds 변환 단계에서 27,000장으로 맞춰두었으므로 그대로 다 쓰면 됩니다)
+        for rel_key, ridx in rel_to_refidx.items():
+            if int(refs[ridx].label) >= 4:
+                refidx_list.append(ridx)
             else:
                 n_missing += 1
     

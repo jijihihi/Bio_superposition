@@ -46,8 +46,8 @@ import tarfile
 from pathlib import Path
 
 def compact_to_gz():
-    base_dir = Path(r"C:\Users\admin\Desktop\cropped_image")
-    target_folders = ["GBA_346", "GBA_WIMP4", "SNCA_isogenic", "SNCA-G51D", "SNCA-G51D_isogenic"]
+    base_dir = Path(r"D:\From_C_drive\cropped_image")
+    target_folders = ["GBA_346", "GBA_WIMP4", "SNCA-G51D", "SNCA-G51D_isogenic", "SNCAx3_isogenic", "alpha_syn_1day", "alpha_syn_7day"]
     
     for folder_name in target_folders:
         folder_path = base_dir / folder_name
