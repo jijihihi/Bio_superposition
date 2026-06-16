@@ -194,8 +194,23 @@ def extract_all_sae_features(
         C = fmap.shape[-1]
         H_W = fmap.shape[1] * fmap.shape[2]
 
-        flat_tokens = fmap.view(-1, C)
-        flat_tokens = flat_tokens - flat_tokens.mean(dim=0, keepdim=True)
+        # ==============================================================================
+        # [SAFE & CORRECT] Per-Image Spatial Centering (Data Leakage 0%)
+        # ==============================================================================
+        # 1. fmap_reshaped: 현재 배치의 형태를 (B, H_W, C)로 변환합니다.
+        fmap_reshaped = fmap.view(curr_bs, H_W, C)
+        
+        # 2. image_means: 오직 '자기 자신 1장의 이미지' 내부에 있는 공간 토큰들(dim=1)의 평균만 구합니다.
+        #    배치 차원(dim=0)에 대해서 평균을 구하지 않으므로, 옆에 있는 다른 이미지의 정보나
+        #    클래스 라벨 정보가 절대로 섞여 들어가지 않습니다. (Data Leakage 원천 차단)
+        image_means = fmap_reshaped.mean(dim=1, keepdim=True) # (B, 1, C)
+        
+        # 3. 평균 빼기: 각 이미지에서 '자신의 평균'만을 뺍니다.
+        #    이렇게 하면 데이터셋의 라벨이나 배치 구성(shuffle 여부)에 완벽하게 독립적인,
+        #    가장 정석적이고 안전한 정규화(Normalization)가 수행됩니다.
+        fmap_reshaped = fmap_reshaped - image_means
+        
+        flat_tokens = fmap_reshaped.view(-1, C)
 
         # Save per-token L2 norms before normalization
         token_l2_norms = flat_tokens.norm(dim=1, keepdim=True).clamp_min(1e-12)
@@ -312,7 +327,15 @@ def make_balanced_loader(args, refs, uid_to_refidx, samples_per_class, seed,
     
         if n_missing > 0:
             logger.warning(f"  {n_missing}/{len(all_uids)} UIDs not matched (path mismatch?)")
-        logger.info(f"  Matched: {len(refidx_list)}/{len(all_uids)} UIDs")
+        logger.info(f"  Matched: {len(refidx_list)}/{len(all_uids)} UIDs from CSVs")
+
+        # [CRITICAL RESTORE] CSV 파일에 없는 OOD 클래스 (Label 4 이상, 예: Alpha-Synuclein) 무조건 포함!
+        n_ood = 0
+        for rel_key, ridx in rel_to_refidx.items():
+            if int(refs[ridx].label) >= 4:
+                refidx_list.append(ridx)
+                n_ood += 1
+        logger.info(f"  Appended {n_ood} OOD images (label >= 4) not found in CSVs.")
 
     # Group by class AND line to ensure strict balancing among lines within the same class
     class_to_lines = defaultdict(lambda: defaultdict(list))
@@ -355,28 +378,20 @@ def make_balanced_loader(args, refs, uid_to_refidx, samples_per_class, seed,
 
     selected_refidx = [refidx_list[i] for i in selected]
     
-    # [CRITICAL FIX] Batch Centering Bug
-    # 학습 중 Linear Probe 평가(step09_sae_eval.py)에서는 StrictPlateBalancedBatchSamplerOnBank를 사용하여 
-    # 배치마다 모든 클래스가 정확히 동일한 비율(예: 16:16:16:16)로 들어가도록 보장했습니다.
-    # 따라서 배치 평균(batch mean)이 완벽한 글로벌 평균으로 작용하여 신호가 보존되었습니다.
-    # 단순 rng.shuffle()은 순수 무작위라 배치 내 클래스 불균형이 발생하여 노이즈가 낄 수 있으므로,
-    # 학습 때와 완전히 똑같이 StrictPlateBalancedBatchSamplerOnBank를 적용합니다.
     bank = InMemoryTarBank(refs, selected_refidx, args.img_size)
     ib = list(range(len(selected_refidx)))
     ds = InMemorySixteenBitDataset(bank, ib, args.img_size, augment=False)
 
-    from sae_project.step04_data_bank import StrictPlateBalancedBatchSamplerOnBank
-    sampler = StrictPlateBalancedBatchSamplerOnBank(bank, batch_size=args.batch_size, seed=args.seed)
-
     loader = DataLoader(
-        ds,
-        batch_sampler=sampler,
-        num_workers=args.num_workers,
+        ds, 
+        batch_size=args.batch_size, 
+        shuffle=False, 
+        num_workers=args.num_workers, 
         pin_memory=torch.cuda.is_available(),
-        worker_init_fn=seed_worker,
-        collate_fn=collate_skip_none,
+        collate_fn=collate_skip_none
     )
-    logger.info(f"  Total: {len(selected)} images (StrictPlateBalancedBatchSampler)")
+    
+    logger.info(f"  Total: {len(selected)} images (Sequential Sequential Loading, shuffle=False)")
     return loader
 
 

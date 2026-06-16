@@ -26,7 +26,7 @@
 # ============================
 BASE="/home/ubuntu/model-east3/outputs"
 SHARD="/home/ubuntu/model-east3/wds_shards_tar"
-CACHE_ROOT="/home/ubuntu/model-east3/caches"
+CACHE_ROOT="/home/ubuntu/model-east3/caches_per_image_centering"
 
 # CNN Seeds (총 8개)
 CNN_SEEDS=(42 87 95 123 124 256 445 457)
@@ -53,19 +53,19 @@ SAE_CONFIGS=(
 # ============================
 # mkdir -p "$CACHE_ROOT"
 
-# for SEED in "${CNN_SEEDS[@]}"; do
-#     echo ""
-#     echo "=================================================================="
-#     echo "🚀 Processing CNN SEED: $SEED"
-#     echo "=================================================================="
+for SEED in "${CNN_SEEDS[@]}"; do
+    echo ""
+    echo "=================================================================="
+    echo "🚀 Processing CNN SEED: $SEED"
+    echo "=================================================================="
     
-#     MODEL_DIR="${BASE}/MoCo_seed${SEED}"
-#     MODEL="${MODEL_DIR}/best_model.pt"
+    MODEL_DIR="${BASE}/MoCo_seed${SEED}"
+    MODEL="${MODEL_DIR}/best_model.pt"
     
-#     if [ ! -f "$MODEL" ]; then
-#         echo "⚠️  Model not found, skipping seed ${SEED}: $MODEL"
-#         continue
-#     fi
+    if [ ! -f "$MODEL" ]; then
+        echo "⚠️  Model not found, skipping seed ${SEED}: $MODEL"
+        continue
+    fi
     
     #-----------------------------------------------------
     #1. CNN GAP Extraction (3개 레이어)
@@ -94,23 +94,23 @@ SAE_CONFIGS=(
     # -----------------------------------------------------
     # 2. SAE GAP Extraction (7개 설정)
     # -----------------------------------------------------
-    # SAE_CACHE_DIR="${CACHE_ROOT}/CNN_seed${SEED}_SAE"
-    # mkdir -p "$SAE_CACHE_DIR"
+    SAE_CACHE_DIR="${CACHE_ROOT}/CNN_seed${SEED}_SAE"
+    mkdir -p "$SAE_CACHE_DIR"
     
-    # # CNN 모델에 종속되는 고정 Reference Mean 저장 경로
-    # # REFERENCE_MEAN_PATH="${MODEL_DIR}/reference_mean_stage5_out.pt"
+    # CNN 모델에 종속되는 고정 Reference Mean 저장 경로
+    # REFERENCE_MEAN_PATH="${MODEL_DIR}/reference_mean_stage5_out.pt"
     
-    # for CONFIG in "${SAE_CONFIGS[@]}"; do
-    #     read -r D_SAE LAMBDA <<< "$CONFIG"
-    #     SAE_SAVE_DIR="${MODEL_DIR}/SAE_dim${D_SAE}_lambda${LAMBDA}_seed${SAE_SEED}_no_L2norm_loss"
+    for CONFIG in "${SAE_CONFIGS[@]}"; do
+        read -r D_SAE LAMBDA <<< "$CONFIG"
+        SAE_SAVE_DIR="${MODEL_DIR}/SAE_dim${D_SAE}_lambda${LAMBDA}_seed${SAE_SEED}_no_L2norm_loss"
         
-    #     # 무조건 ep008.pt 체크포인트 파일 사용 (find 명령어 사용하여 Bash 에러 방지)
-    #     SAE_CKPT=$(find "${SAE_SAVE_DIR}" -maxdepth 1 -name "*_ep008.pt" 2>/dev/null | head -n 1)
+        # 무조건 ep008.pt 체크포인트 파일 사용 (find 명령어 사용하여 Bash 에러 방지)
+        SAE_CKPT=$(find "${SAE_SAVE_DIR}" -maxdepth 1 -name "*_ep008.pt" 2>/dev/null | head -n 1)
         
-    #     if [ -z "$SAE_CKPT" ] || [ ! -f "$SAE_CKPT" ]; then
-    #         echo "⚠️  [SAE] Checkpoint not found for dim=${D_SAE}, lam=${LAMBDA}. Skipping..."
-    #         continue
-    #     fi
+        if [ -z "$SAE_CKPT" ] || [ ! -f "$SAE_CKPT" ]; then
+            echo "⚠️  [SAE] Checkpoint not found for dim=${D_SAE}, lam=${LAMBDA}. Skipping..."
+            continue
+        fi
         
         # 만약 Reference Mean이 아직 없다면 지금 바로 계산! (SAE 학습시 배치단위 중심화를 썼으므로 글로벌 평균은 사용하지 않음!)
         # if [ ! -f "$REFERENCE_MEAN_PATH" ]; then
@@ -126,35 +126,35 @@ SAE_CONFIGS=(
         #         --reference_mean_path "$REFERENCE_MEAN_PATH"
         # fi
         
-#         OUTPUT_PATH="${SAE_CACHE_DIR}/sae_gap_d${D_SAE}_lam${LAMBDA}_normrestored_withnewclass.npz"
+        OUTPUT_PATH="${SAE_CACHE_DIR}/sae_gap_d${D_SAE}_lam${LAMBDA}_normrestored_withnewclass.npz"
         
-#         if [ -f "$OUTPUT_PATH" ]; then
-#             echo "✅  [SAE] Cache already exists for dim=${D_SAE} lam=${LAMBDA}. Skipping..."
-#             continue
-#         fi
+        if [ -f "$OUTPUT_PATH" ]; then
+            echo "✅  [SAE] Cache already exists for dim=${D_SAE} lam=${LAMBDA}. Skipping..."
+            continue
+        fi
         
-#         echo "▶️  [SAE] Extracting dim=${D_SAE} lam=${LAMBDA} into ${OUTPUT_PATH}"
-#         python -m cache_extraction.extract_features_lambda_labs \
-#             --sae_ckpt "$SAE_CKPT" \
-#             --save_dir "$MODEL_DIR" \
-#             --model_state_path "$MODEL" \
-#             --shard_root "$SHARD" \
-#             --which_layer "$SAE_LAYER" \
-#             --use_all_data \
-#             --restore_token_norm \
-#             --output_path "$OUTPUT_PATH"
+        echo "▶️  [SAE] Extracting dim=${D_SAE} lam=${LAMBDA} into ${OUTPUT_PATH}"
+        python -m cache_extraction.extract_features_lambda_labs \
+            --sae_ckpt "$SAE_CKPT" \
+            --save_dir "$MODEL_DIR" \
+            --model_state_path "$MODEL" \
+            --shard_root "$SHARD" \
+            --which_layer "$SAE_LAYER" \
+            --use_all_data \
+            --restore_token_norm \
+            --output_path "$OUTPUT_PATH"
             
-#     done
-# done
+    done
+done
 
-# echo ""
-# echo "=================================================================="
-# echo "✅ All extractions complete! Caches saved to $CACHE_ROOT"
-# echo "=================================================================="
+echo ""
+echo "=================================================================="
+echo "✅ All extractions complete! Caches saved to $CACHE_ROOT"
+echo "=================================================================="
 
-# ============================
-# 3. Linear Classification
-# ============================
+============================
+3. Linear Classification
+============================
 echo "▶️  Running Linear Probe Evaluation on all extracted SAE caches..."
 
 # 결과물 CSV 경로 (훈련에 쓴 기존 4개 클래스만 자동 필터링되어 평가됨)
@@ -168,6 +168,6 @@ python -m sae_project.step18_eval_probe_from_cache \
     --save_csv "$OUTPUT_CSV_NAME" \
     --model_base_dir "$BASE"
 
-# echo "=================================================================="
-# echo "✅ Linear Classification complete!"
-# echo "=================================================================="
+echo "=================================================================="
+echo "✅ Linear Classification complete!"
+echo "=================================================================="

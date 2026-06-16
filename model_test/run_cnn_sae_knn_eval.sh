@@ -17,9 +17,9 @@ SAE_CONFIGS=(
     # "600 50"
     # "1024 800"
     # "2048 800"
-    # "4096 800"
-    "8192 800"
-    # "4096 200"
+    #"4096 800"
+     "8192 800"
+    #"4096 200"
     # "4096 3200"
 )
 
@@ -88,20 +88,25 @@ for SEED in "${CNN_SEEDS[@]}"; do
             continue
         fi
         
-        OUT_DIR="${OUTPUT_ROOT}/seed${SEED}/SAE_d${D_SAE}_lam${LAMBDA}"
-        mkdir -p "$OUT_DIR"
-        
-        echo "▶️  [SAE] Evaluating KNN: dim=${D_SAE} lam=${LAMBDA}"
-        python -m model_test.knn_fewshot_eval \
-            --cache_path "$CACHE_PATH" \
-            --save_dir "$MODEL_DIR" \
-            --dead_threshold 1e-5 \
-            --gap_l2_norm \
-            --eval_modes knn \
-            --knn_k 1 3 5 10 15 \
-            --knn_weights uniform \
-            --output_dir "$OUT_DIR" \
-            --seed 42
+        for NORM in "log"; do
+            for WEIGHT in "uniform" "inv_sq"; do
+                OUT_DIR="${OUTPUT_ROOT}/seed${SEED}/SAE_d${D_SAE}_lam${LAMBDA}_norm_${NORM}_${WEIGHT}"
+                mkdir -p "$OUT_DIR"
+                
+                echo "▶️  [SAE] Evaluating KNN: dim=${D_SAE} lam=${LAMBDA} norm=${NORM} weight=${WEIGHT}"
+                python -m model_test.knn_fewshot_eval \
+                    --cache_path "$CACHE_PATH" \
+                    --save_dir "$MODEL_DIR" \
+                    --dead_threshold 5e-6 \
+                    --norm "$NORM" \
+                    --gap_l2_norm \
+                    --eval_modes knn \
+                    --knn_k 1 3 5 10 15 \
+                    --knn_weights "$WEIGHT" \
+                    --output_dir "$OUT_DIR" \
+                    --seed 42
+            done
+        done
             
     done
 done

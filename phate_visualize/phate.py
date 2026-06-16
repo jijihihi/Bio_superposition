@@ -356,7 +356,9 @@ def make_balanced_loader(args, refs, uid_to_refidx, samples_per_class: int, seed
 # ==============================================================================
 # Plot PHATE
 # ==============================================================================
-CLASS_NAMES = {0: "Control", 1: "SNCA", 2: "GBA", 3: "LRRK2"}
+from sae_project.step02_logging_utils import CLASS_TO_LABEL
+LABEL_TO_CLASS = {v: k for k, v in CLASS_TO_LABEL.items()}
+
 SUPERCLASS_COLORS = {
     "Control": "#4C72B0",  # blue
     "SNCA": "#DD8452",     # orange
@@ -461,20 +463,29 @@ def plot_phate_superclass(
     fig, ax = plt.subplots(1, 1, figsize=(7, 7))
     superclasses_arr = np.array(superclasses)
 
-    # Plot order: Control first (background), then mutations
-    plot_order = ["Control", "SNCA", "GBA", "LRRK2"]
+    import seaborn as sns
+    # Plot order: Control first (background), then others
+    unique_classes = sorted(np.unique(superclasses_arr))
+    plot_order = ["Control"] + [c for c in unique_classes if c != "Control"]
+    
+    # Assign dynamic colors for classes not in SUPERCLASS_COLORS
+    palette = sns.color_palette("tab20", n_colors=max(20, len(unique_classes)))
+    dynamic_colors = {cls: palette[i % len(palette)] for i, cls in enumerate(unique_classes) if cls not in SUPERCLASS_COLORS}
+    
     for cls in plot_order:
         mask = superclasses_arr == cls
         if mask.sum() == 0:
             continue
         n = int(mask.sum())
+        
+        color = SUPERCLASS_COLORS.get(cls, dynamic_colors.get(cls, "gray"))
         ax.scatter(
             phate_coords[mask, 0],
             phate_coords[mask, 1],
             s=point_size,
             alpha=alpha,
             label=f"{cls} (n={n:,})",
-            c=SUPERCLASS_COLORS.get(cls, "gray"),
+            c=color,
             edgecolors="none",
             rasterized=True,
         )
@@ -618,11 +629,11 @@ def main():
         
         # ── Filter by specific classes ───────────────────────────────────
         if args.classes:
-            # Map "0", "1" etc. to "Control", "SNCA" if needed
+            # Map "0", "1", "10" etc. to their string names using LABEL_TO_CLASS
             mapped_classes = []
             for c in args.classes:
-                if c.isdigit() and int(c) in CLASS_NAMES:
-                    mapped_classes.append(CLASS_NAMES[int(c)])
+                if c.isdigit() and int(c) in LABEL_TO_CLASS:
+                    mapped_classes.append(LABEL_TO_CLASS[int(c)])
                 else:
                     mapped_classes.append(c)
                     

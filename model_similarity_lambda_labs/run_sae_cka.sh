@@ -6,7 +6,7 @@ set -e
 
 # Base directory for caches and model outputs
 BASE_DIR="/content/drive/MyDrive/Final_paper/lambda_labs_moco_only"
-CACHE_ROOT="${BASE_DIR}/caches_CNN_SAE_class_27000_withnewclass"
+CACHE_ROOT="${BASE_DIR}/caches_shuffle=flase"
 OUTPUT_ROOT="${BASE_DIR}/cka_results"
 
 # 비교할 모델들의 Seed (8개 모델)

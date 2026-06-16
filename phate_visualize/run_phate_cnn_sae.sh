@@ -10,7 +10,7 @@ set -e
 # ============================
 # 1. User Configurations
 # ============================
-BASE_DIR="/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/caches_CNN_SAE_class_27000_withnewclass"
+BASE_DIR="/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/caches_shuffle=flase"
 CNN_CACHE="${BASE_DIR}/CNN_seed95/cnn_gap_stage5_out_all.npz"
 SAE_CACHE="${BASE_DIR}/CNN_seed95_SAE/sae_gap_d8192_lam800_normrestored_withnewclass.npz"
 
@@ -63,17 +63,17 @@ python -m phate_visualize.phate \
     --samples_per_class $SAMPLES_PER_CLASS \
     --gap_l2_norm \
     --knn 5 \
-    --t "auto" \
+    --t 5 \
     --knn_dist "euclidean" \
     --batch_size 64 \
     --min_cv 0.1 \
-    --norm log_std \
-    --filter_mode cv de
+    --norm log \
+    --filter_mode cv de \
     --de_adj_p 0.05 \
     --de_min_log2fc 1.0 \
-    --decay 100 \
+    --decay 50 \
     --paga \
-    --paga_n_neighbors 30 \
+    --paga_n_neighbors 20 \
     --paga_n_pcs 50
 
 echo ""

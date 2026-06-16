@@ -79,6 +79,8 @@ def get_args():
                    help="SAE dead neuron threshold (default: 1e-5)")
 
     # Feature preprocessing
+    p.add_argument("--norm", type=str, default="none", choices=["none", "log", "log_std"],
+                   help="Normalization before L2: 'none', 'log', or 'log_std'")
     p.add_argument("--gap_l2_norm", action="store_true",
                    help="L2 normalize feature vectors")
 
@@ -610,6 +612,16 @@ def main():
         norms = np.where(norms == 0, 1e-12, norms)
         X = X / norms
         logger.info(f"  Applied L2 normalization")
+
+    # ── Optional log/log_std normalization ──
+    if getattr(args, "norm", "none") in ["log", "log_std"]:
+        X = np.log1p(np.maximum(X, 0))
+        logger.info(f"  Applied log normalization (np.log1p(max(X, 0)))")
+        
+    if getattr(args, "norm", "none") == "log_std":
+        from sklearn.preprocessing import StandardScaler
+        X = StandardScaler().fit_transform(X)
+        logger.info(f"  Applied StandardScaler (log_std)")
 
     # ── Split into train / test ──
     logger.info(f"\nSplitting by CSV...")
