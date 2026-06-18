@@ -17,13 +17,13 @@
 #       "--min_cv", "0.5",
 #       "--de_top_k", "100",
 #   ]
-#   from kendall_correlation_coefficient.apoptosis_r2_test import main
+#   from apoptosis_prediction.apoptosis_r2_test import main
 #   main()
 # ==============================================================================
 
 # --features_cache에 SAE 벡터 넣으면 그냥 SAE 벡터로 R^2 예측 가능한다.
 
-# !python -m kendall_correlation_coefficient.apoptosis_r2_test \
+# !python -m apoptosis_prediction.apoptosis_r2_test \
 #     --features_cache "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_no_L2norm_loss/features_cache_stage5_out_d8192_sparsity800_normrestored.npz" \
 #     --apoptosis_csv "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv" \
 #     --model "ridge" \
@@ -97,16 +97,27 @@ def get_args():
     p.add_argument("--de_top_k", type=int, default=0)
 
     # XGBoost hyperparameters
-    p.add_argument("--xgb_n_estimators", type=int, default=300)
+    p.add_argument("--xgb_n_estimators", type=int, default=1500)
     p.add_argument("--xgb_max_depth", type=int, default=5)
-    p.add_argument("--xgb_learning_rate", type=float, default=0.04)
-    p.add_argument("--xgb_subsample", type=float, default=0.8)
+    p.add_argument("--xgb_learning_rate", type=float, default=0.005)
+    p.add_argument("--xgb_subsample", type=float, default=0.75)
     p.add_argument("--xgb_colsample_bytree", type=float, default=0.8)
-    p.add_argument("--xgb_early_stopping", type=int, default=30)
+    p.add_argument("--xgb_early_stopping", type=int, default=40)
+    p.add_argument("--xgb_gamma", type=float, default=0.3) # 감마가 클수록 보수적인 모델이 됨
+    p.add_argument("--xgb_min_child_weight", type=int, default=3) # 자식 노드에 필요한 최소 가중치 합
+    p.add_argument("--xgb_reg_lambda", type=float, default=1.5) # L2 규제 (기본값 1)
+    p.add_argument("--xgb_reg_alpha", type=float, default=0.0) # L1 규제
+
+    # p.add_argument("--xgb_n_estimators", type=int, default=300)
+    # p.add_argument("--xgb_max_depth", type=int, default=5)
+    # p.add_argument("--xgb_learning_rate", type=float, default=0.04)
+    # p.add_argument("--xgb_subsample", type=float, default=0.8)
+    # p.add_argument("--xgb_colsample_bytree", type=float, default=0.8)
+    # p.add_argument("--xgb_early_stopping", type=int, default=30)
 
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--cv_folds", type=int, default=5)
-    p.add_argument("--n_repeats", type=int, default=2,
+    p.add_argument("--n_repeats", type=int, default=1,
                    help="Number of repeats for RepeatedKFold CV (e.g. 2 for 2×5=10 folds)")
     p.add_argument("--n_permutations", type=int, default=0,
                    help="Number of permutations for null distribution")
@@ -345,59 +356,64 @@ def evaluate_r2(X, y, seed, cv_folds, n_permutations=0, n_repeats=1, pca_dim=0,
     def _cv_pass(X_in, y_in, log_folds=False):
         """Run one full CV pass (possibly repeated)."""
         kf = _make_kf()
+        splits = list(kf.split(X_in))
+        
         fold_r2s = []
-        # Accumulate predictions to handle RepeatedKFold correctly
+        repeat_r2s = []
         y_pred_sum = np.zeros(len(y_in), dtype=np.float64)
-        y_pred_count = np.zeros(len(y_in), dtype=np.int32)
 
-        for fold_i, (train_idx, test_idx) in enumerate(kf.split(X_in)):
-            X_train, X_test = X_in[train_idx], X_in[test_idx]
-            y_train, y_test = y_in[train_idx], y_in[test_idx]
+        for ri in range(n_repeats):
+            y_pred_repeat = np.zeros(len(y_in), dtype=np.float64)
+            for fold_i in range(cv_folds):
+                idx = ri * cv_folds + fold_i
+                train_idx, test_idx = splits[idx]
+                
+                X_train, X_test = X_in[train_idx], X_in[test_idx]
+                y_train, y_test = y_in[train_idx], y_in[test_idx]
 
-            pipe_steps = [("scaler", StandardScaler())]
-            if pca_dim > 0:
-                n_comp = min(pca_dim, X_train.shape[1], X_train.shape[0] - 1)
-                pipe_steps.append(("pca", PCA(n_components=n_comp, random_state=seed)))
-            pipe_steps.append(("ridge", RidgeCV(alphas=_RIDGE_ALPHAS)))
-            pipe = Pipeline(pipe_steps)
-            pipe.fit(X_train, y_train)
-            pred = pipe.predict(X_test)
-            y_pred_sum[test_idx] += pred
-            y_pred_count[test_idx] += 1
+                pipe_steps = [("scaler", StandardScaler())]
+                if pca_dim > 0:
+                    n_comp = min(pca_dim, X_train.shape[1], X_train.shape[0] - 1)
+                    pipe_steps.append(("pca", PCA(n_components=n_comp, random_state=seed)))
+                pipe_steps.append(("ridge", RidgeCV(alphas=_RIDGE_ALPHAS)))
+                pipe = Pipeline(pipe_steps)
+                pipe.fit(X_train, y_train)
+                pred = pipe.predict(X_test)
+                
+                y_pred_repeat[test_idx] = pred
+                y_pred_sum[test_idx] += pred
 
-            ss_res = np.sum((y_test - pred) ** 2)
-            ss_tot = np.sum((y_test - y_test.mean()) ** 2)
-            fold_r2 = 1.0 - ss_res / max(ss_tot, 1e-12)
-            fold_r2s.append(fold_r2)
+                ss_res = np.sum((y_test - pred) ** 2)
+                ss_tot = np.sum((y_test - y_test.mean()) ** 2)
+                fold_r2 = 1.0 - ss_res / max(ss_tot, 1e-12)
+                fold_r2s.append(fold_r2)
 
-            if log_folds:
-                alpha = pipe.named_steps["ridge"].alpha_
-                logger.info(f"      Fold {fold_i}: n_train={len(train_idx)}, "
-                            f"n_test={len(test_idx)}, features={X_in.shape[1]}, "
-                            f"R²={fold_r2:.4f}, alpha={alpha}")
+                if log_folds:
+                    alpha = pipe.named_steps["ridge"].alpha_
+                    logger.info(f"      Repeat {ri} Fold {fold_i}: n_train={len(train_idx)}, "
+                                f"n_test={len(test_idx)}, features={X_in.shape[1]}, "
+                                f"R²={fold_r2:.4f}, alpha={alpha}")
 
-        # Average predictions across repeats
-        y_pred = y_pred_sum / np.maximum(y_pred_count, 1)
-        return np.array(fold_r2s), y_pred
+            # Calculate R2 for this repeat independently
+            ss_res_rep = np.sum((y_in - y_pred_repeat) ** 2)
+            ss_tot_rep = np.sum((y_in - y_in.mean()) ** 2)
+            rep_r2 = 1.0 - ss_res_rep / max(ss_tot_rep, 1e-12)
+            repeat_r2s.append(rep_r2)
+
+        y_pred_avg = y_pred_sum / n_repeats
+        return np.array(fold_r2s), np.array(repeat_r2s), y_pred_avg
 
     # Real run
     logger.info(f"    X shape: {X_v.shape}" +
                 (f" → PCA {pca_dim}" if pca_dim > 0 else ""))
-    real_scores, y_pred = _cv_pass(X_v, y_v, log_folds=debug)
+    real_fold_scores, real_repeat_scores, y_pred = _cv_pass(X_v, y_v, log_folds=debug)
 
-    # Global R² from concatenated OOS predictions (more stable than fold-avg)
-    ss_res_global = np.sum((y_v - y_pred) ** 2)
-    ss_tot_global = np.sum((y_v - y_v.mean()) ** 2)
-    r2_global = 1.0 - ss_res_global / max(ss_tot_global, 1e-12)
+    # Use the average of repeat R²s as the primary metric
+    r2_mean = real_repeat_scores.mean()
+    r2_std = real_repeat_scores.std() if n_repeats > 1 else real_fold_scores.std()
 
-    # Keep fold-level stats for reporting variability
-    r2_fold_mean = real_scores.mean()
-    r2_fold_std = real_scores.std()
-    # Use global R² as the primary metric
-    r2_mean = r2_global
-    r2_std = r2_fold_std
-
-    logger.info(f"    R² global={r2_global:.4f}, fold_mean={r2_fold_mean:.4f} ± {r2_fold_std:.4f}")
+    logger.info(f"    R² repeats_mean={r2_mean:.4f} ± {r2_std:.4f}, "
+                f"fold_mean={real_fold_scores.mean():.4f}")
 
     # Permutation test — parallelised
     if n_permutations > 0:
@@ -407,29 +423,39 @@ def evaluate_r2(X, y, seed, cv_folds, n_permutations=0, n_repeats=1, pca_dim=0,
             rng_p = np.random.RandomState(perm_seed)
             y_perm = rng_p.permutation(y_v)
             kf_p = _make_kf()
+            splits_p = list(kf_p.split(y_perm))
+            
             fold_r2s_p = []
-            y_pred_sum_p = np.zeros(len(y_v), dtype=np.float64)
-            y_pred_count_p = np.zeros(len(y_v), dtype=np.int32)
-            for train_idx, test_idx in kf_p.split(y_perm):
-                pipe_steps = [("scaler", StandardScaler())]
-                if pca_dim > 0:
-                    n_comp = min(pca_dim, X_v.shape[1], len(train_idx) - 1)
-                    pipe_steps.append(("pca", PCA(n_components=n_comp, random_state=seed)))
-                pipe_steps.append(("ridge", RidgeCV(alphas=_RIDGE_ALPHAS)))
-                pipe = Pipeline(pipe_steps)
-                pipe.fit(X_v[train_idx], y_perm[train_idx])
-                pred = pipe.predict(X_v[test_idx])
-                y_pred_sum_p[test_idx] += pred
-                y_pred_count_p[test_idx] += 1
-                ss_res = np.sum((y_perm[test_idx] - pred) ** 2)
-                ss_tot = np.sum((y_perm[test_idx] - y_perm[test_idx].mean()) ** 2)
-                fold_r2s_p.append(1.0 - ss_res / max(ss_tot, 1e-12))
-            # Compute global R² for this permutation
-            y_pred_p = y_pred_sum_p / np.maximum(y_pred_count_p, 1)
-            ss_res_g = np.sum((y_perm - y_pred_p) ** 2)
-            ss_tot_g = np.sum((y_perm - y_perm.mean()) ** 2)
-            global_r2_p = 1.0 - ss_res_g / max(ss_tot_g, 1e-12)
-            return fold_r2s_p, global_r2_p
+            repeat_r2s_p = []
+            
+            for ri in range(n_repeats):
+                y_pred_repeat = np.zeros(len(y_v), dtype=np.float64)
+                for fold_i in range(cv_folds):
+                    idx = ri * cv_folds + fold_i
+                    train_idx, test_idx = splits_p[idx]
+                    
+                    pipe_steps = [("scaler", StandardScaler())]
+                    if pca_dim > 0:
+                        n_comp = min(pca_dim, X_v.shape[1], len(train_idx) - 1)
+                        pipe_steps.append(("pca", PCA(n_components=n_comp, random_state=seed)))
+                    pipe_steps.append(("ridge", RidgeCV(alphas=_RIDGE_ALPHAS)))
+                    pipe = Pipeline(pipe_steps)
+                    pipe.fit(X_v[train_idx], y_perm[train_idx])
+                    pred = pipe.predict(X_v[test_idx])
+                    
+                    y_pred_repeat[test_idx] = pred
+                    
+                    ss_res = np.sum((y_perm[test_idx] - pred) ** 2)
+                    ss_tot = np.sum((y_perm[test_idx] - y_perm[test_idx].mean()) ** 2)
+                    fold_r2s_p.append(1.0 - ss_res / max(ss_tot, 1e-12))
+                
+                # Compute global R² for THIS permutation repeat
+                ss_res_g = np.sum((y_perm - y_pred_repeat) ** 2)
+                ss_tot_g = np.sum((y_perm - y_perm.mean()) ** 2)
+                repeat_r2s_p.append(1.0 - ss_res_g / max(ss_tot_g, 1e-12))
+                
+            # We use the mean of the repeat R²s as the final R² for this permutation
+            return fold_r2s_p, np.mean(repeat_r2s_p)
 
         perm_seeds = [seed + 10000 + i * 7 for i in range(n_permutations)]
         logger.info(f"    Permutation: {n_permutations} perms × {cv_folds} folds "
@@ -458,7 +484,7 @@ def evaluate_r2(X, y, seed, cv_folds, n_permutations=0, n_repeats=1, pca_dim=0,
     return {
         "r2_mean": r2_mean,
         "r2_std": r2_std,
-        "r2_scores": real_scores.tolist(),
+        "r2_scores": real_fold_scores.tolist(),
         "y_true": y_v,
         "y_pred": y_pred,
         "perm_pval": perm_pval,
@@ -503,82 +529,95 @@ def evaluate_r2_xgboost(X, y, seed, cv_folds, args, n_permutations=0, n_repeats=
 
     def _cv_pass(X_in, y_in, log_folds=False):
         kf = _make_kf()
+        splits = list(kf.split(X_in))
+        
         fold_r2s = []
-        # Accumulate predictions to handle RepeatedKFold correctly
+        repeat_r2s = []
         y_pred_sum = np.zeros(len(y_in), dtype=np.float64)
-        y_pred_count = np.zeros(len(y_in), dtype=np.int32)
 
-        for fold_i, (train_idx, test_idx) in enumerate(kf.split(X_in)):
-            X_train, X_test = X_in[train_idx], X_in[test_idx]
-            y_train, y_test = y_in[train_idx], y_in[test_idx]
-            # Apply PCA within fold if requested
-            scaler = StandardScaler()
-            X_train = scaler.fit_transform(X_train)
-            X_test = scaler.transform(X_test)
-            if pca_dim > 0:
-                n_comp = min(pca_dim, X_train.shape[1], X_train.shape[0] - 1)
-                pca = PCA(n_components=n_comp, random_state=seed)
-                X_train = pca.fit_transform(X_train)
-                X_test = pca.transform(X_test)
+        for ri in range(n_repeats):
+            y_pred_repeat = np.zeros(len(y_in), dtype=np.float64)
+            for fold_i in range(cv_folds):
+                idx = ri * cv_folds + fold_i
+                train_idx, test_idx = splits[idx]
+                
+                X_train, X_test = X_in[train_idx], X_in[test_idx]
+                y_train, y_test = y_in[train_idx], y_in[test_idx]
+                
+                # Apply PCA within fold if requested
+                scaler = StandardScaler()
+                X_train = scaler.fit_transform(X_train)
+                X_test = scaler.transform(X_test)
+                if pca_dim > 0:
+                    n_comp = min(pca_dim, X_train.shape[1], X_train.shape[0] - 1)
+                    pca = PCA(n_components=n_comp, random_state=seed)
+                    X_train = pca.fit_transform(X_train)
+                    X_test = pca.transform(X_test)
 
-            # Split train into train/val for early stopping
-            n_train = len(X_train)
-            n_val = max(1, int(n_train * 0.15))
-            val_idx = np.random.RandomState(seed + fold_i).permutation(n_train)[:n_val]
-            tr_idx = np.setdiff1d(np.arange(n_train), val_idx)
+                # Split train into train/val for early stopping
+                n_train = len(X_train)
+                n_val = max(1, int(n_train * 0.15))
+                val_idx = np.random.RandomState(seed + fold_i).permutation(n_train)[:n_val]
+                tr_idx = np.setdiff1d(np.arange(n_train), val_idx)
 
-            xgb = XGBRegressor(
-                n_estimators=args.xgb_n_estimators,
-                max_depth=args.xgb_max_depth,
-                learning_rate=args.xgb_learning_rate,
-                subsample=args.xgb_subsample,
-                colsample_bytree=args.xgb_colsample_bytree,
-                random_state=seed,
-                n_jobs=-1,
-                verbosity=0,
-                early_stopping_rounds=args.xgb_early_stopping,
-                tree_method="hist",
-                device="cuda" if _use_gpu else "cpu",
-            )
-            xgb.fit(
-                X_train[tr_idx], y_train[tr_idx],
-                eval_set=[(X_train[val_idx], y_train[val_idx])],
-                verbose=False,
-            )
-            pred = xgb.predict(X_test)
-            y_pred_sum[test_idx] += pred
-            y_pred_count[test_idx] += 1
+                xgb = XGBRegressor(
+                    n_estimators=args.xgb_n_estimators,
+                    max_depth=args.xgb_max_depth,
+                    learning_rate=args.xgb_learning_rate,
+                    subsample=args.xgb_subsample,
+                    colsample_bytree=args.xgb_colsample_bytree,
+                    gamma=args.xgb_gamma,
+                    min_child_weight=args.xgb_min_child_weight,
+                    reg_lambda=args.xgb_reg_lambda,
+                    reg_alpha=args.xgb_reg_alpha,
+                    random_state=seed,
+                    n_jobs=-1,
+                    verbosity=0,
+                    early_stopping_rounds=args.xgb_early_stopping,
+                    tree_method="hist",
+                    device="cuda" if _use_gpu else "cpu",
+                )
+                xgb.fit(
+                    X_train[tr_idx], y_train[tr_idx],
+                    eval_set=[(X_train[val_idx], y_train[val_idx])],
+                    verbose=False,
+                )
+                pred = xgb.predict(X_test)
+                
+                y_pred_repeat[test_idx] = pred
+                y_pred_sum[test_idx] += pred
 
-            ss_res = np.sum((y_test - pred) ** 2)
-            ss_tot = np.sum((y_test - y_test.mean()) ** 2)
-            fold_r2 = 1.0 - ss_res / max(ss_tot, 1e-12)
-            fold_r2s.append(fold_r2)
+                ss_res = np.sum((y_test - pred) ** 2)
+                ss_tot = np.sum((y_test - y_test.mean()) ** 2)
+                fold_r2 = 1.0 - ss_res / max(ss_tot, 1e-12)
+                fold_r2s.append(fold_r2)
 
-            if log_folds:
-                best_iter = xgb.best_iteration if hasattr(xgb, 'best_iteration') else args.xgb_n_estimators
-                logger.info(f"      Fold {fold_i}: n_train={len(tr_idx)}, "
-                            f"n_val={n_val}, n_test={len(test_idx)}, "
-                            f"R²={fold_r2:.4f}, best_iter={best_iter}")
+                if log_folds:
+                    best_iter = xgb.best_iteration if hasattr(xgb, 'best_iteration') else args.xgb_n_estimators
+                    logger.info(f"      Repeat {ri} Fold {fold_i}: n_train={len(tr_idx)}, "
+                                f"n_val={n_val}, n_test={len(test_idx)}, "
+                                f"R²={fold_r2:.4f}, best_iter={best_iter}")
 
-        y_pred = y_pred_sum / np.maximum(y_pred_count, 1)
-        return np.array(fold_r2s), y_pred
+            # Calculate R2 for this repeat independently
+            ss_res_rep = np.sum((y_in - y_pred_repeat) ** 2)
+            ss_tot_rep = np.sum((y_in - y_in.mean()) ** 2)
+            rep_r2 = 1.0 - ss_res_rep / max(ss_tot_rep, 1e-12)
+            repeat_r2s.append(rep_r2)
+
+        y_pred_avg = y_pred_sum / n_repeats
+        return np.array(fold_r2s), np.array(repeat_r2s), y_pred_avg
 
     # Real run
     logger.info(f"    X shape: {X_v.shape} (XGBoost)" +
                 (f" → PCA {pca_dim}" if pca_dim > 0 else ""))
-    real_scores, y_pred = _cv_pass(X_v, y_v, log_folds=debug)
+    real_fold_scores, real_repeat_scores, y_pred = _cv_pass(X_v, y_v, log_folds=debug)
 
-    # Global R² from concatenated OOS predictions
-    ss_res_global = np.sum((y_v - y_pred) ** 2)
-    ss_tot_global = np.sum((y_v - y_v.mean()) ** 2)
-    r2_global = 1.0 - ss_res_global / max(ss_tot_global, 1e-12)
+    # Use the average of repeat R²s as the primary metric
+    r2_mean = real_repeat_scores.mean()
+    r2_std = real_repeat_scores.std() if n_repeats > 1 else real_fold_scores.std()
 
-    r2_fold_mean = real_scores.mean()
-    r2_fold_std = real_scores.std()
-    r2_mean = r2_global
-    r2_std = r2_fold_std
-
-    logger.info(f"    R² global={r2_global:.4f}, fold_mean={r2_fold_mean:.4f} ± {r2_fold_std:.4f}")
+    logger.info(f"    R² repeats_mean={r2_mean:.4f} ± {r2_std:.4f}, "
+                f"fold_mean={real_fold_scores.mean():.4f}")
 
     # Permutation test — parallelised
     if n_permutations > 0:
@@ -588,53 +627,68 @@ def evaluate_r2_xgboost(X, y, seed, cv_folds, args, n_permutations=0, n_repeats=
             rng_p = np.random.RandomState(perm_seed)
             y_perm = rng_p.permutation(y_v)
             kf_p = _make_kf()
+            splits_p = list(kf_p.split(y_perm))
+            
             fold_r2s_p = []
-            y_pred_sum_p = np.zeros(len(y_v), dtype=np.float64)
-            y_pred_count_p = np.zeros(len(y_v), dtype=np.int32)
-            for fold_i, (train_idx, test_idx) in enumerate(kf_p.split(y_perm)):
-                X_train, X_test = X_v[train_idx].copy(), X_v[test_idx].copy()
-                y_train, y_test = y_perm[train_idx], y_perm[test_idx]
+            repeat_r2s_p = []
+            
+            for ri in range(n_repeats):
+                y_pred_repeat = np.zeros(len(y_v), dtype=np.float64)
+                for fold_i in range(cv_folds):
+                    idx = ri * cv_folds + fold_i
+                    train_idx, test_idx = splits_p[idx]
+                    
+                    X_train, X_test = X_v[train_idx].copy(), X_v[test_idx].copy()
+                    y_train, y_test = y_perm[train_idx], y_perm[test_idx]
 
-                # Match real eval: Scaler + PCA
-                _scaler = StandardScaler()
-                X_train = _scaler.fit_transform(X_train)
-                X_test = _scaler.transform(X_test)
-                if pca_dim > 0:
-                    _n_comp = min(pca_dim, X_train.shape[1], X_train.shape[0] - 1)
-                    _pca = PCA(n_components=_n_comp, random_state=seed)
-                    X_train = _pca.fit_transform(X_train)
-                    X_test = _pca.transform(X_test)
+                    # Match real eval: Scaler + PCA
+                    _scaler = StandardScaler()
+                    X_train = _scaler.fit_transform(X_train)
+                    X_test = _scaler.transform(X_test)
+                    if pca_dim > 0:
+                        _n_comp = min(pca_dim, X_train.shape[1], X_train.shape[0] - 1)
+                        _pca = PCA(n_components=_n_comp, random_state=seed)
+                        X_train = _pca.fit_transform(X_train)
+                        X_test = _pca.transform(X_test)
 
-                n_train = len(X_train)
-                n_val = max(1, int(n_train * 0.15))
-                val_idx = np.random.RandomState(perm_seed + fold_i).permutation(n_train)[:n_val]
-                tr_idx = np.setdiff1d(np.arange(n_train), val_idx)
-                xgb_m = XGBRegressor(
-                    n_estimators=args.xgb_n_estimators,
-                    max_depth=args.xgb_max_depth,
-                    learning_rate=args.xgb_learning_rate,
-                    subsample=args.xgb_subsample,
-                    colsample_bytree=args.xgb_colsample_bytree,
-                    random_state=seed, n_jobs=1, verbosity=0,
-                    early_stopping_rounds=args.xgb_early_stopping,
-                    tree_method="hist",
-                    device="cuda" if _use_gpu else "cpu",
-                )
-                xgb_m.fit(X_train[tr_idx], y_train[tr_idx],
-                          eval_set=[(X_train[val_idx], y_train[val_idx])],
-                          verbose=False)
-                pred = xgb_m.predict(X_test)
-                y_pred_sum_p[test_idx] += pred
-                y_pred_count_p[test_idx] += 1
-                ss_res = np.sum((y_test - pred) ** 2)
-                ss_tot = np.sum((y_test - y_test.mean()) ** 2)
-                fold_r2s_p.append(1.0 - ss_res / max(ss_tot, 1e-12))
-            # Global R² for this permutation
-            y_pred_p = y_pred_sum_p / np.maximum(y_pred_count_p, 1)
-            ss_res_g = np.sum((y_perm - y_pred_p) ** 2)
-            ss_tot_g = np.sum((y_perm - y_perm.mean()) ** 2)
-            global_r2_p = 1.0 - ss_res_g / max(ss_tot_g, 1e-12)
-            return fold_r2s_p, global_r2_p
+                    n_train = len(X_train)
+                    n_val = max(1, int(n_train * 0.15))
+                    val_idx = np.random.RandomState(perm_seed + fold_i).permutation(n_train)[:n_val]
+                    tr_idx = np.setdiff1d(np.arange(n_train), val_idx)
+                    
+                    xgb_m = XGBRegressor(
+                        n_estimators=args.xgb_n_estimators,
+                        max_depth=args.xgb_max_depth,
+                        learning_rate=args.xgb_learning_rate,
+                        subsample=args.xgb_subsample,
+                        colsample_bytree=args.xgb_colsample_bytree,
+                        gamma=args.xgb_gamma,
+                        min_child_weight=args.xgb_min_child_weight,
+                        reg_lambda=args.xgb_reg_lambda,
+                        reg_alpha=args.xgb_reg_alpha,
+                        random_state=seed, n_jobs=1, verbosity=0,
+                        early_stopping_rounds=args.xgb_early_stopping,
+                        tree_method="hist",
+                        device="cuda" if _use_gpu else "cpu",
+                    )
+                    xgb_m.fit(X_train[tr_idx], y_train[tr_idx],
+                              eval_set=[(X_train[val_idx], y_train[val_idx])],
+                              verbose=False)
+                    pred = xgb_m.predict(X_test)
+                    
+                    y_pred_repeat[test_idx] = pred
+                    
+                    ss_res = np.sum((y_test - pred) ** 2)
+                    ss_tot = np.sum((y_test - y_test.mean()) ** 2)
+                    fold_r2s_p.append(1.0 - ss_res / max(ss_tot, 1e-12))
+                    
+                # Compute global R² for THIS permutation repeat
+                ss_res_g = np.sum((y_perm - y_pred_repeat) ** 2)
+                ss_tot_g = np.sum((y_perm - y_perm.mean()) ** 2)
+                repeat_r2s_p.append(1.0 - ss_res_g / max(ss_tot_g, 1e-12))
+                
+            # We use the mean of the repeat R²s as the final R² for this permutation
+            return fold_r2s_p, np.mean(repeat_r2s_p)
 
         perm_seeds = [seed + 10000 + i * 7 for i in range(n_permutations)]
         logger.info(f"    Permutation: {n_permutations} perms × {cv_folds} folds "
@@ -660,7 +714,7 @@ def evaluate_r2_xgboost(X, y, seed, cv_folds, args, n_permutations=0, n_repeats=
     return {
         "r2_mean": r2_mean,
         "r2_std": r2_std,
-        "r2_scores": real_scores.tolist(),
+        "r2_scores": real_fold_scores.tolist(),
         "y_true": y_v,
         "y_pred": y_pred,
         "perm_pval": perm_pval,

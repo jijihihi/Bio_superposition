@@ -46,8 +46,8 @@ MODEL_TAGS = ["Ridge", "XGBoost"]
 # ==============================================================================
 def collect_results(results_dir: str):
     """
-    Scan results_dir for SAE_seed*/ directories.
-    Parses: SAE_seed{N}_{l2label}_{filter_label}
+    Scan results_dir for CNN_seed*/ directories.
+    Parses: CNN_seed{N}_{l2label}_{filter_label}
     Returns agg, per_seed, all_folds.
     """
     agg = defaultdict(list)   # key = (l2_label, filter_label, model, group) → list of r2_mean
@@ -55,7 +55,7 @@ def collect_results(results_dir: str):
     all_folds = []            # every individual fold R²
 
     dir_pattern = re.compile(
-        r"SAE_seed(\d+)_(l2norm|no_l2norm)(?:_(.+))?$"
+        r"CNN_seed(\d+)_(l2norm|no_l2norm)(?:_(.+))?$"
     )
 
     for entry in sorted(os.listdir(results_dir)):
@@ -132,7 +132,7 @@ def collect_results(results_dir: str):
 def print_summary(agg, per_seed):
     """Print summary tables."""
     print("\n" + "=" * 100)
-    print("  SAE VECTOR APOPTOSIS R² SUMMARY (mean ± std across SAE seeds)")
+    print("  SAE VECTOR APOPTOSIS R² SUMMARY (mean ± std across CNN seeds)")
     print("=" * 100)
 
     l2_labels = sorted(set(k[0] for k in agg.keys()))
@@ -383,7 +383,7 @@ def save_csvs(results_dir, agg, per_seed, all_folds, ci_results, wilcoxon_result
     )
     with open(csv_path, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["SAE_Seed", "GAP_L2_Norm", "Filter", "Model",
+        w.writerow(["CNN_Seed", "GAP_L2_Norm", "Filter", "Model",
                      "Group", "R2_mean", "R2_std", "Perm_pval",
                      "R2_fold_scores"])
         for r in rows_sorted:
@@ -403,7 +403,7 @@ def save_csvs(results_dir, agg, per_seed, all_folds, ci_results, wilcoxon_result
     )
     with open(folds_csv, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["SAE_Seed", "GAP_L2_Norm", "Filter", "Model",
+        w.writerow(["CNN_Seed", "GAP_L2_Norm", "Filter", "Model",
                      "Group", "Fold_idx", "R2"])
         for r in folds_sorted:
             w.writerow([
@@ -532,7 +532,7 @@ def plot_paired_comparison(per_seed, results_dir):
                 ax.grid(True, alpha=0.2, axis="y")
                 ax.legend(fontsize=9)
 
-            fig.suptitle("SAE Vector: GAP L2 Norm Effect (Paired by SAE Seed)",
+            fig.suptitle("SAE Vector: GAP L2 Norm Effect (Paired by CNN Seed)",
                          fontsize=14, fontweight="bold", y=1.02)
             fig.tight_layout()
             safe = f"paired_{model}_{filt}".replace(" ", "_")
@@ -635,7 +635,7 @@ def print_wilcoxon_results(wilcoxon_results):
 
     print("\n" + "=" * 100)
     print("  WILCOXON SIGNED-RANK TEST: GAP L2 norm ON vs OFF")
-    print("  (paired by SAE seed × fold index)")
+    print("  (paired by CNN seed × fold index)")
     print("=" * 100)
 
     for r in wilcoxon_results:

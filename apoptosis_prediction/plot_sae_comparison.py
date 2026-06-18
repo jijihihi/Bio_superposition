@@ -53,7 +53,7 @@ def read_sae_all_folds(csv_path):
         reader = csv.DictReader(f)
         for row in reader:
             rows.append({
-                "sae_seed": int(row["SAE_Seed"]),
+                "sae_seed": int(row["CNN_Seed"]),
                 "l2_norm": row["GAP_L2_Norm"],
                 "filter": row["Filter"],
                 "model": row["Model"],
@@ -421,7 +421,7 @@ def plot_l2norm_effect(folds, results_dir, model="XGBoost", filter_label=None):
     print(f"\n  Saved L2 norm effect: {base}.[pdf|png|svg]")
 
     # Print summary
-    print(f"\n  Wilcoxon Signed-Rank Test (paired by SAE_seed × fold_idx):")
+    print(f"\n  Wilcoxon Signed-Rank Test (paired by CNN_seed × fold_idx):")
     print(f"  {'Gene':6s}  {'N pairs':>8s}  {'L2 OFF':>8s}  {'L2 ON':>8s}  "
           f"{'p-value':>10s}  {'Sig':>5s}")
     print("  " + "-" * 55)

@@ -34,10 +34,10 @@ sns.set_style("ticks")
 
 # ── Visual config ──
 COLORS = {
-    "stage5_mid": "#88BEDC",     # soft sky blue
-    "stage5_out": "#3A7EBF",     # medium blue
-    "refine_out": "#1B4876",     # deep navy
-    "SAE":        "#E8833A",     # warm orange
+    "stage5_mid": "#f3c88e",     # lighter orange (mid)
+    "stage5_out": "#e7a350",     # base orange (out)
+    "refine_out": "#ad6d21",     # darker orange (refine)
+    "SAE":        "#a37597",     # SAE purple
 }
 
 MARKERS = {
@@ -57,8 +57,8 @@ DISPLAY_NAMES = {
 # 3 conditions only
 CONDITIONS = [
     ("Raw (no PCA)",   "raw",       "raw",      "unfiltered"),
-    ("PCA 250",        "pca50",     "pca",      "unfiltered"),
-    ("PCA 250 (std)",  "pca50_std", "norm_pca", "unfiltered"),
+    ("PCA 250",        "pca250",     "pca",      "unfiltered"),
+    ("PCA 250 (std)",  "pca250_std", "norm_pca", "unfiltered"),
 ]
 
 CNN_LAYERS = ["stage5_mid", "stage5_out", "refine_out"]
@@ -81,8 +81,8 @@ def get_args():
 # JSON scanning — handles both old and new directory structures
 # ==============================================================================
 def scan_jsons_for_layer(base_dir, layer, subdir):
-    """Scan {base_dir}/{layer}/{subdir}/**/effective_rank_results.json"""
-    search_dir = os.path.join(base_dir, layer, subdir)
+    """Scan {base_dir}/{subdir}/{layer}/**/effective_rank_results.json"""
+    search_dir = os.path.join(base_dir, subdir, layer)
     pattern = os.path.join(search_dir, "**", "effective_rank_results.json")
     results = []
     for jpath in glob.glob(pattern, recursive=True):
@@ -169,16 +169,13 @@ def collect_all_erank(base_dir, subdir, cond_key, filter_key):
         if cnn_vals:
             all_erank[layer] = dict(cnn_vals)
 
-    # SAE (only under stage5_out, deduplicated)
-    sae_jsons = scan_jsons_for_layer(base_dir, "stage5_out", subdir)
-    # Filter to SAE paths only (contain "sae" in path)
-    sae_jsons_only = [(p, d) for p, d in sae_jsons
-                      if "/sae/" in p.replace("\\", "/")]
-    if sae_jsons_only:
-        sae_vals = extract_sae_erank_deduped(sae_jsons_only, cond_key,
-                                             filter_key)
-        if sae_vals:
-            all_erank["SAE"] = dict(sae_vals)
+    # SAE
+    sae_jsons = scan_jsons_for_layer(base_dir, "SAE", subdir)
+    sae_data = [jd for _, jd in sae_jsons]
+    sae_vals = extract_erank_values(sae_data, cond_key, filter_key,
+                                    source_filter="SAE")
+    if sae_vals:
+        all_erank["SAE"] = dict(sae_vals)
 
     return all_erank
 
@@ -191,7 +188,10 @@ def plot_single_condition(all_erank, cond_label, mutations, out_dir, dpi):
     n_groups = len(GROUP_KEYS)
     n_muts = len(mutations)
 
-    fig, ax = plt.subplots(figsize=(6.5, 5.0))
+    # Exact 63mm x 33mm size (2.48 in x 1.30 in)
+    width_in = 63.0 / 25.4
+    height_in = 33.0 / 25.4
+    fig, ax = plt.subplots(figsize=(width_in, height_in))
 
     bar_width = 0.18
     x = np.arange(n_muts)
@@ -225,25 +225,34 @@ def plot_single_condition(all_erank, cond_label, mutations, out_dir, dpi):
 
         ax.bar(x + offset, means, bar_width,
                color=color, alpha=0.78,
-               edgecolor="white", linewidth=0.8,
+               edgecolor="white", linewidth=0.3,
                label=display, zorder=2)
         ax.errorbar(x + offset, means, yerr=sems,
-                    fmt="none", ecolor="#333333", elinewidth=1.2,
-                    capsize=3.5, capthick=1.0, zorder=3)
+                    fmt="none", ecolor="#333333", elinewidth=0.6,
+                    capsize=1.5, capthick=0.6, zorder=3)
         ax.scatter(scatter_x, scatter_y,
-                   color=color, alpha=0.55, s=24,
-                   edgecolors="black", linewidths=0.4,
+                   color=color, alpha=0.55, s=4,
+                   edgecolors="black", linewidths=0.15,
                    marker=marker, zorder=4)
 
     ax.set_xticks(x)
-    ax.set_xticklabels(mutations, fontsize=13, fontweight="bold")
-    ax.set_ylabel("Effective Rank", fontsize=13)
-    ax.set_title(cond_label, fontsize=14, fontweight="bold", pad=10)
-    ax.legend(fontsize=9, framealpha=0.85, loc="best")
-    ax.grid(True, alpha=0.15, axis="y")
+    ax.set_xticklabels(mutations, fontsize=7, fontweight="bold")
+    ax.set_ylabel("Effective Rank", fontsize=7)
+    ax.set_title(cond_label, fontsize=8, fontweight="bold", pad=4)
+    ax.tick_params(axis='both', which='major', labelsize=6, pad=1, length=2)
+    ax.legend(fontsize=5, framealpha=0.85, loc="upper left", bbox_to_anchor=(1.02, 1.0),
+              borderpad=0.2, handletextpad=0.2, labelspacing=0.2)
+    ax.grid(True, alpha=0.12, axis="y", linewidth=0.3)
+    
+    # Tick intervals: 400 for raw, 50 for PCA / PCA std
+    if "raw" in cond_label.lower():
+        ax.yaxis.set_major_locator(plt.MultipleLocator(400))
+    else:
+        ax.yaxis.set_major_locator(plt.MultipleLocator(50))
+        
     ax.set_ylim(bottom=0)
     sns.despine()
-    fig.tight_layout()
+    # No tight_layout to prevent breaking exact axes aspect ratios; let savefig clip/adjust.
 
     safe_name = (cond_label.lower()
                  .replace(" ", "_").replace("(", "").replace(")", "")
@@ -267,7 +276,10 @@ def plot_combined_3panel(all_cond_data, mutations, out_dir, dpi):
     bar_width = 0.18
     x = np.arange(n_muts)
 
-    fig, axes = plt.subplots(1, n_panels, figsize=(6.0 * n_panels, 5.2),
+    # 3 subplots of 63mm x 33mm side by side (189mm x 33mm total size)
+    width_in = (63.0 * n_panels) / 25.4
+    height_in = 33.0 / 25.4
+    fig, axes = plt.subplots(1, n_panels, figsize=(width_in, height_in),
                              sharey=False)
     if n_panels == 1:
         axes = [axes]
@@ -304,33 +316,41 @@ def plot_combined_3panel(all_cond_data, mutations, out_dir, dpi):
 
             ax.bar(x + offset, means, bar_width,
                    color=color, alpha=0.78,
-                   edgecolor="white", linewidth=0.8,
+                   edgecolor="white", linewidth=0.3,
                    label=display if ax_idx == 0 else "",
                    zorder=2)
             ax.errorbar(x + offset, means, yerr=sems,
-                        fmt="none", ecolor="#333333", elinewidth=1.0,
-                        capsize=2.5, capthick=0.8, zorder=3)
+                        fmt="none", ecolor="#333333", elinewidth=0.6,
+                        capsize=1.5, capthick=0.6, zorder=3)
             ax.scatter(scatter_x, scatter_y,
-                       color=color, alpha=0.5, s=18,
-                       edgecolors="black", linewidths=0.3,
+                       color=color, alpha=0.5, s=4,
+                       edgecolors="black", linewidths=0.15,
                        marker=marker, zorder=4)
 
         ax.set_xticks(x)
-        ax.set_xticklabels(mutations, fontsize=12, fontweight="bold")
-        ax.set_title(cond_label, fontsize=13, fontweight="bold")
-        ax.grid(True, alpha=0.12, axis="y")
+        ax.set_xticklabels(mutations, fontsize=7, fontweight="bold")
+        ax.set_title(cond_label, fontsize=8, fontweight="bold")
+        ax.tick_params(axis='both', which='major', labelsize=6, pad=1, length=2)
+        ax.grid(True, alpha=0.12, axis="y", linewidth=0.3)
+        
+        # Tick intervals inside subplot
+        if "raw" in cond_label.lower():
+            ax.yaxis.set_major_locator(plt.MultipleLocator(400))
+        else:
+            ax.yaxis.set_major_locator(plt.MultipleLocator(50))
+            
         ax.set_ylim(bottom=0)
         if ax_idx == 0:
-            ax.set_ylabel("Effective Rank", fontsize=13)
+            ax.set_ylabel("Effective Rank", fontsize=7)
         sns.despine(ax=ax)
 
     # Shared legend at top
     handles, labels = axes[0].get_legend_handles_labels()
     fig.legend(handles, labels, loc="upper center",
-               ncol=n_groups, fontsize=10, framealpha=0.9,
-               bbox_to_anchor=(0.5, 1.02))
+               ncol=n_groups, fontsize=6, framealpha=0.9,
+               bbox_to_anchor=(0.5, 1.05), handletextpad=0.2, columnspacing=0.6)
 
-    fig.tight_layout(rect=[0, 0, 1, 0.93])
+    fig.tight_layout(rect=[0, 0, 1, 0.90])
 
     fname = "erank_bar_3panel_layers"
     for ext in [".png", ".svg"]:
