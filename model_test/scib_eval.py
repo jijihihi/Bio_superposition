@@ -31,29 +31,30 @@
 
 # All representation quality metrics were computed in the original feature space without dimensionality reduction to avoid distortion of the intrinsic structure
 
-import os
-import sys
+import argparse
 import csv
 import json
-import argparse
 import logging
-import numpy as np
+import os
+import sys
 
 import matplotlib
+import numpy as np
+
 _IN_COLAB = "google.colab" in sys.modules
 if not _IN_COLAB:
     matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-from sae_project.step02_logging_utils import get_logger, SUPERCLASS_MAP
 from apoptosis_prediction.local_knn_std import load_cache
+from sae_project.step02_logging_utils import SUPERCLASS_MAP, get_logger
 
 logger = get_logger("scib_eval")
 
-plt.rcParams['svg.fonttype'] = 'none'
-plt.rcParams['pdf.fonttype'] = 42
-plt.rcParams['font.family'] = 'sans-serif'
+plt.rcParams["svg.fonttype"] = "none"
+plt.rcParams["pdf.fonttype"] = 42
+plt.rcParams["font.family"] = "sans-serif"
 sns.set_style("ticks")
 
 CLASS_NAMES = {0: "Control", 1: "SNCA", 2: "GBA", 3: "LRRK2"}
@@ -65,32 +66,58 @@ SUPERCLASS_TO_INT = {"Control": 0, "SNCA": 1, "GBA": 2, "LRRK2": 3}
 # ==============================================================================
 def get_args():
     p = argparse.ArgumentParser(
-        description="scib-based representation quality evaluation (CNN vs SAE)")
+        description="scib-based representation quality evaluation (CNN vs SAE)"
+    )
 
     # Data
-    p.add_argument("--cnn_cache", type=str, default="",
-                   help="Path to CNN GAP .npz cache")
-    p.add_argument("--sae_cache", type=str, default="",
-                   help="Path to SAE .npz cache")
-    p.add_argument("--split_dir", type=str, default="",
-                   help="Directory with train/val/test_split.csv "
-                        "(for test-only evaluation). If empty, use all data.")
+    p.add_argument(
+        "--cnn_cache", type=str, default="", help="Path to CNN GAP .npz cache"
+    )
+    p.add_argument("--sae_cache", type=str, default="", help="Path to SAE .npz cache")
+    p.add_argument(
+        "--split_dir",
+        type=str,
+        default="",
+        help="Directory with train/val/test_split.csv "
+        "(for test-only evaluation). If empty, use all data.",
+    )
     p.add_argument("--dead_threshold", type=float, default=1e-5)
-    p.add_argument("--gap_l2_norm", action="store_true",
-                   help="L2 normalize feature vectors")
-    p.add_argument("--label", type=str, default="",
-                   help="Custom label for this run (e.g. 'stage5_out', 'seed87')")
+    p.add_argument(
+        "--gap_l2_norm", action="store_true", help="L2 normalize feature vectors"
+    )
+    p.add_argument(
+        "--label",
+        type=str,
+        default="",
+        help="Custom label for this run (e.g. 'stage5_out', 'seed87')",
+    )
 
     # scib parameters
-    p.add_argument("--n_neighbors", type=int, default=15,
-                   help="Number of neighbors for KNN graph (scanpy). Default: 15")
-    p.add_argument("--leiden_resolutions", type=float, nargs="+",
-                   default=[0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
-                   help="Leiden resolutions to sweep for optimal NMI/ARI")
-    p.add_argument("--n_pcs", type=int, default=50,
-                   help="Number of PCs for neighbor graph. 0 = use raw features.")
-    p.add_argument("--samples_per_class", type=int, default=0,
-                   help="Max samples per class (0 = use ALL). Default: 0")
+    p.add_argument(
+        "--n_neighbors",
+        type=int,
+        default=15,
+        help="Number of neighbors for KNN graph (scanpy). Default: 15",
+    )
+    p.add_argument(
+        "--leiden_resolutions",
+        type=float,
+        nargs="+",
+        default=[0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
+        help="Leiden resolutions to sweep for optimal NMI/ARI",
+    )
+    p.add_argument(
+        "--n_pcs",
+        type=int,
+        default=50,
+        help="Number of PCs for neighbor graph. 0 = use raw features.",
+    )
+    p.add_argument(
+        "--samples_per_class",
+        type=int,
+        default=0,
+        help="Max samples per class (0 = use ALL). Default: 0",
+    )
 
     # Output
     p.add_argument("--output_dir", type=str, default="")
@@ -183,7 +210,7 @@ def _compute_clisi_python(adata, label_key, n_neighbors):
         counts = np.bincount(neighbor_labels, minlength=n_labels)
         p = counts / counts.sum()
         # Inverse Simpson's Index: 1 / Σ(p²)
-        simpson = np.sum(p ** 2)
+        simpson = np.sum(p**2)
         lisi_values[i] = 1.0 / max(simpson, 1e-12)
 
     median_lisi = np.median(lisi_values)
@@ -192,8 +219,10 @@ def _compute_clisi_python(adata, label_key, n_neighbors):
     clisi_score = 1.0 - (median_lisi - 1.0) / max(n_labels - 1.0, 1e-12)
     clisi_score = np.clip(clisi_score, 0.0, 1.0)
 
-    logger.info(f"    LISI median={median_lisi:.4f}, "
-                f"n_labels={n_labels}, scaled={clisi_score:.4f}")
+    logger.info(
+        f"    LISI median={median_lisi:.4f}, "
+        f"n_labels={n_labels}, scaled={clisi_score:.4f}"
+    )
 
     return clisi_score
 
@@ -201,8 +230,9 @@ def _compute_clisi_python(adata, label_key, n_neighbors):
 # ==============================================================================
 # Compute all scib metrics
 # ==============================================================================
-def compute_scib_metrics(adata, n_neighbors=15, n_pcs=50,
-                         leiden_resolutions=None, seed=42):
+def compute_scib_metrics(
+    adata, n_neighbors=15, n_pcs=50, leiden_resolutions=None, seed=42
+):
     """Compute bio-conservation scib metrics.
 
     Returns
@@ -233,8 +263,7 @@ def compute_scib_metrics(adata, n_neighbors=15, n_pcs=50,
     adata.obsm["X_emb"] = adata.obsm[embed_key].copy()
 
     # ── 2. Neighbor graph ──
-    sc.pp.neighbors(adata, n_neighbors=n_neighbors, use_rep=use_rep,
-                    random_state=seed)
+    sc.pp.neighbors(adata, n_neighbors=n_neighbors, use_rep=use_rep, random_state=seed)
     logger.info(f"    KNN graph: n_neighbors={n_neighbors}")
 
     # ── 3. ASW (Cell type Silhouette) ──
@@ -251,13 +280,29 @@ def compute_scib_metrics(adata, n_neighbors=15, n_pcs=50,
     # inflation from over-clustering (e.g., 100 clusters with 4 labels).
     # Allowed range: [n_labels - 1, n_labels + 2]
     if leiden_resolutions is None:
-        leiden_resolutions = [0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+        leiden_resolutions = [
+            0.05,
+            0.1,
+            0.15,
+            0.2,
+            0.25,
+            0.3,
+            0.4,
+            0.5,
+            0.6,
+            0.7,
+            0.8,
+            0.9,
+            1.0,
+        ]
 
     n_true_labels = len(adata.obs[label_key].unique())
     cluster_min = max(2, n_true_labels - 1)  # e.g., 3 for 4 classes
-    cluster_max = n_true_labels * 3.5           # e.g., 14 for 4 classes
-    logger.info(f"    True labels: {n_true_labels}, "
-                f"allowed n_clusters: [{cluster_min}, {cluster_max}]")
+    cluster_max = n_true_labels * 3.5  # e.g., 14 for 4 classes
+    logger.info(
+        f"    True labels: {n_true_labels}, "
+        f"allowed n_clusters: [{cluster_min}, {cluster_max}]"
+    )
 
     # Track both constrained and unconstrained best
     best_nmi_c, best_ari_c, best_res_c, best_nc_c = -1, -1, None, 0
@@ -267,25 +312,35 @@ def compute_scib_metrics(adata, n_neighbors=15, n_pcs=50,
     for res in leiden_resolutions:
         cluster_key = f"leiden_{res}"
         try:
-            sc.tl.leiden(adata, resolution=res, key_added=cluster_key,
-                         flavor="igraph", n_iterations=2,
-                         random_state=seed)
+            sc.tl.leiden(
+                adata,
+                resolution=res,
+                key_added=cluster_key,
+                flavor="igraph",
+                n_iterations=2,
+                random_state=seed,
+            )
             n_clusters = len(adata.obs[cluster_key].unique())
 
-            nmi = scib.me.nmi(adata, cluster_key=cluster_key,
-                              label_key=label_key)
-            ari = scib.me.ari(adata, cluster_key=cluster_key,
-                              label_key=label_key)
+            nmi = scib.me.nmi(adata, cluster_key=cluster_key, label_key=label_key)
+            ari = scib.me.ari(adata, cluster_key=cluster_key, label_key=label_key)
 
             in_range = cluster_min <= n_clusters <= cluster_max
             tag = " ✓" if in_range else ""
-            logger.info(f"    Leiden res={res:.2f}: "
-                        f"n_clusters={n_clusters}, "
-                        f"NMI={nmi:.4f}, ARI={ari:.4f}{tag}")
-            all_leiden.append({
-                "res": res, "n_clusters": n_clusters,
-                "nmi": nmi, "ari": ari, "in_range": in_range,
-            })
+            logger.info(
+                f"    Leiden res={res:.2f}: "
+                f"n_clusters={n_clusters}, "
+                f"NMI={nmi:.4f}, ARI={ari:.4f}{tag}"
+            )
+            all_leiden.append(
+                {
+                    "res": res,
+                    "n_clusters": n_clusters,
+                    "nmi": nmi,
+                    "ari": ari,
+                    "in_range": in_range,
+                }
+            )
 
             # Unconstrained best (for reference)
             if nmi > best_nmi_u:
@@ -306,33 +361,45 @@ def compute_scib_metrics(adata, n_neighbors=15, n_pcs=50,
         results["ari"] = float(best_ari_c)
         results["best_resolution"] = best_res_c
         results["n_clusters"] = best_nc_c
-        logger.info(f"    Constrained best: res={best_res_c:.2f}, "
-                    f"n_clusters={best_nc_c}, "
-                    f"NMI={best_nmi_c:.4f}, ARI={best_ari_c:.4f}")
+        logger.info(
+            f"    Constrained best: res={best_res_c:.2f}, "
+            f"n_clusters={best_nc_c}, "
+            f"NMI={best_nmi_c:.4f}, ARI={best_ari_c:.4f}"
+        )
     else:
         # Fallback: no resolution gave clusters in range
-        logger.warning(f"    No resolution produced {cluster_min}-{cluster_max} "
-                       f"clusters. Using unconstrained best.")
+        logger.warning(
+            f"    No resolution produced {cluster_min}-{cluster_max} "
+            f"clusters. Using unconstrained best."
+        )
         results["nmi"] = float(best_nmi_u) if best_nmi_u >= 0 else float("nan")
         results["ari"] = float(best_ari_u) if best_ari_u >= 0 else float("nan")
         results["best_resolution"] = best_res_u
         results["n_clusters"] = best_nc_u
 
     # Also store unconstrained for transparency
-    results["nmi_unconstrained"] = float(best_nmi_u) if best_nmi_u >= 0 else float("nan")
-    results["ari_unconstrained"] = float(best_ari_u) if best_ari_u >= 0 else float("nan")
+    results["nmi_unconstrained"] = (
+        float(best_nmi_u) if best_nmi_u >= 0 else float("nan")
+    )
+    results["ari_unconstrained"] = (
+        float(best_ari_u) if best_ari_u >= 0 else float("nan")
+    )
     results["n_clusters_unconstrained"] = best_nc_u
     results["cluster_constraint"] = f"[{cluster_min}, {cluster_max}]"
 
     if best_nmi_u >= 0 and best_nmi_c >= 0:
         nmi_diff = best_nmi_u - best_nmi_c
         if nmi_diff > 0.05:
-            logger.info(f"    ⚠ Unconstrained NMI={best_nmi_u:.4f} (nc={best_nc_u}) "
-                        f"vs constrained NMI={best_nmi_c:.4f} (nc={best_nc_c}) — "
-                        f"Δ={nmi_diff:.4f} confirms over-clustering inflation")
+            logger.info(
+                f"    ⚠ Unconstrained NMI={best_nmi_u:.4f} (nc={best_nc_u}) "
+                f"vs constrained NMI={best_nmi_c:.4f} (nc={best_nc_c}) — "
+                f"Δ={nmi_diff:.4f} confirms over-clustering inflation"
+            )
         else:
-            logger.info(f"    Unconstrained NMI={best_nmi_u:.4f} vs "
-                        f"constrained NMI={best_nmi_c:.4f} — Δ={nmi_diff:.4f} (minimal)")
+            logger.info(
+                f"    Unconstrained NMI={best_nmi_u:.4f} vs "
+                f"constrained NMI={best_nmi_c:.4f} — Δ={nmi_diff:.4f} (minimal)"
+            )
     results["leiden_sweep"] = all_leiden
 
     # ── 5. cLISI (cell-type LISI) ──
@@ -383,8 +450,15 @@ def plot_scib_comparison(all_results, out_dir, dpi=200):
     n_metrics = len(metrics_to_plot)
 
     # Color palette
-    palette = ["#3A7EBF", "#E8833A", "#88BEDC", "#1B4876",
-               "#55A868", "#C44E52", "#8172B2"]
+    palette = [
+        "#3A7EBF",
+        "#E8833A",
+        "#88BEDC",
+        "#1B4876",
+        "#55A868",
+        "#C44E52",
+        "#8172B2",
+    ]
 
     fig, ax = plt.subplots(figsize=(3.0 + n_metrics * 1.5, 5.5))
 
@@ -396,25 +470,37 @@ def plot_scib_comparison(all_results, out_dir, dpi=200):
         vals = [all_results[source].get(m, 0) for m in metrics_to_plot]
         color = palette[si % len(palette)]
 
-        bars = ax.bar(x + offset, vals, bar_width,
-                      color=color, alpha=0.8,
-                      edgecolor="white", linewidth=0.8,
-                      label=source, zorder=2)
+        bars = ax.bar(
+            x + offset,
+            vals,
+            bar_width,
+            color=color,
+            alpha=0.8,
+            edgecolor="white",
+            linewidth=0.8,
+            label=source,
+            zorder=2,
+        )
 
         # Value labels
         for bar, v in zip(bars, vals):
             if not np.isnan(v) and v > 0:
-                ax.text(bar.get_x() + bar.get_width() / 2,
-                        bar.get_height() + 0.01,
-                        f"{v:.3f}", ha="center", va="bottom",
-                        fontsize=7.5, fontweight="bold")
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2,
+                    bar.get_height() + 0.01,
+                    f"{v:.3f}",
+                    ha="center",
+                    va="bottom",
+                    fontsize=7.5,
+                    fontweight="bold",
+                )
 
     ax.set_xticks(x)
-    ax.set_xticklabels([metric_labels[m] for m in metrics_to_plot],
-                       fontsize=10)
+    ax.set_xticklabels([metric_labels[m] for m in metrics_to_plot], fontsize=10)
     ax.set_ylabel("Score", fontsize=12)
-    ax.set_title("scib Representation Quality Metrics",
-                 fontsize=14, fontweight="bold", pad=10)
+    ax.set_title(
+        "scib Representation Quality Metrics", fontsize=14, fontweight="bold", pad=10
+    )
     ax.legend(fontsize=9, framealpha=0.85, loc="best")
     ax.grid(True, alpha=0.15, axis="y")
     ax.set_ylim(0, 1.12)
@@ -423,8 +509,7 @@ def plot_scib_comparison(all_results, out_dir, dpi=200):
 
     fname = "scib_comparison"
     for ext in [".png", ".svg"]:
-        fig.savefig(os.path.join(out_dir, fname + ext),
-                    dpi=dpi, bbox_inches="tight")
+        fig.savefig(os.path.join(out_dir, fname + ext), dpi=dpi, bbox_inches="tight")
     logger.info(f"  Saved: {fname}.png/.svg")
 
     if _IN_COLAB:
@@ -435,8 +520,9 @@ def plot_scib_comparison(all_results, out_dir, dpi=200):
 # ==============================================================================
 # Load and preprocess cache
 # ==============================================================================
-def load_and_preprocess(cache_path, dead_threshold, gap_l2_norm,
-                        samples_per_class=0, seed=42):
+def load_and_preprocess(
+    cache_path, dead_threshold, gap_l2_norm, samples_per_class=0, seed=42
+):
     """Load cache, apply L2 norm, subsample.
 
     Returns: X, superclasses (list[str]), source_label
@@ -464,8 +550,7 @@ def load_and_preprocess(cache_path, dead_threshold, gap_l2_norm,
         keep = sorted(keep)
         X = X[keep]
         superclasses = [superclasses[i] for i in keep]
-        logger.info(f"  Subsampled: {len(keep)} total "
-                    f"({samples_per_class}/class)")
+        logger.info(f"  Subsampled: {len(keep)} total " f"({samples_per_class}/class)")
 
     logger.info(f"  Features: {X.shape}, classes: {np.unique(superclasses)}")
     return X, superclasses, source_label
@@ -495,16 +580,24 @@ def main():
     if args.cnn_cache:
         logger.info(f"\nLoading CNN cache: {args.cnn_cache}")
         X_cnn, sc_cnn, _ = load_and_preprocess(
-            args.cnn_cache, args.dead_threshold, args.gap_l2_norm,
-            args.samples_per_class, args.seed)
+            args.cnn_cache,
+            args.dead_threshold,
+            args.gap_l2_norm,
+            args.samples_per_class,
+            args.seed,
+        )
         cnn_label = f"CNN ({args.label})" if args.label else "CNN"
         sources[cnn_label] = (X_cnn, sc_cnn)
 
     if args.sae_cache:
         logger.info(f"\nLoading SAE cache: {args.sae_cache}")
         X_sae, sc_sae, _ = load_and_preprocess(
-            args.sae_cache, args.dead_threshold, False,  # SAE는 GAP L2 norm 안 함
-            args.samples_per_class, args.seed)
+            args.sae_cache,
+            args.dead_threshold,
+            False,  # SAE는 GAP L2 norm 안 함
+            args.samples_per_class,
+            args.seed,
+        )
         sae_label = f"SAE ({args.label})" if args.label else "SAE"
         sources[sae_label] = (X_sae, sc_sae)
 
@@ -548,34 +641,50 @@ def main():
     csv_path = os.path.join(out_dir, "scib_results.csv")
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(["source", "asw", "nmi", "ari", "clisi",
-                         "graph_conn", "best_resolution", "n_clusters",
-                         "n_samples", "n_features"])
+        writer.writerow(
+            [
+                "source",
+                "asw",
+                "nmi",
+                "ari",
+                "clisi",
+                "graph_conn",
+                "best_resolution",
+                "n_clusters",
+                "n_samples",
+                "n_features",
+            ]
+        )
         for label, m in all_results.items():
-            writer.writerow([
-                label,
-                f"{m.get('asw', 'nan'):.4f}",
-                f"{m.get('nmi', 'nan'):.4f}",
-                f"{m.get('ari', 'nan'):.4f}",
-                f"{m.get('clisi', 'nan'):.4f}",
-                f"{m.get('graph_conn', 'nan'):.4f}",
-                m.get("best_resolution", ""),
-                m.get("n_clusters", ""),
-                m.get("n_samples", ""),
-                m.get("n_features", ""),
-            ])
+            writer.writerow(
+                [
+                    label,
+                    f"{m.get('asw', 'nan'):.4f}",
+                    f"{m.get('nmi', 'nan'):.4f}",
+                    f"{m.get('ari', 'nan'):.4f}",
+                    f"{m.get('clisi', 'nan'):.4f}",
+                    f"{m.get('graph_conn', 'nan'):.4f}",
+                    m.get("best_resolution", ""),
+                    m.get("n_clusters", ""),
+                    m.get("n_samples", ""),
+                    m.get("n_features", ""),
+                ]
+            )
     logger.info(f"Saved CSV: {csv_path}")
 
     # ── Summary ──
     logger.info(f"\n{'='*70}")
-    logger.info(f"  {'Source':25s}  {'ASW':>7s}  {'NMI':>7s}  {'ARI':>7s}  "
-                f"{'cLISI':>7s}  {'GConn':>7s}")
+    logger.info(
+        f"  {'Source':25s}  {'ASW':>7s}  {'NMI':>7s}  {'ARI':>7s}  "
+        f"{'cLISI':>7s}  {'GConn':>7s}"
+    )
     logger.info(f"  {'─'*65}")
     for label, m in all_results.items():
         logger.info(
             f"  {label:25s}  {m.get('asw',0):7.4f}  {m.get('nmi',0):7.4f}  "
             f"{m.get('ari',0):7.4f}  {m.get('clisi',0):7.4f}  "
-            f"{m.get('graph_conn',0):7.4f}")
+            f"{m.get('graph_conn',0):7.4f}"
+        )
     logger.info(f"{'='*70}")
     logger.info(f"  Output: {out_dir}")
     logger.info(f"{'='*70}")

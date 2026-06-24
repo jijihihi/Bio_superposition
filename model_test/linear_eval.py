@@ -25,16 +25,17 @@
 
 # CNN gap L2 norm 해서 평가한다. ####
 
-import os
-import sys
+import argparse
 import csv
 import json
-import random
-import argparse
 import logging
-from typing import List, Tuple, Dict
+import os
+import random
+import sys
 from collections import defaultdict
+from typing import Dict, List, Tuple
 
+import matplotlib
 import numpy as np
 import torch
 import torch.nn as nn
@@ -43,23 +44,21 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
-import matplotlib
 _IN_COLAB = "google.colab" in sys.modules
 if not _IN_COLAB:
     matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from sae_project.step02_logging_utils import get_logger
-from sae_project.step03_data_shards import load_all_sample_refs, build_uid_to_refidx
-from sae_project.step04_data_bank import (
-    InMemoryTarBank, InMemorySixteenBitDataset,
-    seed_worker, collate_skip_none,
-)
-from sae_project.step05_model_encoder import (
-    Encoder, SupMoCoModel, parse_int_list,
-    renorm_unit_per_out_channel_, robust_load_state_dict,
-)
-from sae_project.step02_logging_utils import OUT_DIM
+from sae_project.step02_logging_utils import OUT_DIM, get_logger
+from sae_project.step03_data_shards import (build_uid_to_refidx,
+                                            load_all_sample_refs)
+from sae_project.step04_data_bank import (InMemorySixteenBitDataset,
+                                          InMemoryTarBank, collate_skip_none,
+                                          seed_worker)
+from sae_project.step05_model_encoder import (Encoder, SupMoCoModel,
+                                              parse_int_list,
+                                              renorm_unit_per_out_channel_,
+                                              robust_load_state_dict)
 
 logger = get_logger("linear_eval")
 
@@ -83,9 +82,9 @@ def load_split_csv(csv_path: str) -> List[str]:
 # Feature extraction (frozen encoder)
 # ==============================================================================
 @torch.no_grad()
-def extract_features(encoder: nn.Module, loader: DataLoader,
-                     device: torch.device, use_bf16: bool = True
-                     ) -> Tuple[np.ndarray, np.ndarray]:
+def extract_features(
+    encoder: nn.Module, loader: DataLoader, device: torch.device, use_bf16: bool = True
+) -> Tuple[np.ndarray, np.ndarray]:
     """Extract L2-normalized GAP features from frozen encoder."""
     encoder.eval()
     autocast_kwargs = dict(device_type="cuda", enabled=torch.cuda.is_available())
@@ -100,7 +99,8 @@ def extract_features(encoder: nn.Module, loader: DataLoader,
         if x.numel() < 1:
             continue
         x = x.to(device, non_blocking=True).contiguous(
-            memory_format=torch.channels_last)
+            memory_format=torch.channels_last
+        )
         with torch.amp.autocast(**autocast_kwargs):
             feat = encoder(x)
         feat = F.normalize(feat, dim=1)
@@ -115,14 +115,19 @@ def extract_features(encoder: nn.Module, loader: DataLoader,
 # ==============================================================================
 # Linear probe training (SGD, no data leakage)
 # ==============================================================================
-def train_linear_probe(X_train: np.ndarray, y_train: np.ndarray,
-                       X_test: np.ndarray, y_test: np.ndarray,
-                       num_classes: int = 4,
-                       lr: float = 0.1, momentum: float = 0.9,
-                       weight_decay: float = 1e-4,
-                       epochs: int = 50, batch_size: int = 512,
-                       seed: int = 42,
-                       ) -> Dict:
+def train_linear_probe(
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    X_test: np.ndarray,
+    y_test: np.ndarray,
+    num_classes: int = 4,
+    lr: float = 0.1,
+    momentum: float = 0.9,
+    weight_decay: float = 1e-4,
+    epochs: int = 50,
+    batch_size: int = 512,
+    seed: int = 42,
+) -> Dict:
     """Train linear probe with SGD and evaluate on test set."""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     rng = np.random.RandomState(seed)
@@ -134,8 +139,9 @@ def train_linear_probe(X_train: np.ndarray, y_train: np.ndarray,
 
     probe = nn.Linear(X_tr.shape[1], num_classes, bias=False).to(device)
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.SGD(probe.parameters(), lr=lr, momentum=momentum,
-                          weight_decay=weight_decay)
+    optimizer = optim.SGD(
+        probe.parameters(), lr=lr, momentum=momentum, weight_decay=weight_decay
+    )
     # Cosine annealing
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
@@ -149,8 +155,8 @@ def train_linear_probe(X_train: np.ndarray, y_train: np.ndarray,
         y_shuf = y_tr[perm]
 
         for i in range(0, n, batch_size):
-            xb = X_shuf[i:i+batch_size].to(device)
-            yb = y_shuf[i:i+batch_size].to(device)
+            xb = X_shuf[i : i + batch_size].to(device)
+            yb = y_shuf[i : i + batch_size].to(device)
 
             optimizer.zero_grad(set_to_none=True)
             logits = probe(xb)
@@ -166,8 +172,8 @@ def train_linear_probe(X_train: np.ndarray, y_train: np.ndarray,
         all_preds = []
         all_true = []
         for i in range(0, X_te.shape[0], batch_size):
-            xb = X_te[i:i+batch_size].to(device)
-            yb = y_te[i:i+batch_size]
+            xb = X_te[i : i + batch_size].to(device)
+            yb = y_te[i : i + batch_size]
             logits = probe(xb)
             preds = logits.argmax(dim=1).cpu()
             all_preds.append(preds)
@@ -218,46 +224,61 @@ def train_linear_probe(X_train: np.ndarray, y_train: np.ndarray,
 # ==============================================================================
 # Confusion matrix plot
 # ==============================================================================
-def plot_confusion_matrix(cm: np.ndarray, model_name: str,
-                          output_path: str, dpi: int = 200):
+def plot_confusion_matrix(
+    cm: np.ndarray, model_name: str, output_path: str, dpi: int = 200
+):
     """Plot and save confusion matrix."""
     fig, ax = plt.subplots(1, 1, figsize=(7, 6))
     classes = [CLASS_NAMES[i] for i in range(cm.shape[0])]
 
-    im = ax.imshow(cm, interpolation='nearest', cmap='Blues')
+    im = ax.imshow(cm, interpolation="nearest", cmap="Blues")
     ax.figure.colorbar(im, ax=ax)
 
-    ax.set(xticks=np.arange(cm.shape[1]),
-           yticks=np.arange(cm.shape[0]),
-           xticklabels=classes,
-           yticklabels=classes,
-           ylabel='True label',
-           xlabel='Predicted label')
+    ax.set(
+        xticks=np.arange(cm.shape[1]),
+        yticks=np.arange(cm.shape[0]),
+        xticklabels=classes,
+        yticklabels=classes,
+        ylabel="True label",
+        xlabel="Predicted label",
+    )
 
-    plt.setp(ax.get_xticklabels(), rotation=45, ha="right",
-             rotation_mode="anchor")
+    plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
 
     # Annotate cells
     thresh = cm.max() / 2.0
     for i in range(cm.shape[0]):
         for j in range(cm.shape[1]):
-            ax.text(j, i, format(cm[i, j], 'd'),
-                    ha="center", va="center",
-                    color="white" if cm[i, j] > thresh else "black",
-                    fontsize=12)
+            ax.text(
+                j,
+                i,
+                format(cm[i, j], "d"),
+                ha="center",
+                va="center",
+                color="white" if cm[i, j] > thresh else "black",
+                fontsize=12,
+            )
 
     # Normalized percentages
     cm_norm = cm.astype(float) / cm.sum(axis=1, keepdims=True) * 100
     for i in range(cm.shape[0]):
         for j in range(cm.shape[1]):
-            ax.text(j, i + 0.25, f"({cm_norm[i,j]:.1f}%)",
-                    ha="center", va="center",
-                    color="white" if cm[i, j] > thresh else "gray",
-                    fontsize=8)
+            ax.text(
+                j,
+                i + 0.25,
+                f"({cm_norm[i,j]:.1f}%)",
+                ha="center",
+                va="center",
+                color="white" if cm[i, j] > thresh else "gray",
+                fontsize=8,
+            )
 
     acc = np.trace(cm) / cm.sum()
-    ax.set_title(f"Confusion Matrix – {model_name}\nAccuracy: {acc:.1%}",
-                 fontsize=13, fontweight="bold")
+    ax.set_title(
+        f"Confusion Matrix – {model_name}\nAccuracy: {acc:.1%}",
+        fontsize=13,
+        fontweight="bold",
+    )
     fig.tight_layout()
     fig.savefig(output_path, dpi=dpi, bbox_inches="tight")
     if _IN_COLAB:
@@ -269,8 +290,9 @@ def plot_confusion_matrix(cm: np.ndarray, model_name: str,
 # ==============================================================================
 # Multi-seed accuracy bar plot
 # ==============================================================================
-def plot_multi_seed_bar(results: List[Dict], model_type: str,
-                        output_path: str, dpi: int = 200):
+def plot_multi_seed_bar(
+    results: List[Dict], model_type: str, output_path: str, dpi: int = 200
+):
     """Bar plot of per-class accuracy across seeds with mean±std."""
     classes = ["Control", "SNCA", "GBA", "LRRK2"]
 
@@ -289,24 +311,40 @@ def plot_multi_seed_bar(results: List[Dict], model_type: str,
     fig, ax = plt.subplots(figsize=(9, 5))
     colors = ["#4C72B0", "#DD8452", "#55A868", "#C44E52", "#8172B2"]
     x = np.arange(len(categories))
-    bars = ax.bar(x, means, yerr=stds, capsize=5, color=colors,
-                  edgecolor="black", linewidth=0.5, alpha=0.85)
+    bars = ax.bar(
+        x,
+        means,
+        yerr=stds,
+        capsize=5,
+        color=colors,
+        edgecolor="black",
+        linewidth=0.5,
+        alpha=0.85,
+    )
 
     # Annotate
     for bar, m, s in zip(bars, means, stds):
-        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + s + 0.005,
-                f"{m:.1%}±{s:.1%}", ha='center', va='bottom', fontsize=9)
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + s + 0.005,
+            f"{m:.1%}±{s:.1%}",
+            ha="center",
+            va="bottom",
+            fontsize=9,
+        )
 
     ax.set_ylim(0, min(1.15, max(means) + max(stds) + 0.08))
     ax.set_xticks(x)
     ax.set_xticklabels(categories, fontsize=11)
     ax.set_ylabel("Test Accuracy", fontsize=12)
-    ax.set_title(f"Linear Evaluation – {model_type}\n"
-                 f"({len(results)} seeds, mean±std)",
-                 fontsize=13, fontweight="bold")
-    ax.grid(axis='y', alpha=0.3)
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
+    ax.set_title(
+        f"Linear Evaluation – {model_type}\n" f"({len(results)} seeds, mean±std)",
+        fontsize=13,
+        fontweight="bold",
+    )
+    ax.grid(axis="y", alpha=0.3)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
 
     fig.tight_layout()
     fig.savefig(output_path, dpi=dpi, bbox_inches="tight")
@@ -319,8 +357,7 @@ def plot_multi_seed_bar(results: List[Dict], model_type: str,
 # ==============================================================================
 # Evaluate single checkpoint
 # ==============================================================================
-def evaluate_single(ckpt_path: str, save_dir: str, refs, uid_to_refidx,
-                    args) -> Dict:
+def evaluate_single(ckpt_path: str, save_dir: str, refs, uid_to_refidx, args) -> Dict:
     """Full pipeline: load encoder → extract features → train LP → evaluate."""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model_name = os.path.basename(os.path.dirname(ckpt_path))
@@ -333,10 +370,12 @@ def evaluate_single(ckpt_path: str, save_dir: str, refs, uid_to_refidx,
     dilations = parse_int_list(args.dilations, 4)
     model = SupMoCoModel(
         embed_dim=args.embed_dim,
-        blocks=blocks, dilations=dilations,
+        blocks=blocks,
+        dilations=dilations,
         refine_blocks=args.refine_blocks,
         ckpt_segments=args.ckpt_segments,
-        proj_layers=2, proj_hidden=2048,
+        proj_layers=2,
+        proj_hidden=2048,
     )
     ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     robust_load_state_dict(model, ckpt, strict=False)
@@ -362,7 +401,8 @@ def evaluate_single(ckpt_path: str, save_dir: str, refs, uid_to_refidx,
     if not train_uids or not test_uids:
         raise FileNotFoundError(
             f"Missing split CSVs in {save_dir}. "
-            f"Need train_split.csv (or val_split.csv) + test_split.csv")
+            f"Need train_split.csv (or val_split.csv) + test_split.csv"
+        )
 
     # Map UIDs → ref indices
     def uids_to_ref_indices(uids):
@@ -380,9 +420,14 @@ def evaluate_single(ckpt_path: str, save_dir: str, refs, uid_to_refidx,
         ib = list(range(len(ref_indices)))
         ds = InMemorySixteenBitDataset(bank, ib, args.img_size, augment=False)
         return DataLoader(
-            ds, batch_size=args.batch_size, shuffle=shuffle,
-            num_workers=args.num_workers, pin_memory=True,
-            worker_init_fn=seed_worker, collate_fn=collate_skip_none)
+            ds,
+            batch_size=args.batch_size,
+            shuffle=shuffle,
+            num_workers=args.num_workers,
+            pin_memory=True,
+            worker_init_fn=seed_worker,
+            collate_fn=collate_skip_none,
+        )
 
     logger.info("  Loading train data...")
     train_loader = make_loader(train_ref_idx)
@@ -402,12 +447,18 @@ def evaluate_single(ckpt_path: str, save_dir: str, refs, uid_to_refidx,
     torch.cuda.empty_cache()
 
     # Train linear probe
-    logger.info(f"  Training linear probe (SGD, lr={args.lp_lr}, "
-                f"epochs={args.lp_epochs})...")
+    logger.info(
+        f"  Training linear probe (SGD, lr={args.lp_lr}, "
+        f"epochs={args.lp_epochs})..."
+    )
     results = train_linear_probe(
-        X_train, y_train, X_test, y_test,
+        X_train,
+        y_train,
+        X_test,
+        y_test,
         num_classes=NUM_CLASSES,
-        lr=args.lp_lr, momentum=0.9,
+        lr=args.lp_lr,
+        momentum=0.9,
         weight_decay=args.lp_wd,
         epochs=args.lp_epochs,
         batch_size=args.lp_batch_size,
@@ -430,7 +481,9 @@ def evaluate_single(ckpt_path: str, save_dir: str, refs, uid_to_refidx,
     header = "          " + "  ".join(f"{CLASS_NAMES[j]:>8s}" for j in range(4))
     logger.info(f"  {header}")
     for i in range(4):
-        row = f"  {CLASS_NAMES[i]:>8s}  " + "  ".join(f"{cm[i,j]:>8d}" for j in range(4))
+        row = f"  {CLASS_NAMES[i]:>8s}  " + "  ".join(
+            f"{cm[i,j]:>8d}" for j in range(4)
+        )
         logger.info(row)
 
     return results
@@ -443,20 +496,30 @@ def get_args():
     p = argparse.ArgumentParser("Linear Evaluation for CNN Encoders")
 
     # Single model
-    p.add_argument("--ckpt_path", type=str, default="",
-                   help="Single checkpoint path")
-    p.add_argument("--save_dir", type=str, default="",
-                   help="Save dir for single model (contains split CSVs)")
+    p.add_argument("--ckpt_path", type=str, default="", help="Single checkpoint path")
+    p.add_argument(
+        "--save_dir",
+        type=str,
+        default="",
+        help="Save dir for single model (contains split CSVs)",
+    )
 
     # Multiple models
-    p.add_argument("--ckpt_paths", type=str, nargs="+", default=[],
-                   help="Multiple checkpoint paths")
-    p.add_argument("--save_dirs", type=str, nargs="+", default=[],
-                   help="Corresponding save dirs")
+    p.add_argument(
+        "--ckpt_paths",
+        type=str,
+        nargs="+",
+        default=[],
+        help="Multiple checkpoint paths",
+    )
+    p.add_argument(
+        "--save_dirs", type=str, nargs="+", default=[], help="Corresponding save dirs"
+    )
 
     # Data
-    p.add_argument("--shard_root", type=str,
-                   default="/home/ubuntu/model-east3/wds_shards_tar")
+    p.add_argument(
+        "--shard_root", type=str, default="/home/ubuntu/model-east3/wds_shards_tar"
+    )
     p.add_argument("--img_size", type=int, default=128)
     p.add_argument("--batch_size", type=int, default=128)
     p.add_argument("--num_workers", type=int, default=4)
@@ -501,8 +564,9 @@ def main():
             save_dirs = [os.path.dirname(p) for p in ckpt_paths]
     elif args.ckpt_path:
         ckpt_paths = [args.ckpt_path]
-        save_dirs = [args.save_dir if args.save_dir else
-                     os.path.dirname(args.ckpt_path)]
+        save_dirs = [
+            args.save_dir if args.save_dir else os.path.dirname(args.ckpt_path)
+        ]
     else:
         raise ValueError("Provide --ckpt_path or --ckpt_paths")
 
@@ -520,6 +584,7 @@ def main():
         except Exception as e:
             logger.error(f"Failed: {ckpt}: {e}")
             import traceback
+
             traceback.print_exc()
 
     if not all_results:
@@ -534,49 +599,65 @@ def main():
     logger.info(header)
     logger.info("-" * 80)
     for r in all_results:
-        row = (f"{r['model_name']:<30s} "
-               f"{r['accuracy']:>7.4f} "
-               f"{r['macro_f1']:>7.4f} "
-               f"{r['per_class_accuracy'].get('Control',0):>7.4f} "
-               f"{r['per_class_accuracy'].get('SNCA',0):>7.4f} "
-               f"{r['per_class_accuracy'].get('GBA',0):>7.4f} "
-               f"{r['per_class_accuracy'].get('LRRK2',0):>7.4f}")
+        row = (
+            f"{r['model_name']:<30s} "
+            f"{r['accuracy']:>7.4f} "
+            f"{r['macro_f1']:>7.4f} "
+            f"{r['per_class_accuracy'].get('Control',0):>7.4f} "
+            f"{r['per_class_accuracy'].get('SNCA',0):>7.4f} "
+            f"{r['per_class_accuracy'].get('GBA',0):>7.4f} "
+            f"{r['per_class_accuracy'].get('LRRK2',0):>7.4f}"
+        )
         logger.info(row)
 
     if len(all_results) > 1:
         accs = [r["accuracy"] for r in all_results]
         f1s = [r["macro_f1"] for r in all_results]
         logger.info("-" * 80)
-        logger.info(f"{'Mean±Std':<30s} "
-                    f"{np.mean(accs):>7.4f} "
-                    f"{np.mean(f1s):>7.4f}")
+        logger.info(
+            f"{'Mean±Std':<30s} " f"{np.mean(accs):>7.4f} " f"{np.mean(f1s):>7.4f}"
+        )
         logger.info(f"{'':30s} ±{np.std(accs):.4f} ±{np.std(f1s):.4f}")
 
     # ── Save CSV ──
     csv_path = os.path.join(args.output_dir, "linear_eval_results.csv")
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(["Model", "Accuracy", "Macro_F1",
-                         "Ctrl_Acc", "SNCA_Acc", "GBA_Acc", "LRRK2_Acc"])
+        writer.writerow(
+            [
+                "Model",
+                "Accuracy",
+                "Macro_F1",
+                "Ctrl_Acc",
+                "SNCA_Acc",
+                "GBA_Acc",
+                "LRRK2_Acc",
+            ]
+        )
         for r in all_results:
-            writer.writerow([
-                r["model_name"],
-                f"{r['accuracy']:.4f}",
-                f"{r['macro_f1']:.4f}",
-                f"{r['per_class_accuracy'].get('Control',0):.4f}",
-                f"{r['per_class_accuracy'].get('SNCA',0):.4f}",
-                f"{r['per_class_accuracy'].get('GBA',0):.4f}",
-                f"{r['per_class_accuracy'].get('LRRK2',0):.4f}",
-            ])
+            writer.writerow(
+                [
+                    r["model_name"],
+                    f"{r['accuracy']:.4f}",
+                    f"{r['macro_f1']:.4f}",
+                    f"{r['per_class_accuracy'].get('Control',0):.4f}",
+                    f"{r['per_class_accuracy'].get('SNCA',0):.4f}",
+                    f"{r['per_class_accuracy'].get('GBA',0):.4f}",
+                    f"{r['per_class_accuracy'].get('LRRK2',0):.4f}",
+                ]
+            )
     logger.info(f"\nSaved CSV: {csv_path}")
 
     # ── Confusion matrix (first model as representative) ──
-    cm_path = os.path.join(args.output_dir,
-                           f"confusion_matrix_{all_results[0]['model_name']}.png")
+    cm_path = os.path.join(
+        args.output_dir, f"confusion_matrix_{all_results[0]['model_name']}.png"
+    )
     plot_confusion_matrix(
         all_results[0]["confusion_matrix"],
         all_results[0]["model_name"],
-        cm_path, args.dpi)
+        cm_path,
+        args.dpi,
+    )
 
     # ── Multi-seed bar plot ──
     if len(all_results) > 1:
@@ -587,15 +668,19 @@ def main():
         else:
             model_type = "MoCo"
 
-        bar_path = os.path.join(args.output_dir,
-                                f"accuracy_bar_{model_type.replace(' ', '_')}.png")
+        bar_path = os.path.join(
+            args.output_dir, f"accuracy_bar_{model_type.replace(' ', '_')}.png"
+        )
         plot_multi_seed_bar(all_results, model_type, bar_path, args.dpi)
 
     # ── Save full results JSON ──
     json_results = []
     for r in all_results:
-        jr = {k: v for k, v in r.items()
-              if k not in ("confusion_matrix", "predictions", "true_labels")}
+        jr = {
+            k: v
+            for k, v in r.items()
+            if k not in ("confusion_matrix", "predictions", "true_labels")
+        }
         jr["confusion_matrix"] = r["confusion_matrix"].tolist()
         json_results.append(jr)
 

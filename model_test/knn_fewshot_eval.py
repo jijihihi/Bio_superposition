@@ -18,45 +18,44 @@
 #       --output_dir /path/to/results
 # ==============================================================================
 
-import os
-import sys
+import argparse
 import csv
 import json
-import time
-import argparse
 import logging
-import numpy as np
+import os
+import sys
+import time
 from collections import defaultdict
 
+import matplotlib
+import numpy as np
 import torch
 
-import matplotlib
 _IN_COLAB = "google.colab" in sys.modules
 if not _IN_COLAB:
     matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
-
-from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
+from sklearn.metrics import accuracy_score, confusion_matrix, f1_score
 
 # ── GPU detection ──
 _HAS_CUDA = torch.cuda.is_available()
 try:
     import faiss
+
     _HAS_FAISS = True
 except ImportError:
     _HAS_FAISS = False
 
-# ── Project imports (maximise reuse, minimise new code) ──
-from sae_project.step02_logging_utils import (
-    get_logger, SUPERCLASS_MAP, CLASS_TO_LABEL,
-)
 from apoptosis_prediction.local_knn_std import load_cache
+# ── Project imports (maximise reuse, minimise new code) ──
+from sae_project.step02_logging_utils import (CLASS_TO_LABEL, SUPERCLASS_MAP,
+                                              get_logger)
 
 logger = get_logger("knn_fewshot_eval")
 
-plt.rcParams['svg.fonttype'] = 'none'
-plt.rcParams['pdf.fonttype'] = 42
+plt.rcParams["svg.fonttype"] = "none"
+plt.rcParams["pdf.fonttype"] = 42
 logging.getLogger("fontTools").setLevel(logging.WARNING)
 
 CLASS_NAMES = {0: "Control", 1: "SNCA", 2: "GBA", 3: "LRRK2"}
@@ -71,42 +70,86 @@ def get_args():
         description="KNN & Few-Shot Evaluation from precomputed feature caches"
     )
     # Data
-    p.add_argument("--cache_path", type=str, required=True,
-                   help="Path to .npz feature cache (CNN or SAE)")
-    p.add_argument("--save_dir", type=str, required=True,
-                   help="Model output dir (contains train/val/test_split.csv)")
-    p.add_argument("--dead_threshold", type=float, default=1e-5,
-                   help="SAE dead neuron threshold (default: 1e-5)")
+    p.add_argument(
+        "--cache_path",
+        type=str,
+        required=True,
+        help="Path to .npz feature cache (CNN or SAE)",
+    )
+    p.add_argument(
+        "--save_dir",
+        type=str,
+        required=True,
+        help="Model output dir (contains train/val/test_split.csv)",
+    )
+    p.add_argument(
+        "--dead_threshold",
+        type=float,
+        default=1e-5,
+        help="SAE dead neuron threshold (default: 1e-5)",
+    )
 
     # Feature preprocessing
-    p.add_argument("--norm", type=str, default="none", choices=["none", "log", "log_std"],
-                   help="Normalization before L2: 'none', 'log', or 'log_std'")
-    p.add_argument("--gap_l2_norm", action="store_true",
-                   help="L2 normalize feature vectors")
+    p.add_argument(
+        "--norm",
+        type=str,
+        default="none",
+        choices=["none", "log", "log_std"],
+        help="Normalization before L2: 'none', 'log', or 'log_std'",
+    )
+    p.add_argument(
+        "--gap_l2_norm", action="store_true", help="L2 normalize feature vectors"
+    )
 
     # Evaluation modes
-    p.add_argument("--eval_modes", type=str, nargs="+",
-                   default=["knn", "fewshot"],
-                   choices=["knn", "fewshot"],
-                   help="Evaluation modes to run. Default: knn fewshot")
+    p.add_argument(
+        "--eval_modes",
+        type=str,
+        nargs="+",
+        default=["knn", "fewshot"],
+        choices=["knn", "fewshot"],
+        help="Evaluation modes to run. Default: knn fewshot",
+    )
 
     # KNN
-    p.add_argument("--knn_k", type=int, nargs="+", default=[1, 3, 5, 10, 20],
-                   help="K values for weighted KNN. Default: 1 3 5 10 20")
-    p.add_argument("--knn_weights", type=str, default="inv_sq",
-                   choices=["inv_sq", "distance", "uniform"],
-                   help="KNN weighting: 'inv_sq' (1/d²), "
-                        "'distance' (1/d), 'uniform'. Default: inv_sq")
+    p.add_argument(
+        "--knn_k",
+        type=int,
+        nargs="+",
+        default=[1, 3, 5, 10, 20],
+        help="K values for weighted KNN. Default: 1 3 5 10 20",
+    )
+    p.add_argument(
+        "--knn_weights",
+        type=str,
+        default="inv_sq",
+        choices=["inv_sq", "distance", "uniform"],
+        help="KNN weighting: 'inv_sq' (1/d²), "
+        "'distance' (1/d), 'uniform'. Default: inv_sq",
+    )
 
     # Few-shot
-    p.add_argument("--n_shots", type=int, nargs="+", default=[1, 5],
-                   help="Number of support examples per class. Default: 1 5")
-    p.add_argument("--n_episodes", type=int, default=100,
-                   help="Number of random episodes per n_shot. Default: 100")
+    p.add_argument(
+        "--n_shots",
+        type=int,
+        nargs="+",
+        default=[1, 5],
+        help="Number of support examples per class. Default: 1 5",
+    )
+    p.add_argument(
+        "--n_episodes",
+        type=int,
+        default=100,
+        help="Number of random episodes per n_shot. Default: 100",
+    )
 
     # Output
-    p.add_argument("--output_dir", type=str, default="",
-                   help="Output directory (default: save_dir/knn_fewshot_eval)")
+    p.add_argument(
+        "--output_dir",
+        type=str,
+        default="",
+        help="Output directory (default: save_dir/knn_fewshot_eval)",
+    )
     p.add_argument("--dpi", type=int, default=200)
     p.add_argument("--seed", type=int, default=42)
 
@@ -120,6 +163,7 @@ def load_split_uids(save_dir):
     """Load train (train+val) and test UIDs from split CSVs.
     Returns: train_uids_set, test_uids_set
     """
+
     def _read_csv(path):
         uids = []
         if not os.path.exists(path):
@@ -131,11 +175,13 @@ def load_split_uids(save_dir):
         return uids
 
     train_uids = _read_csv(os.path.join(save_dir, "train_split.csv"))
-    val_uids   = _read_csv(os.path.join(save_dir, "val_split.csv"))
-    test_uids  = _read_csv(os.path.join(save_dir, "test_split.csv"))
+    val_uids = _read_csv(os.path.join(save_dir, "val_split.csv"))
+    test_uids = _read_csv(os.path.join(save_dir, "test_split.csv"))
 
-    logger.info(f"  Split CSVs: train={len(train_uids)}, "
-                f"val={len(val_uids)}, test={len(test_uids)}")
+    logger.info(
+        f"  Split CSVs: train={len(train_uids)}, "
+        f"val={len(val_uids)}, test={len(test_uids)}"
+    )
 
     return set(train_uids + val_uids), set(test_uids)
 
@@ -163,7 +209,7 @@ def split_cache_by_csv(X, lines, uids, save_dir):
 
     # Normalize all UIDs for cross-machine matching
     train_norm = {_normalize_uid(u) for u in train_uid_set}
-    test_norm  = {_normalize_uid(u) for u in test_uid_set}
+    test_norm = {_normalize_uid(u) for u in test_uid_set}
 
     # Map lines → integer labels
     superclasses = np.array([SUPERCLASS_MAP.get(str(ln), str(ln)) for ln in lines])
@@ -180,7 +226,7 @@ def split_cache_by_csv(X, lines, uids, save_dir):
         # else: not in either split → skip
 
     train_idx = np.array(train_idx)
-    test_idx  = np.array(test_idx)
+    test_idx = np.array(test_idx)
 
     if len(train_idx) == 0 or len(test_idx) == 0:
         raise ValueError(
@@ -192,14 +238,14 @@ def split_cache_by_csv(X, lines, uids, save_dir):
 
     X_train = X[train_idx]
     y_train = y_all[train_idx]
-    X_test  = X[test_idx]
-    y_test  = y_all[test_idx]
+    X_test = X[test_idx]
+    y_test = y_all[test_idx]
 
     # Remove any samples with unknown class
     valid_train = y_train >= 0
-    valid_test  = y_test >= 0
+    valid_test = y_test >= 0
     X_train, y_train = X_train[valid_train], y_train[valid_train]
-    X_test,  y_test  = X_test[valid_test],   y_test[valid_test]
+    X_test, y_test = X_test[valid_test], y_test[valid_test]
 
     logger.info(f"  Train: {X_train.shape}, Test: {X_test.shape}")
     for c in range(NUM_CLASSES):
@@ -244,6 +290,7 @@ def _faiss_knn(X_train, X_test, k):
 def _sklearn_knn(X_train, X_test, k):
     """Fallback: sklearn NearestNeighbors (CPU, slower)."""
     from sklearn.neighbors import NearestNeighbors
+
     k_actual = min(k, len(X_train))
     nn = NearestNeighbors(n_neighbors=k_actual, metric="euclidean", n_jobs=-1)
     nn.fit(X_train)
@@ -277,7 +324,7 @@ def _weighted_vote(distances, indices, y_train, k, weights, num_classes):
     else:
         # Weighted vote
         if weights == "inv_sq":
-            w = 1.0 / np.maximum(distances ** 2, 1e-12)
+            w = 1.0 / np.maximum(distances**2, 1e-12)
         else:  # 'distance'
             w = 1.0 / np.maximum(distances, 1e-12)
 
@@ -286,7 +333,7 @@ def _weighted_vote(distances, indices, y_train, k, weights, num_classes):
         if _HAS_CUDA:
             w_t = torch.from_numpy(w).float().cuda()
             labels_t = torch.from_numpy(neighbor_labels).long().cuda()
-            votes = torch.zeros(n_test, num_classes, device='cuda')
+            votes = torch.zeros(n_test, num_classes, device="cuda")
             votes.scatter_add_(1, labels_t, w_t)
             y_pred = votes.argmax(dim=1).cpu().numpy()
         else:
@@ -352,8 +399,7 @@ def evaluate_knn(X_train, y_train, X_test, y_test, k, weights="inv_sq"):
 # ==============================================================================
 # Few-Shot Prototypical Evaluation (GPU-accelerated)
 # ==============================================================================
-def evaluate_fewshot(X_train, y_train, X_test, y_test,
-                     n_shot, n_episodes, seed=42):
+def evaluate_fewshot(X_train, y_train, X_test, y_test, n_shot, n_episodes, seed=42):
     """N-shot prototypical classification with GPU acceleration.
 
     For each episode:
@@ -368,7 +414,7 @@ def evaluate_fewshot(X_train, y_train, X_test, y_test,
     rng = np.random.RandomState(seed)
     classes = sorted(np.unique(y_train))
     classes_arr = np.array(classes)
-    device = torch.device('cuda' if _HAS_CUDA else 'cpu')
+    device = torch.device("cuda" if _HAS_CUDA else "cpu")
 
     # Group train indices by class
     class_to_idx = {c: np.where(y_train == c)[0] for c in classes}
@@ -376,13 +422,15 @@ def evaluate_fewshot(X_train, y_train, X_test, y_test,
     # Check feasibility
     for c in classes:
         if len(class_to_idx[c]) < n_shot:
-            logger.warning(f"  Class {CLASS_NAMES.get(c, c)}: only "
-                           f"{len(class_to_idx[c])} train samples < n_shot={n_shot}")
+            logger.warning(
+                f"  Class {CLASS_NAMES.get(c, c)}: only "
+                f"{len(class_to_idx[c])} train samples < n_shot={n_shot}"
+            )
 
     # Move test data to GPU once
     X_test_t = torch.from_numpy(X_test).float().to(device)  # (n_test, d)
     y_test_t = torch.from_numpy(y_test).long()
-    X_train_t = torch.from_numpy(X_train).float()            # keep on CPU for indexing
+    X_train_t = torch.from_numpy(X_train).float()  # keep on CPU for indexing
 
     episode_accs = []
     episode_f1s = []
@@ -395,16 +443,16 @@ def evaluate_fewshot(X_train, y_train, X_test, y_test,
             n_take = min(n_shot, len(pool))
             support_idx = rng.choice(pool, size=n_take, replace=False)
             support_vecs = X_train_t[support_idx]  # (n_take, d)
-            prototype = support_vecs.mean(dim=0)    # (d,)
+            prototype = support_vecs.mean(dim=0)  # (d,)
             prototypes.append(prototype)
 
         proto_t = torch.stack(prototypes).to(device)  # (n_classes, d)
 
         # Batched L2 distance: (n_test, n_classes)
         # ||x - p||² = ||x||² + ||p||² - 2·x·p^T
-        x_sq = (X_test_t ** 2).sum(dim=1, keepdim=True)  # (n_test, 1)
-        p_sq = (proto_t ** 2).sum(dim=1, keepdim=True).T  # (1, n_classes)
-        dists = x_sq + p_sq - 2 * X_test_t @ proto_t.T    # (n_test, n_classes)
+        x_sq = (X_test_t**2).sum(dim=1, keepdim=True)  # (n_test, 1)
+        p_sq = (proto_t**2).sum(dim=1, keepdim=True).T  # (1, n_classes)
+        dists = x_sq + p_sq - 2 * X_test_t @ proto_t.T  # (n_test, n_classes)
 
         pred_class_idx = dists.argmin(dim=1).cpu().numpy()  # indices into classes
         y_pred = classes_arr[pred_class_idx]
@@ -415,13 +463,15 @@ def evaluate_fewshot(X_train, y_train, X_test, y_test,
         episode_f1s.append(f1)
 
     elapsed = time.time() - t0
-    logger.info(f"    {n_shot}-shot × {n_episodes} episodes done in {elapsed:.1f}s "
-                f"(device={device})")
+    logger.info(
+        f"    {n_shot}-shot × {n_episodes} episodes done in {elapsed:.1f}s "
+        f"(device={device})"
+    )
 
     mean_acc = float(np.mean(episode_accs))
-    std_acc  = float(np.std(episode_accs))
-    mean_f1  = float(np.mean(episode_f1s))
-    std_f1   = float(np.std(episode_f1s))
+    std_acc = float(np.std(episode_accs))
+    mean_f1 = float(np.mean(episode_f1s))
+    std_f1 = float(np.std(episode_f1s))
 
     return {
         "n_shot": n_shot,
@@ -448,25 +498,56 @@ def plot_knn_k_sweep(knn_results, source_label, output_path, dpi=200):
     x = np.arange(len(ks))
     w = 0.35
 
-    bars_acc = ax.bar(x - w/2, accs, w, label="Accuracy",
-                      color="#4C72B0", alpha=0.85, edgecolor="black", linewidth=0.5)
-    bars_f1  = ax.bar(x + w/2, f1s,  w, label="Macro F1",
-                      color="#DD8452", alpha=0.85, edgecolor="black", linewidth=0.5)
+    bars_acc = ax.bar(
+        x - w / 2,
+        accs,
+        w,
+        label="Accuracy",
+        color="#4C72B0",
+        alpha=0.85,
+        edgecolor="black",
+        linewidth=0.5,
+    )
+    bars_f1 = ax.bar(
+        x + w / 2,
+        f1s,
+        w,
+        label="Macro F1",
+        color="#DD8452",
+        alpha=0.85,
+        edgecolor="black",
+        linewidth=0.5,
+    )
 
     for bar, v in zip(bars_acc, accs):
-        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.005,
-                f"{v:.1%}", ha="center", va="bottom", fontsize=8)
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.005,
+            f"{v:.1%}",
+            ha="center",
+            va="bottom",
+            fontsize=8,
+        )
     for bar, v in zip(bars_f1, f1s):
-        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.005,
-                f"{v:.1%}", ha="center", va="bottom", fontsize=8)
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.005,
+            f"{v:.1%}",
+            ha="center",
+            va="bottom",
+            fontsize=8,
+        )
 
     ax.set_xticks(x)
     ax.set_xticklabels([str(k) for k in ks], fontsize=11)
     ax.set_xlabel("K (number of neighbors)", fontsize=12)
     ax.set_ylabel("Score", fontsize=12)
     ax.set_ylim(0, min(1.15, max(accs + f1s) + 0.08))
-    ax.set_title(f"Weighted KNN — {source_label}\n"
-                 f"(weight = 1/d²)", fontsize=13, fontweight="bold")
+    ax.set_title(
+        f"Weighted KNN — {source_label}\n" f"(weight = 1/d²)",
+        fontsize=13,
+        fontweight="bold",
+    )
     ax.legend(fontsize=10)
     ax.grid(axis="y", alpha=0.3)
     ax.spines["top"].set_visible(False)
@@ -494,15 +575,25 @@ def plot_fewshot_distribution(fewshot_results, source_label, output_path, dpi=20
     positions = list(range(len(n_shots)))
     colors = ["#55A868", "#C44E52", "#8172B2", "#CCB974", "#64B5CD"]
 
-    parts = ax.violinplot(accs_list, positions=positions,
-                          showmeans=False, showmedians=False,
-                          showextrema=False)
+    parts = ax.violinplot(
+        accs_list,
+        positions=positions,
+        showmeans=False,
+        showmedians=False,
+        showextrema=False,
+    )
     for i, pc in enumerate(parts["bodies"]):
         pc.set_facecolor(colors[i % len(colors)])
         pc.set_alpha(0.3)
 
-    bp = ax.boxplot(accs_list, positions=positions, widths=0.3,
-                    patch_artist=True, showfliers=False, zorder=3)
+    bp = ax.boxplot(
+        accs_list,
+        positions=positions,
+        widths=0.3,
+        patch_artist=True,
+        showfliers=False,
+        zorder=3,
+    )
     for i, patch in enumerate(bp["boxes"]):
         patch.set_facecolor(colors[i % len(colors)])
         patch.set_alpha(0.6)
@@ -513,19 +604,25 @@ def plot_fewshot_distribution(fewshot_results, source_label, output_path, dpi=20
 
     # Annotate mean ± std
     for i, r in enumerate(fewshot_results):
-        ax.text(i, ax.get_ylim()[1] * 0.98 if i == 0 else
-                max(r["episode_accs"]) + 0.02,
-                f"μ={r['accuracy_mean']:.1%}\n±{r['accuracy_std']:.1%}",
-                ha="center", va="top", fontsize=9,
-                bbox=dict(boxstyle="round,pad=0.2",
-                          facecolor="white", alpha=0.8))
+        ax.text(
+            i,
+            ax.get_ylim()[1] * 0.98 if i == 0 else max(r["episode_accs"]) + 0.02,
+            f"μ={r['accuracy_mean']:.1%}\n±{r['accuracy_std']:.1%}",
+            ha="center",
+            va="top",
+            fontsize=9,
+            bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.8),
+        )
 
     ax.set_xticks(positions)
     ax.set_xticklabels([f"{n}-shot" for n in n_shots], fontsize=12)
     ax.set_ylabel("Accuracy", fontsize=12)
-    ax.set_title(f"Few-Shot Prototypical — {source_label}\n"
-                 f"({fewshot_results[0]['n_episodes']} episodes)",
-                 fontsize=13, fontweight="bold")
+    ax.set_title(
+        f"Few-Shot Prototypical — {source_label}\n"
+        f"({fewshot_results[0]['n_episodes']} episodes)",
+        fontsize=13,
+        fontweight="bold",
+    )
     ax.grid(axis="y", alpha=0.3)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
@@ -547,36 +644,48 @@ def plot_confusion_matrix(cm, title, output_path, dpi=200):
     fig, ax = plt.subplots(1, 1, figsize=(7, 6))
     classes = [CLASS_NAMES[i] for i in range(cm.shape[0])]
 
-    im = ax.imshow(cm, interpolation='nearest', cmap='Blues')
+    im = ax.imshow(cm, interpolation="nearest", cmap="Blues")
     ax.figure.colorbar(im, ax=ax)
 
-    ax.set(xticks=np.arange(cm.shape[1]),
-           yticks=np.arange(cm.shape[0]),
-           xticklabels=classes, yticklabels=classes,
-           ylabel='True label', xlabel='Predicted label')
+    ax.set(
+        xticks=np.arange(cm.shape[1]),
+        yticks=np.arange(cm.shape[0]),
+        xticklabels=classes,
+        yticklabels=classes,
+        ylabel="True label",
+        xlabel="Predicted label",
+    )
 
-    plt.setp(ax.get_xticklabels(), rotation=45, ha="right",
-             rotation_mode="anchor")
+    plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
 
     thresh = cm.max() / 2.0
     for i in range(cm.shape[0]):
         for j in range(cm.shape[1]):
-            ax.text(j, i, format(cm[i, j], 'd'),
-                    ha="center", va="center",
-                    color="white" if cm[i, j] > thresh else "black",
-                    fontsize=12)
+            ax.text(
+                j,
+                i,
+                format(cm[i, j], "d"),
+                ha="center",
+                va="center",
+                color="white" if cm[i, j] > thresh else "black",
+                fontsize=12,
+            )
 
     cm_norm = cm.astype(float) / cm.sum(axis=1, keepdims=True) * 100
     for i in range(cm.shape[0]):
         for j in range(cm.shape[1]):
-            ax.text(j, i + 0.25, f"({cm_norm[i,j]:.1f}%)",
-                    ha="center", va="center",
-                    color="white" if cm[i, j] > thresh else "gray",
-                    fontsize=8)
+            ax.text(
+                j,
+                i + 0.25,
+                f"({cm_norm[i,j]:.1f}%)",
+                ha="center",
+                va="center",
+                color="white" if cm[i, j] > thresh else "gray",
+                fontsize=8,
+            )
 
     acc = np.trace(cm) / cm.sum()
-    ax.set_title(f"{title}\nAccuracy: {acc:.1%}",
-                 fontsize=13, fontweight="bold")
+    ax.set_title(f"{title}\nAccuracy: {acc:.1%}", fontsize=13, fontweight="bold")
     fig.tight_layout()
     fig.savefig(output_path, dpi=dpi, bbox_inches="tight")
     fig.savefig(output_path.replace(".png", ".svg"), bbox_inches="tight")
@@ -617,17 +726,16 @@ def main():
     if getattr(args, "norm", "none") in ["log", "log_std"]:
         X = np.log1p(np.maximum(X, 0))
         logger.info(f"  Applied log normalization (np.log1p(max(X, 0)))")
-        
+
     if getattr(args, "norm", "none") == "log_std":
         from sklearn.preprocessing import StandardScaler
+
         X = StandardScaler().fit_transform(X)
         logger.info(f"  Applied StandardScaler (log_std)")
 
     # ── Split into train / test ──
     logger.info(f"\nSplitting by CSV...")
-    X_train, y_train, X_test, y_test = split_cache_by_csv(
-        X, lines, uids, args.save_dir
-    )
+    X_train, y_train, X_test, y_test = split_cache_by_csv(X, lines, uids, args.save_dir)
 
     all_results = {
         "source": source_label,
@@ -650,8 +758,9 @@ def main():
         knn_results = []
         for k in args.knn_k:
             logger.info(f"\n  k={k}...")
-            result = evaluate_knn(X_train, y_train, X_test, y_test,
-                                  k=k, weights=args.knn_weights)
+            result = evaluate_knn(
+                X_train, y_train, X_test, y_test, k=k, weights=args.knn_weights
+            )
             knn_results.append(result)
 
             logger.info(f"    Accuracy: {result['accuracy']:.4f}")
@@ -659,9 +768,9 @@ def main():
             for c, acc in result["per_class_accuracy"].items():
                 logger.info(f"    {c:>8s}: {acc:.4f}")
 
-        all_results["knn"] = [{k: v for k, v in r.items()
-                                if k != "confusion_matrix"}
-                               for r in knn_results]
+        all_results["knn"] = [
+            {k: v for k, v in r.items() if k != "confusion_matrix"} for r in knn_results
+        ]
 
         # ── Save confusion matrix CSV + PNG for EVERY k ──
         for r in knn_results:
@@ -670,38 +779,49 @@ def main():
 
             # CSV: rows = true class, cols = predicted class
             # Format: source, k, true_class, pred_Control, pred_SNCA, pred_GBA, pred_LRRK2
-            cm_csv_path = os.path.join(
-                out_dir, f"cm_knn_k{k_val}_{source_label}.csv")
+            cm_csv_path = os.path.join(out_dir, f"cm_knn_k{k_val}_{source_label}.csv")
             with open(cm_csv_path, "w", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
-                header = ["source", "k", "true_class"] + \
-                         [f"pred_{CLASS_NAMES[j]}" for j in range(NUM_CLASSES)] + \
-                         ["total", "accuracy"]
+                header = (
+                    ["source", "k", "true_class"]
+                    + [f"pred_{CLASS_NAMES[j]}" for j in range(NUM_CLASSES)]
+                    + ["total", "accuracy"]
+                )
                 writer.writerow(header)
                 for i in range(NUM_CLASSES):
                     row_total = cm[i].sum()
                     row_acc = cm[i, i] / row_total if row_total > 0 else 0
-                    writer.writerow([
-                        source_label, k_val, CLASS_NAMES[i],
-                        *cm[i].tolist(),
-                        int(row_total), f"{row_acc:.4f}",
-                    ])
+                    writer.writerow(
+                        [
+                            source_label,
+                            k_val,
+                            CLASS_NAMES[i],
+                            *cm[i].tolist(),
+                            int(row_total),
+                            f"{row_acc:.4f}",
+                        ]
+                    )
                 # Summary row
-                writer.writerow([
-                    source_label, k_val, "TOTAL",
-                    *cm.sum(axis=0).tolist(),
-                    int(cm.sum()),
-                    f"{r['accuracy']:.4f}",
-                ])
+                writer.writerow(
+                    [
+                        source_label,
+                        k_val,
+                        "TOTAL",
+                        *cm.sum(axis=0).tolist(),
+                        int(cm.sum()),
+                        f"{r['accuracy']:.4f}",
+                    ]
+                )
             logger.info(f"  Saved CM CSV: {cm_csv_path}")
 
             # PNG
-            cm_png_path = os.path.join(
-                out_dir, f"cm_knn_k{k_val}_{source_label}.png")
+            cm_png_path = os.path.join(out_dir, f"cm_knn_k{k_val}_{source_label}.png")
             plot_confusion_matrix(
                 cm,
                 f"KNN (k={k_val}, {args.knn_weights}) — {source_label}",
-                cm_png_path, args.dpi)
+                cm_png_path,
+                args.dpi,
+            )
 
         # K sweep plot
         sweep_path = os.path.join(out_dir, f"knn_sweep_{source_label}.png")
@@ -709,8 +829,10 @@ def main():
 
         # Summary table
         logger.info(f"\n  ── KNN Summary ──")
-        logger.info(f"  {'k':>4s}  {'Acc':>7s}  {'F1':>7s}  "
-                     f"{'Ctrl':>7s}  {'SNCA':>7s}  {'GBA':>7s}  {'LRRK2':>7s}")
+        logger.info(
+            f"  {'k':>4s}  {'Acc':>7s}  {'F1':>7s}  "
+            f"{'Ctrl':>7s}  {'SNCA':>7s}  {'GBA':>7s}  {'LRRK2':>7s}"
+        )
         logger.info(f"  {'─'*55}")
         for r in knn_results:
             logger.info(
@@ -733,31 +855,40 @@ def main():
         for n_shot in args.n_shots:
             logger.info(f"\n  {n_shot}-shot ({args.n_episodes} episodes)...")
             result = evaluate_fewshot(
-                X_train, y_train, X_test, y_test,
+                X_train,
+                y_train,
+                X_test,
+                y_test,
                 n_shot=n_shot,
                 n_episodes=args.n_episodes,
                 seed=args.seed,
             )
             fewshot_results.append(result)
 
-            logger.info(f"    Accuracy: {result['accuracy_mean']:.4f} "
-                        f"± {result['accuracy_std']:.4f}")
-            logger.info(f"    Macro F1: {result['macro_f1_mean']:.4f} "
-                        f"± {result['macro_f1_std']:.4f}")
+            logger.info(
+                f"    Accuracy: {result['accuracy_mean']:.4f} "
+                f"± {result['accuracy_std']:.4f}"
+            )
+            logger.info(
+                f"    Macro F1: {result['macro_f1_mean']:.4f} "
+                f"± {result['macro_f1_std']:.4f}"
+            )
 
-        all_results["fewshot"] = [{k: v for k, v in r.items()
-                                    if k not in ("episode_accs", "episode_f1s")}
-                                   for r in fewshot_results]
+        all_results["fewshot"] = [
+            {k: v for k, v in r.items() if k not in ("episode_accs", "episode_f1s")}
+            for r in fewshot_results
+        ]
 
         # Distribution plot
         dist_path = os.path.join(out_dir, f"fewshot_dist_{source_label}.png")
-        plot_fewshot_distribution(fewshot_results, source_label,
-                                  dist_path, args.dpi)
+        plot_fewshot_distribution(fewshot_results, source_label, dist_path, args.dpi)
 
         # Summary table
         logger.info(f"\n  ── Few-Shot Summary ──")
-        logger.info(f"  {'N-shot':>6s}  {'Acc (mean±std)':>18s}  "
-                     f"{'F1 (mean±std)':>18s}  {'Episodes':>8s}")
+        logger.info(
+            f"  {'N-shot':>6s}  {'Acc (mean±std)':>18s}  "
+            f"{'F1 (mean±std)':>18s}  {'Episodes':>8s}"
+        )
         logger.info(f"  {'─'*55}")
         for r in fewshot_results:
             logger.info(
@@ -777,26 +908,37 @@ def main():
     csv_path = os.path.join(out_dir, f"eval_summary_{source_label}.csv")
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(["Method", "Param", "Accuracy", "Macro_F1",
-                          "Ctrl", "SNCA", "GBA", "LRRK2"])
+        writer.writerow(
+            ["Method", "Param", "Accuracy", "Macro_F1", "Ctrl", "SNCA", "GBA", "LRRK2"]
+        )
         if "knn" in args.eval_modes:
             for r in all_results.get("knn", []):
-                writer.writerow([
-                    "KNN", f"k={r['k']}",
-                    f"{r['accuracy']:.4f}", f"{r['macro_f1']:.4f}",
-                    f"{r['per_class_accuracy'].get('Control',0):.4f}",
-                    f"{r['per_class_accuracy'].get('SNCA',0):.4f}",
-                    f"{r['per_class_accuracy'].get('GBA',0):.4f}",
-                    f"{r['per_class_accuracy'].get('LRRK2',0):.4f}",
-                ])
+                writer.writerow(
+                    [
+                        "KNN",
+                        f"k={r['k']}",
+                        f"{r['accuracy']:.4f}",
+                        f"{r['macro_f1']:.4f}",
+                        f"{r['per_class_accuracy'].get('Control',0):.4f}",
+                        f"{r['per_class_accuracy'].get('SNCA',0):.4f}",
+                        f"{r['per_class_accuracy'].get('GBA',0):.4f}",
+                        f"{r['per_class_accuracy'].get('LRRK2',0):.4f}",
+                    ]
+                )
         if "fewshot" in args.eval_modes:
             for r in all_results.get("fewshot", []):
-                writer.writerow([
-                    "FewShot", f"{r['n_shot']}-shot",
-                    f"{r['accuracy_mean']:.4f}±{r['accuracy_std']:.4f}",
-                    f"{r['macro_f1_mean']:.4f}±{r['macro_f1_std']:.4f}",
-                    "", "", "", "",
-                ])
+                writer.writerow(
+                    [
+                        "FewShot",
+                        f"{r['n_shot']}-shot",
+                        f"{r['accuracy_mean']:.4f}±{r['accuracy_std']:.4f}",
+                        f"{r['macro_f1_mean']:.4f}±{r['macro_f1_std']:.4f}",
+                        "",
+                        "",
+                        "",
+                        "",
+                    ]
+                )
     logger.info(f"Saved CSV: {csv_path}")
 
     logger.info(f"\n{'='*60}")

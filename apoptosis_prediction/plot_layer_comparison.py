@@ -24,28 +24,26 @@
 # XGBoost로 할 때 filter
 
 
+import argparse
+import csv
 import os
 import sys
-import csv
-import argparse
 from collections import defaultdict
 from itertools import combinations
 
+import matplotlib
 import numpy as np
 
-import matplotlib
 if "google.colab" not in sys.modules:
     matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import seaborn as sns
 from matplotlib.patches import FancyArrowPatch
-
 from scipy import stats
 from scipy.stats import wilcoxon
-import seaborn as sns
 
-
-plt.rcParams['svg.fonttype'] = 'none'
-plt.rcParams['pdf.fonttype'] = 42      
+plt.rcParams["svg.fonttype"] = "none"
+plt.rcParams["pdf.fonttype"] = 42
 sns.set_style("ticks")
 
 # ==============================================================================
@@ -60,9 +58,9 @@ LAYER_LABELS = {
     "refine_out": "Refine Out",
 }
 LAYER_COLORS = {
-    "stage5_mid": "#4C72B0",   # muted blue
-    "stage5_out": "#DD8452",   # muted orange
-    "refine_out": "#55A868",   # muted green
+    "stage5_mid": "#4C72B0",  # muted blue
+    "stage5_out": "#DD8452",  # muted orange
+    "refine_out": "#55A868",  # muted green
 }
 
 
@@ -78,15 +76,17 @@ def read_all_folds_csv(csv_path):
     with open(csv_path, "r", newline="") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            rows.append({
-                "config": row["Config"],
-                "seed": int(row["Seed"]),
-                "model": row["Model"],
-                "layer": row["Layer"],
-                "group": row["Group"],
-                "fold_idx": int(row["Fold_idx"]),
-                "r2": float(row["R2"]),
-            })
+            rows.append(
+                {
+                    "config": row["Config"],
+                    "seed": int(row["Seed"]),
+                    "model": row["Model"],
+                    "layer": row["Layer"],
+                    "group": row["Group"],
+                    "fold_idx": int(row["Fold_idx"]),
+                    "r2": float(row["R2"]),
+                }
+            )
     return rows
 
 
@@ -172,7 +172,9 @@ def pairwise_wilcoxon(folds, config, model, group):
 
         common_keys = sorted(set(dict_a.keys()) & set(dict_b.keys()))
         if len(common_keys) < 5:
-            print(f"  ⚠ Wilcoxon skip {group}: {layer_a} vs {layer_b} — only {len(common_keys)} pairs")
+            print(
+                f"  ⚠ Wilcoxon skip {group}: {layer_a} vs {layer_b} — only {len(common_keys)} pairs"
+            )
             continue
 
         r2_a = np.array([dict_a[k] for k in common_keys])
@@ -198,8 +200,15 @@ def draw_bracket(ax, x1, x2, y, h, text, fontsize=9):
     h is the bracket height.
     """
     ax.plot([x1, x1, x2, x2], [y, y + h, y + h, y], lw=1.2, color="black")
-    ax.text((x1 + x2) / 2, y + h, text,
-            ha="center", va="bottom", fontsize=fontsize, fontweight="bold")
+    ax.text(
+        (x1 + x2) / 2,
+        y + h,
+        text,
+        ha="center",
+        va="bottom",
+        fontsize=fontsize,
+        fontweight="bold",
+    )
 
 
 # ==============================================================================
@@ -220,11 +229,13 @@ def plot_layer_comparison(stat_dict, folds_data, results_dir, config, model):
     x_centers = np.arange(n_groups)
 
     # Bar positions within each group
-    offsets = np.array([
-        -(bar_width + gap),
-        0,
-        (bar_width + gap),
-    ])
+    offsets = np.array(
+        [
+            -(bar_width + gap),
+            0,
+            (bar_width + gap),
+        ]
+    )
 
     # Track max bar height for bracket placement
     max_heights = {}  # group_idx -> max bar top (including error bar)
@@ -251,7 +262,7 @@ def plot_layer_comparison(stat_dict, folds_data, results_dir, config, model):
             positions.append(pos)
 
             # Track max height
-            top = (d["ci_hi"] if key in stat_dict else 0)
+            top = d["ci_hi"] if key in stat_dict else 0
             if grp_idx not in max_heights or top > max_heights[grp_idx]:
                 max_heights[grp_idx] = top
 
@@ -259,7 +270,8 @@ def plot_layer_comparison(stat_dict, folds_data, results_dir, config, model):
         errors = np.array([ci_errors_lo, ci_errors_hi])
 
         ax.bar(
-            positions, means,
+            positions,
+            means,
             width=bar_width,
             color=LAYER_COLORS[layer],
             edgecolor="white",
@@ -281,19 +293,28 @@ def plot_layer_comparison(stat_dict, folds_data, results_dir, config, model):
             # Aggregate by seed: mean of folds per seed
             seed_vals = defaultdict(list)
             for row in folds_data:
-                if (row["config"] != config or row["model"] != model
-                        or row["group"] != grp or row["layer"] != layer):
+                if (
+                    row["config"] != config
+                    or row["model"] != model
+                    or row["group"] != grp
+                    or row["layer"] != layer
+                ):
                     continue
                 seed_vals[row["seed"]].append(row["r2"])
             seed_means = np.array([np.mean(v) for v in seed_vals.values()])
 
             rng = np.random.default_rng(42 + layer_idx * 100 + grp_idx)
-            jitter = rng.uniform(-bar_width * 0.25, bar_width * 0.25,
-                                 size=len(seed_means))
+            jitter = rng.uniform(
+                -bar_width * 0.25, bar_width * 0.25, size=len(seed_means)
+            )
             ax.scatter(
-                pos + jitter, seed_means,
-                s=30, color="black", alpha=0.55,
-                edgecolors="white", linewidths=0.4,
+                pos + jitter,
+                seed_means,
+                s=30,
+                color="black",
+                alpha=0.55,
+                edgecolors="white",
+                linewidths=0.4,
                 zorder=5,
             )
 
@@ -334,21 +355,25 @@ def plot_layer_comparison(stat_dict, folds_data, results_dir, config, model):
     # ── Axes formatting ──
     ax.set_xticks(x_centers)
     ax.set_xticklabels(
-        [GENE_LABELS[g] for g in GROUPS_OF_INTEREST],
-        fontsize=12, fontweight="bold"
+        [GENE_LABELS[g] for g in GROUPS_OF_INTEREST], fontsize=12, fontweight="bold"
     )
     ax.set_ylabel("R² (Cell death Rate Prediction)", fontsize=11, fontweight="bold")
     ax.set_title(
         f"Layer-wise Information Content for Cell Death Prediction\n"
         f"({config} | {model})",
-        fontsize=13, fontweight="bold", pad=15
+        fontsize=13,
+        fontweight="bold",
+        pad=15,
     )
 
     # Legend
     ax.legend(
-        title="CNN Layer", title_fontsize=10,
-        fontsize=9, loc="upper left",
-        framealpha=0.9, edgecolor="gray"
+        title="CNN Layer",
+        title_fontsize=10,
+        fontsize=9,
+        loc="upper left",
+        framealpha=0.9,
+        edgecolor="gray",
     )
 
     # Grid
@@ -405,8 +430,10 @@ def print_pairwise_summary(folds, config, model, stat_dict):
             continue
 
         print(f"\n  ── {GENE_LABELS[grp]} ──")
-        print(f"  {'Layer A':15s} {'Layer B':15s} {'N pairs':>8s} "
-              f"{'Mean A':>8s} {'Mean B':>8s} {'p-value':>10s} {'Sig':>5s}")
+        print(
+            f"  {'Layer A':15s} {'Layer B':15s} {'N pairs':>8s} "
+            f"{'Mean A':>8s} {'Mean B':>8s} {'p-value':>10s} {'Sig':>5s}"
+        )
         print("  " + "-" * 75)
 
         for layer_a, layer_b, n_pairs, pval, stars in results:
@@ -415,10 +442,12 @@ def print_pairwise_summary(folds, config, model, stat_dict):
             mean_a = stat_dict[key_a]["mean"] if key_a in stat_dict else 0
             mean_b = stat_dict[key_b]["mean"] if key_b in stat_dict else 0
 
-            print(f"  {LAYER_LABELS[layer_a]:15s} {LAYER_LABELS[layer_b]:15s} "
-                  f"{n_pairs:>8d} "
-                  f"{mean_a:>8.4f} {mean_b:>8.4f} "
-                  f"{pval:>10.6f} {stars:>5s}")
+            print(
+                f"  {LAYER_LABELS[layer_a]:15s} {LAYER_LABELS[layer_b]:15s} "
+                f"{n_pairs:>8d} "
+                f"{mean_a:>8.4f} {mean_b:>8.4f} "
+                f"{pval:>10.6f} {stars:>5s}"
+            )
 
 
 # ==============================================================================
@@ -426,26 +455,41 @@ def print_pairwise_summary(folds, config, model, stat_dict):
 # ==============================================================================
 def save_pairwise_csv(folds, config, model, stat_dict, results_dir):
     """Save pairwise Wilcoxon results to CSV."""
-    csv_path = os.path.join(results_dir, f"layer_pairwise_wilcoxon_{config}_{model}.csv")
+    csv_path = os.path.join(
+        results_dir, f"layer_pairwise_wilcoxon_{config}_{model}.csv"
+    )
     with open(csv_path, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["Gene", "Layer_A", "Layer_B", "N_pairs",
-                     "Mean_R2_A", "Mean_R2_B", "P_value", "Significance"])
+        w.writerow(
+            [
+                "Gene",
+                "Layer_A",
+                "Layer_B",
+                "N_pairs",
+                "Mean_R2_A",
+                "Mean_R2_B",
+                "P_value",
+                "Significance",
+            ]
+        )
 
         for grp in GROUPS_OF_INTEREST:
             results = pairwise_wilcoxon(folds, config, model, grp)
             for layer_a, layer_b, n_pairs, pval, stars in results:
                 key_a = (layer_a, grp)
                 key_b = (layer_b, grp)
-                w.writerow([
-                    GENE_LABELS[grp],
-                    layer_a, layer_b,
-                    n_pairs,
-                    f"{stat_dict[key_a]['mean']:.6f}",
-                    f"{stat_dict[key_b]['mean']:.6f}",
-                    f"{pval:.6f}",
-                    stars,
-                ])
+                w.writerow(
+                    [
+                        GENE_LABELS[grp],
+                        layer_a,
+                        layer_b,
+                        n_pairs,
+                        f"{stat_dict[key_a]['mean']:.6f}",
+                        f"{stat_dict[key_b]['mean']:.6f}",
+                        f"{pval:.6f}",
+                        stars,
+                    ]
+                )
 
     print(f"  Saved pairwise CSV: {csv_path}")
 
@@ -458,16 +502,19 @@ def main():
         description="Plot layer comparison R² bar chart with Wilcoxon tests"
     )
     parser.add_argument(
-        "--results_dir", type=str, required=True,
-        help="Path to results directory containing aggregated_r2_all_folds.csv"
+        "--results_dir",
+        type=str,
+        required=True,
+        help="Path to results directory containing aggregated_r2_all_folds.csv",
     )
     parser.add_argument(
-        "--config", type=str, default="MoCo_l2norm",
-        help="Config to plot (default: MoCo_l2norm) or noNorm"
+        "--config",
+        type=str,
+        default="MoCo_l2norm",
+        help="Config to plot (default: MoCo_l2norm) or noNorm",
     )
     parser.add_argument(
-        "--model", type=str, default="Ridge",
-        help="Model to plot (default: Ridge)"
+        "--model", type=str, default="Ridge", help="Model to plot (default: Ridge)"
     )
     args = parser.parse_args()
 
@@ -492,9 +539,11 @@ def main():
             key = (layer, grp)
             if key in stat_dict:
                 d = stat_dict[key]
-                print(f"  {LAYER_LABELS[layer]:15s} | {GENE_LABELS[grp]:5s}: "
-                      f"R²={d['mean']:.4f} [{d['ci_lo']:.4f}, {d['ci_hi']:.4f}]  "
-                      f"(n={d['n']})")
+                print(
+                    f"  {LAYER_LABELS[layer]:15s} | {GENE_LABELS[grp]:5s}: "
+                    f"R²={d['mean']:.4f} [{d['ci_lo']:.4f}, {d['ci_hi']:.4f}]  "
+                    f"(n={d['n']})"
+                )
 
     # ── Pairwise tests ──
     print_pairwise_summary(folds, args.config, args.model, stat_dict)

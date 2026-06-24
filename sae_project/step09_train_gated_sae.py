@@ -3,18 +3,18 @@
 # - L2-weighted reconstruction loss
 # - Sparsity warmup schedule
 # - lr 도 스케쥴러 선택가능. lienar cosine. 나는 cosine으로 학습시킴.
-# --dead_threshold로 dead neuron 기준 바꿀 수 있다. 
+# --dead_threshold로 dead neuron 기준 바꿀 수 있다.
 # - Automated grid search for sparsity, aux_coeff, tie_weights
 # - Linear probe evaluation for classification accuracy
 # ==============================================================================
 
 
-import os
 import csv
-import random
-import numpy as np
 import itertools
+import os
+import random
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -24,18 +24,20 @@ from tqdm.auto import tqdm
 
 from sae_project.step01_configs import get_args, resolve_paths
 from sae_project.step02_logging_utils import get_logger
-from sae_project.step03_data_shards import load_all_sample_refs, build_uid_to_refidx
+from sae_project.step03_data_shards import (build_uid_to_refidx,
+                                            load_all_sample_refs)
 from sae_project.step04_data_bank import (
-    InMemoryTarBank, InMemorySixteenBitDataset, load_split_csv,
-    seed_worker, collate_skip_none, StrictPlateBalancedBatchSamplerOnBank
-)
-from sae_project.step05_model_encoder import SupMoCoModel, parse_int_list, renorm_unit_per_out_channel_
+    InMemorySixteenBitDataset, InMemoryTarBank,
+    StrictPlateBalancedBatchSamplerOnBank, collate_skip_none, load_split_csv,
+    seed_worker)
+from sae_project.step05_model_encoder import (SupMoCoModel, parse_int_list,
+                                              renorm_unit_per_out_channel_)
 from sae_project.step06_gated_sae import GatedSAE, get_sparsity_coeff
-
-from sae_project.step09_sae_eval import (
-    LinearProbe, extract_sae_repr_for_probe, train_linear_probe,
-    compute_effective_rank, evaluate_concepts_for_sae, DummyTrainer,
-)
+from sae_project.step09_sae_eval import (DummyTrainer, LinearProbe,
+                                         compute_effective_rank,
+                                         evaluate_concepts_for_sae,
+                                         extract_sae_repr_for_probe,
+                                         train_linear_probe)
 
 logger = get_logger("train_gated_sae")
 
@@ -54,7 +56,8 @@ def set_seed(seed: int):
     except Exception:
         pass
 
-# fvu 
+
+# fvu
 @torch.no_grad()
 def _sse_sst(x: torch.Tensor, xhat: torch.Tensor):
     diff = xhat - x
@@ -70,22 +73,25 @@ def summarize_usage(usage_ema: torch.Tensor, dead_threshold: float):
     """Compute detailed usage statistics for dead neuron analysis."""
     u = usage_ema.detach().float().flatten()
     d = u.numel()
-    
+
     dead_1e6 = int((u < 1e-6).sum().item())
     dead_1e5 = int((u < 1e-5).sum().item())
     dead_1e4 = int((u < 1e-4).sum().item())
     dead_1e3 = int((u < 1e-3).sum().item())
     dead_1e2 = int((u < 1e-2).sum().item())
     dead_custom = int((u < dead_threshold).sum().item())
-    
-    qs = torch.tensor([0.0, 0.01, 0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95, 0.99, 1.0], device=u.device)
+
+    qs = torch.tensor(
+        [0.0, 0.01, 0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95, 0.99, 1.0],
+        device=u.device,
+    )
     p = torch.quantile(u, qs).tolist()
-    
+
     very_low = int((u < 0.01).sum().item())
     low = int(((u >= 0.01) & (u < 0.1)).sum().item())
     medium = int(((u >= 0.1) & (u < 0.5)).sum().item())
     high = int((u >= 0.5).sum().item())
-    
+
     return {
         "total_features": d,
         "dead": dead_custom,
@@ -99,9 +105,17 @@ def summarize_usage(usage_ema: torch.Tensor, dead_threshold: float):
         "freq_low": low,
         "freq_medium": medium,
         "freq_high": high,
-        "min": float(p[0]), "p01": float(p[1]), "p05": float(p[2]), "p10": float(p[3]),
-        "p25": float(p[4]), "p50": float(p[5]), "p75": float(p[6]),
-        "p90": float(p[7]), "p95": float(p[8]), "p99": float(p[9]), "max": float(p[10]),
+        "min": float(p[0]),
+        "p01": float(p[1]),
+        "p05": float(p[2]),
+        "p10": float(p[3]),
+        "p25": float(p[4]),
+        "p50": float(p[5]),
+        "p75": float(p[6]),
+        "p90": float(p[7]),
+        "p95": float(p[8]),
+        "p99": float(p[9]),
+        "max": float(p[10]),
         "mean": float(u.mean().item()),
         "std": float(u.std().item()),
     }
@@ -123,9 +137,14 @@ def format_usage_summary(s):
 
 
 class GatedSAETrainer:
-    def __init__(self, args, encoder, train_loader: DataLoader,
-                 val_loader: DataLoader | None = None,
-                 test_loader: DataLoader | None = None):
+    def __init__(
+        self,
+        args,
+        encoder,
+        train_loader: DataLoader,
+        val_loader: DataLoader | None = None,
+        test_loader: DataLoader | None = None,
+    ):
         self.args = args
         self.encoder = encoder
         self.train_loader = train_loader
@@ -133,9 +152,13 @@ class GatedSAETrainer:
         self.test_loader = test_loader
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        logger.info(f"[env] torch={torch.__version__}, cuda_available={torch.cuda.is_available()}, device={self.device}")
+        logger.info(
+            f"[env] torch={torch.__version__}, cuda_available={torch.cuda.is_available()}, device={self.device}"
+        )
         if torch.cuda.is_available():
-            logger.info(f"[env] cuda={torch.version.cuda}, gpu={torch.cuda.get_device_name(0)}")
+            logger.info(
+                f"[env] cuda={torch.version.cuda}, gpu={torch.cuda.get_device_name(0)}"
+            )
 
         self.encoder.eval().to(self.device).to(memory_format=torch.channels_last)
         for p in self.encoder.parameters():
@@ -164,13 +187,17 @@ class GatedSAETrainer:
             self.sae.parameters(),
             lr=args.sae_lr,
             betas=(0.9, 0.999),
-            weight_decay=args.sae_wd
+            weight_decay=args.sae_wd,
         )
 
         self.use_bf16 = bool(args.use_bf16) and (self.device.type == "cuda")
-        self.scaler = torch.amp.GradScaler("cuda", enabled=(torch.cuda.is_available() and not self.use_bf16))
+        self.scaler = torch.amp.GradScaler(
+            "cuda", enabled=(torch.cuda.is_available() and not self.use_bf16)
+        )
 
-        self.autocast_kwargs = dict(device_type="cuda", enabled=torch.cuda.is_available())
+        self.autocast_kwargs = dict(
+            device_type="cuda", enabled=torch.cuda.is_available()
+        )
         if self.use_bf16:
             self.autocast_kwargs["dtype"] = torch.bfloat16
 
@@ -188,12 +215,16 @@ class GatedSAETrainer:
             exp_name += "_clust"
 
         os.makedirs(args.sae_save_dir, exist_ok=True)
-        
+
         self.layer_name = args.which_layer
         self.base_filename = f"{self.layer_name}_d{args.d_sae}_{exp_name}"
         self.ckpt_path = os.path.join(args.sae_save_dir, f"{self.base_filename}.pt")
-        self.best_ckpt_path = os.path.join(args.sae_save_dir, f"{self.base_filename}_BEST.pt")
-        self.log_csv_path = os.path.join(args.sae_save_dir, f"{self.base_filename}_trainlog.csv")
+        self.best_ckpt_path = os.path.join(
+            args.sae_save_dir, f"{self.base_filename}_BEST.pt"
+        )
+        self.log_csv_path = os.path.join(
+            args.sae_save_dir, f"{self.base_filename}_trainlog.csv"
+        )
 
         self._init_log_csv()
 
@@ -219,53 +250,83 @@ class GatedSAETrainer:
         self.lr_warmup_fraction = getattr(args, "lr_warmup_fraction", 0.1)
         self.lr_warmup_steps = int(self.total_steps * self.lr_warmup_fraction)
         self.base_lr = args.sae_lr
-        
+
         if self.lr_scheduler_type == "cosine":
-            from torch.optim.lr_scheduler import LambdaLR
             import math
-            
+
+            from torch.optim.lr_scheduler import LambdaLR
+
             def lr_lambda(step):
                 if step < self.lr_warmup_steps:
                     return step / max(1, self.lr_warmup_steps)
                 else:
-                    progress = (step - self.lr_warmup_steps) / max(1, self.total_steps - self.lr_warmup_steps)
+                    progress = (step - self.lr_warmup_steps) / max(
+                        1, self.total_steps - self.lr_warmup_steps
+                    )
                     return 0.5 * (1.0 + math.cos(math.pi * progress))
-            
+
             self.scheduler = LambdaLR(self.opt, lr_lambda)
         elif self.lr_scheduler_type == "linear":
             from torch.optim.lr_scheduler import LambdaLR
-            
+
             def lr_lambda(step):
                 if step < self.lr_warmup_steps:
                     return step / max(1, self.lr_warmup_steps)
                 else:
-                    progress = (step - self.lr_warmup_steps) / max(1, self.total_steps - self.lr_warmup_steps)
+                    progress = (step - self.lr_warmup_steps) / max(
+                        1, self.total_steps - self.lr_warmup_steps
+                    )
                     return max(0.0, 1.0 - progress)
-            
+
             self.scheduler = LambdaLR(self.opt, lr_lambda)
         else:
             self.scheduler = None
 
-        logger.info(f"[GatedSAE] tie_weights={getattr(args, 'tie_gate_weights', False)}, "
-                    f"aux_coeff={self.aux_coeff}, final_sparsity={self.final_sparsity_coeff}")
-        logger.info(f"[GatedSAE] token_l2_norm_weighting={getattr(args, 'token_l2_norm', False)} "
-                    f"(loss에서 CNN 토큰 L2 norm으로 가중)")
-        logger.info(f"[GatedSAE] sparsity_warmup_steps={self.sparsity_warmup_steps}, total_steps={self.total_steps}")
-        logger.info(f"[GatedSAE] gradient_accumulation_steps={self.grad_accum_steps}, effective_batch={args.batch_size * self.grad_accum_steps}")
-        logger.info(f"[GatedSAE] lr_scheduler={self.lr_scheduler_type}, lr_warmup_steps={self.lr_warmup_steps}, weight_decay={args.sae_wd}")
+        logger.info(
+            f"[GatedSAE] tie_weights={getattr(args, 'tie_gate_weights', False)}, "
+            f"aux_coeff={self.aux_coeff}, final_sparsity={self.final_sparsity_coeff}"
+        )
+        logger.info(
+            f"[GatedSAE] token_l2_norm_weighting={getattr(args, 'token_l2_norm', False)} "
+            f"(loss에서 CNN 토큰 L2 norm으로 가중)"
+        )
+        logger.info(
+            f"[GatedSAE] sparsity_warmup_steps={self.sparsity_warmup_steps}, total_steps={self.total_steps}"
+        )
+        logger.info(
+            f"[GatedSAE] gradient_accumulation_steps={self.grad_accum_steps}, effective_batch={args.batch_size * self.grad_accum_steps}"
+        )
+        logger.info(
+            f"[GatedSAE] lr_scheduler={self.lr_scheduler_type}, lr_warmup_steps={self.lr_warmup_steps}, weight_decay={args.sae_wd}"
+        )
 
     def _init_log_csv(self):
         if not os.path.exists(self.log_csv_path):
             with open(self.log_csv_path, "w", newline="", encoding="utf-8") as f:
                 w = csv.writer(f)
-                w.writerow([
-                    "epoch", "step",
-                    "train_recon", "train_sparsity", "train_aux", "train_total", "train_fvu",
-                    "val_recon", "val_sparsity", "val_aux", "val_total", "val_fvu",
-                    "test_recon", "test_sparsity", "test_aux", "test_total", "test_fvu",
-                    "dead_count", "sparsity_coeff"
-                ])
-
+                w.writerow(
+                    [
+                        "epoch",
+                        "step",
+                        "train_recon",
+                        "train_sparsity",
+                        "train_aux",
+                        "train_total",
+                        "train_fvu",
+                        "val_recon",
+                        "val_sparsity",
+                        "val_aux",
+                        "val_total",
+                        "val_fvu",
+                        "test_recon",
+                        "test_sparsity",
+                        "test_aux",
+                        "test_total",
+                        "test_fvu",
+                        "dead_count",
+                        "sparsity_coeff",
+                    ]
+                )
 
     @torch.no_grad()
     def _extract_tokens_with_l2norms(self, x: torch.Tensor):
@@ -276,7 +337,11 @@ class GatedSAETrainer:
         norm_mode = getattr(self.args, "token_norm_mode", "gap-scalar")
         if norm_mode == "gap-scalar":
             gap = fmap.mean(dim=(2, 3))
-            gap_norms = gap.norm(dim=1, keepdim=True).view(curr_batch_size, 1, 1, 1).clamp_min(1e-12)
+            gap_norms = (
+                gap.norm(dim=1, keepdim=True)
+                .view(curr_batch_size, 1, 1, 1)
+                .clamp_min(1e-12)
+            )
             fmap = fmap / gap_norms
 
         fmap = fmap.permute(0, 2, 3, 1).contiguous()
@@ -353,35 +418,39 @@ class GatedSAETrainer:
                 "python": random.getstate(),
                 "numpy": np.random.get_state(),
                 "torch": torch.get_rng_state(),
-                "cuda": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
-            }
+                "cuda": (
+                    torch.cuda.get_rng_state_all()
+                    if torch.cuda.is_available()
+                    else None
+                ),
+            },
         }
         torch.save(ckpt, path)
 
     def cleanup_for_eval(self):
         """Release GPU VRAM used by optimizer and training state before evaluation."""
         import gc
-        
+
         if hasattr(self, "opt") and self.opt is not None:
             del self.opt
             self.opt = None
-        
+
         if hasattr(self, "scaler") and self.scaler is not None:
             del self.scaler
             self.scaler = None
-        
+
         for loader in [self.train_loader, self.val_loader, self.test_loader]:
             if loader is not None and hasattr(loader, "dataset"):
                 ds = loader.dataset
                 if hasattr(ds, "bank") and hasattr(ds.bank, "images"):
                     ds.bank.images = None
-        
+
         gc.collect()
-        
+
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             torch.cuda.synchronize()
-        
+
         logger.info("[MEM] Trainer cleanup complete for evaluation")
 
     @torch.no_grad()
@@ -398,7 +467,9 @@ class GatedSAETrainer:
             if x_cpu.numel() < 1:
                 continue
 
-            x = x_cpu.to(self.device, non_blocking=True).contiguous(memory_format=torch.channels_last)
+            x = x_cpu.to(self.device, non_blocking=True).contiguous(
+                memory_format=torch.channels_last
+            )
             tokens, l2_norms = self._extract_tokens_with_l2norms(x)
 
             Tb = self.token_batch
@@ -408,8 +479,8 @@ class GatedSAETrainer:
             chunks = 0
 
             for s in range(0, n, Tb):
-                tok = tokens[s:s+Tb]
-                l2n = l2_norms[s:s+Tb]
+                tok = tokens[s : s + Tb]
+                l2n = l2_norms[s : s + Tb]
 
                 with torch.amp.autocast(**self.autocast_kwargs):
                     _, L_recon, L_sparsity, L_aux, _ = self._compute_loss(
@@ -441,7 +512,11 @@ class GatedSAETrainer:
         recon_avg = recon_sum / steps
         sparsity_avg = sparsity_sum / steps
         aux_avg = aux_sum / steps
-        total = recon_avg + self.final_sparsity_coeff * sparsity_avg + self.aux_coeff * aux_avg
+        total = (
+            recon_avg
+            + self.final_sparsity_coeff * sparsity_avg
+            + self.aux_coeff * aux_avg
+        )
 
         fvu = 0.0
         if getattr(self.args, "log_fvu", False):
@@ -451,21 +526,34 @@ class GatedSAETrainer:
 
     def train(self):
         logger.info(f"[GatedSAE] device={self.device}, bf16={self.use_bf16}")
-        logger.info(f"[GatedSAE] which_layer={self.args.which_layer}, d_in={self.args.d_in}, d_sae={self.args.d_sae}")
-        logger.info(f"[GatedSAE] token_batch={self.token_batch}, shuffle_tokens={self.shuffle_tokens}")
+        logger.info(
+            f"[GatedSAE] which_layer={self.args.which_layer}, d_in={self.args.d_in}, d_sae={self.args.d_sae}"
+        )
+        logger.info(
+            f"[GatedSAE] token_batch={self.token_batch}, shuffle_tokens={self.shuffle_tokens}"
+        )
 
         # Warmup
         if self.device.type == "cuda":
             with torch.no_grad():
-                dummy = torch.zeros(2, 3, self.args.img_size, self.args.img_size, device=self.device).contiguous(memory_format=torch.channels_last)
-                _ = self.encoder.forward_feature_maps(dummy, which=self.args.which_layer)
+                dummy = torch.zeros(
+                    2, 3, self.args.img_size, self.args.img_size, device=self.device
+                ).contiguous(memory_format=torch.channels_last)
+                _ = self.encoder.forward_feature_maps(
+                    dummy, which=self.args.which_layer
+                )
 
         for epoch in range(1, self.args.epochs + 1):
             self.sae.train()
-            
+
             current_aux = self.aux_coeff
 
-            train_recon_sum, train_sparsity_sum, train_aux_sum, train_steps = 0.0, 0.0, 0.0, 0
+            train_recon_sum, train_sparsity_sum, train_aux_sum, train_steps = (
+                0.0,
+                0.0,
+                0.0,
+                0,
+            )
             train_sse_sum, train_sst_sum = 0.0, 0.0
             dead_count_epoch = 0
 
@@ -473,7 +561,11 @@ class GatedSAETrainer:
             accum_count = 0
             self.opt.zero_grad(set_to_none=True)
 
-            pbar = tqdm(self.train_loader, desc=f"GatedSAE Train E{epoch}/{self.args.epochs}", leave=True)
+            pbar = tqdm(
+                self.train_loader,
+                desc=f"GatedSAE Train E{epoch}/{self.args.epochs}",
+                leave=True,
+            )
             for batch_idx, batch in enumerate(pbar):
                 if batch is None:
                     continue
@@ -481,7 +573,9 @@ class GatedSAETrainer:
                 if x_cpu.numel() < 1:
                     continue
 
-                x = x_cpu.to(self.device, non_blocking=True).contiguous(memory_format=torch.channels_last)
+                x = x_cpu.to(self.device, non_blocking=True).contiguous(
+                    memory_format=torch.channels_last
+                )
                 tokens, l2_norms = self._extract_tokens_with_l2norms(x)
 
                 Tb = self.token_batch
@@ -494,7 +588,7 @@ class GatedSAETrainer:
                     self.sparsity_warmup_steps,
                     self.final_sparsity_coeff,
                     self.total_steps,
-                    ramp_fraction=getattr(self.args, 'sparsity_ramp_fraction', 0.1)
+                    ramp_fraction=getattr(self.args, "sparsity_ramp_fraction", 0.1),
                 )
 
                 recon_acc, sparsity_acc, aux_acc = 0.0, 0.0, 0.0
@@ -502,8 +596,8 @@ class GatedSAETrainer:
                 chunks_count = (n + Tb - 1) // Tb
 
                 for s in range(0, n, Tb):
-                    tok = tokens[s:s+Tb]
-                    l2n = l2_norms[s:s+Tb]
+                    tok = tokens[s : s + Tb]
+                    l2n = l2_norms[s : s + Tb]
 
                     with torch.amp.autocast(**self.autocast_kwargs):
                         loss, L_recon, L_sparsity, L_aux, acts = self._compute_loss(
@@ -518,7 +612,9 @@ class GatedSAETrainer:
                         self.scaler.scale(loss).backward()
 
                     with torch.no_grad():
-                        self.sae.update_usage_ema_(acts.detach(), ema=float(self.args.usage_ema))
+                        self.sae.update_usage_ema_(
+                            acts.detach(), ema=float(self.args.usage_ema)
+                        )
 
                     recon_acc += float(L_recon.item())
                     sparsity_acc += float(L_sparsity.item())
@@ -535,7 +631,7 @@ class GatedSAETrainer:
                 recon_step = recon_acc / max(1, chunks)
                 sparsity_step = sparsity_acc / max(1, chunks)
                 aux_step = aux_acc / max(1, chunks)
-                
+
                 accum_recon += recon_step
                 accum_sparsity += sparsity_step
                 accum_aux += aux_step
@@ -544,12 +640,14 @@ class GatedSAETrainer:
                 if accum_count >= self.grad_accum_steps:
                     if not self.use_bf16:
                         self.scaler.unscale_(self.opt)
-                    
+
                     self.sae.project_decoder_grads_()
-                    
+
                     if self.args.grad_clip > 0:
-                        torch.nn.utils.clip_grad_norm_(self.sae.parameters(), float(self.args.grad_clip))
-                    
+                        torch.nn.utils.clip_grad_norm_(
+                            self.sae.parameters(), float(self.args.grad_clip)
+                        )
+
                     if self.use_bf16:
                         self.opt.step()
                     else:
@@ -558,7 +656,11 @@ class GatedSAETrainer:
 
                     self.sae.renorm_decoder_()
 
-                    dead_count = int((self.sae.usage_ema < float(self.args.dead_threshold)).sum().item())
+                    dead_count = int(
+                        (self.sae.usage_ema < float(self.args.dead_threshold))
+                        .sum()
+                        .item()
+                    )
                     dead_count_epoch = dead_count
 
                     if self.scheduler is not None:
@@ -575,15 +677,17 @@ class GatedSAETrainer:
                     train_aux_sum += avg_aux
                     train_steps += 1
 
-                    current_lr = self.opt.param_groups[0]['lr']
-                    pbar.set_postfix({
-                        "recon": f"{avg_recon:.4f}",
-                        "sp": f"{avg_sparsity:.4f}",
-                        "aux": f"{avg_aux:.4f}",
-                        "λsp": f"{current_sparsity:.2f}",
-                        "dead": dead_count,
-                        "lr": f"{current_lr:.2e}",
-                    })
+                    current_lr = self.opt.param_groups[0]["lr"]
+                    pbar.set_postfix(
+                        {
+                            "recon": f"{avg_recon:.4f}",
+                            "sp": f"{avg_sparsity:.4f}",
+                            "aux": f"{avg_aux:.4f}",
+                            "λsp": f"{current_sparsity:.2f}",
+                            "dead": dead_count,
+                            "lr": f"{current_lr:.2e}",
+                        }
+                    )
 
                     if (self.global_step % int(self.args.save_every)) == 0:
                         self.save_ckpt(self.ckpt_path)
@@ -592,14 +696,16 @@ class GatedSAETrainer:
                     accum_count = 0
                     self.opt.zero_grad(set_to_none=True)
                 else:
-                    pbar.set_postfix({
-                        "recon": f"{recon_step:.4f}",
-                        "sp": f"{sparsity_step:.4f}",
-                        "aux": f"{aux_step:.4f}",
-                        "λsp": f"{current_sparsity:.2f}",
-                        "αaux": f"{current_aux:.4f}",
-                        "acc": f"{accum_count}/{self.grad_accum_steps}",
-                    })
+                    pbar.set_postfix(
+                        {
+                            "recon": f"{recon_step:.4f}",
+                            "sp": f"{sparsity_step:.4f}",
+                            "aux": f"{aux_step:.4f}",
+                            "λsp": f"{current_sparsity:.2f}",
+                            "αaux": f"{current_aux:.4f}",
+                            "acc": f"{accum_count}/{self.grad_accum_steps}",
+                        }
+                    )
 
             # Handle remaining accumulated gradients
             if accum_count > 0:
@@ -607,7 +713,9 @@ class GatedSAETrainer:
                     self.scaler.unscale_(self.opt)
                 self.sae.project_decoder_grads_()
                 if self.args.grad_clip > 0:
-                    torch.nn.utils.clip_grad_norm_(self.sae.parameters(), float(self.args.grad_clip))
+                    torch.nn.utils.clip_grad_norm_(
+                        self.sae.parameters(), float(self.args.grad_clip)
+                    )
                 if self.use_bf16:
                     self.opt.step()
                 else:
@@ -615,7 +723,7 @@ class GatedSAETrainer:
                     self.scaler.update()
                 self.sae.renorm_decoder_()
                 self.global_step += 1
-                
+
                 avg_recon = accum_recon / accum_count
                 avg_sparsity = accum_sparsity / accum_count
                 avg_aux = accum_aux / accum_count
@@ -627,31 +735,50 @@ class GatedSAETrainer:
 
             # Epoch summaries
             if train_steps == 0:
-                train_recon_avg = train_sparsity_avg = train_aux_avg = train_total = train_fvu = 0.0
+                train_recon_avg = train_sparsity_avg = train_aux_avg = train_total = (
+                    train_fvu
+                ) = 0.0
             else:
                 train_recon_avg = train_recon_sum / train_steps
                 train_sparsity_avg = train_sparsity_sum / train_steps
                 train_aux_avg = train_aux_sum / train_steps
-                train_total = train_recon_avg + self.final_sparsity_coeff * train_sparsity_avg + self.aux_coeff * train_aux_avg
+                train_total = (
+                    train_recon_avg
+                    + self.final_sparsity_coeff * train_sparsity_avg
+                    + self.aux_coeff * train_aux_avg
+                )
                 train_fvu = 0.0
                 if getattr(self.args, "log_fvu", False):
-                    train_fvu = 0.0 if train_sst_sum <= 1e-12 else float(train_sse_sum / train_sst_sum)
+                    train_fvu = (
+                        0.0
+                        if train_sst_sum <= 1e-12
+                        else float(train_sse_sum / train_sst_sum)
+                    )
 
             val_recon = val_sparsity = val_aux = val_total = val_fvu = 0.0
             test_recon = test_sparsity = test_aux = test_total = test_fvu = 0.0
 
             if self.val_loader is not None:
-                val_recon, val_sparsity, val_aux, val_total, val_fvu = self.eval_epoch(self.val_loader, "Val")
+                val_recon, val_sparsity, val_aux, val_total, val_fvu = self.eval_epoch(
+                    self.val_loader, "Val"
+                )
             if self.test_loader is not None:
-                test_recon, test_sparsity, test_aux, test_total, test_fvu = self.eval_epoch(self.test_loader, "Test")
+                test_recon, test_sparsity, test_aux, test_total, test_fvu = (
+                    self.eval_epoch(self.test_loader, "Test")
+                )
 
             metric = val_total if (self.val_loader is not None) else train_total
 
-            usage_stats = summarize_usage(self.sae.usage_ema, float(self.args.dead_threshold))
+            usage_stats = summarize_usage(
+                self.sae.usage_ema, float(self.args.dead_threshold)
+            )
             dead_count_epoch = usage_stats["dead"]
 
             current_sparsity = get_sparsity_coeff(
-                self.global_step, self.sparsity_warmup_steps, self.final_sparsity_coeff, self.total_steps
+                self.global_step,
+                self.sparsity_warmup_steps,
+                self.final_sparsity_coeff,
+                self.total_steps,
             )
 
             tqdm.write(
@@ -668,55 +795,96 @@ class GatedSAETrainer:
 
             with open(self.log_csv_path, "a", newline="", encoding="utf-8") as f:
                 w = csv.writer(f)
-                w.writerow([
-                    epoch, self.global_step,
-                    train_recon_avg, train_sparsity_avg, train_aux_avg, train_total, train_fvu,
-                    val_recon, val_sparsity, val_aux, val_total, val_fvu,
-                    test_recon, test_sparsity, test_aux, test_total, test_fvu,
-                    dead_count_epoch, current_sparsity
-                ])
+                w.writerow(
+                    [
+                        epoch,
+                        self.global_step,
+                        train_recon_avg,
+                        train_sparsity_avg,
+                        train_aux_avg,
+                        train_total,
+                        train_fvu,
+                        val_recon,
+                        val_sparsity,
+                        val_aux,
+                        val_total,
+                        val_fvu,
+                        test_recon,
+                        test_sparsity,
+                        test_aux,
+                        test_total,
+                        test_fvu,
+                        dead_count_epoch,
+                        current_sparsity,
+                    ]
+                )
 
             self.save_ckpt(self.ckpt_path)
-            
+
             epoch_ckpt_path = self.ckpt_path.replace(".pt", f"_ep{epoch:03d}.pt")
             self.save_ckpt(epoch_ckpt_path)
-            tqdm.write(f"  -> Saved Epoch {epoch} to {os.path.basename(epoch_ckpt_path)}")
+            tqdm.write(
+                f"  -> Saved Epoch {epoch} to {os.path.basename(epoch_ckpt_path)}"
+            )
 
             if getattr(self.args, "save_best", False):
                 if metric < self.best_metric:
                     self.best_metric = float(metric)
                     self.best_fvu = test_fvu if test_fvu else val_fvu
                     self.save_ckpt(self.best_ckpt_path)
-                    tqdm.write(f"  -> Saved BEST to {self.best_ckpt_path} (metric={self.best_metric:.6f})")
-            
+                    tqdm.write(
+                        f"  -> Saved BEST to {self.best_ckpt_path} (metric={self.best_metric:.6f})"
+                    )
+
             self.last_fvu = test_fvu if test_fvu else val_fvu
 
         logger.info(f"[GatedSAE] Done. Saved -> {self.ckpt_path}")
 
 
-def _make_loader_from_split(args, refs, uid_to_refidx, split_csv_path: str,
-                           batch_size: int, augment: bool, shuffle: bool,
-                           strict_balance: bool, seed: int, explicit_4x_augment: bool = False):
+def _make_loader_from_split(
+    args,
+    refs,
+    uid_to_refidx,
+    split_csv_path: str,
+    batch_size: int,
+    augment: bool,
+    shuffle: bool,
+    strict_balance: bool,
+    seed: int,
+    explicit_4x_augment: bool = False,
+):
     if not os.path.exists(split_csv_path):
         return None
 
     uids = load_split_csv(split_csv_path)
     missing = [u for u in uids if u not in uid_to_refidx]
     if len(missing) > 0:
-        raise RuntimeError(f"Some uids in split are missing under current shard_root. ex: {missing[:5]}")
+        raise RuntimeError(
+            f"Some uids in split are missing under current shard_root. ex: {missing[:5]}"
+        )
     refidx = [uid_to_refidx[u] for u in uids]
 
     bank = InMemoryTarBank(refs, refidx, args.img_size)
     ib = list(range(len(refidx)))
-    ds = InMemorySixteenBitDataset(bank, ib, args.img_size, augment=augment, explicit_4x_augment=explicit_4x_augment)
-    
+    ds = InMemorySixteenBitDataset(
+        bank,
+        ib,
+        args.img_size,
+        augment=augment,
+        explicit_4x_augment=explicit_4x_augment,
+    )
+
     if explicit_4x_augment:
-        logger.info(f"[DataLoader] explicit_4x_augment=True: {len(refidx)} images → {len(ds)} samples (4x)")
+        logger.info(
+            f"[DataLoader] explicit_4x_augment=True: {len(refidx)} images → {len(ds)} samples (4x)"
+        )
 
     pin = torch.cuda.is_available()
 
     if strict_balance:
-        sampler = StrictPlateBalancedBatchSamplerOnBank(bank, batch_size=batch_size, seed=seed)
+        sampler = StrictPlateBalancedBatchSamplerOnBank(
+            bank, batch_size=batch_size, seed=seed
+        )
         loader = DataLoader(
             ds,
             batch_sampler=sampler,
@@ -743,7 +911,7 @@ def _make_loader_from_split(args, refs, uid_to_refidx, split_csv_path: str,
 def run_experiment(args, refs=None, uid_to_refidx=None, encoder=None):
     """
     Run a single Gated SAE training experiment.
-    
+
     Returns:
         trainer: GatedSAETrainer object (with trained SAE)
         ckpt_path: Path to saved checkpoint
@@ -761,7 +929,9 @@ def run_experiment(args, refs=None, uid_to_refidx=None, encoder=None):
     use_explicit_4x = getattr(args, "explicit_4x_augment", False)
 
     train_loader = _make_loader_from_split(
-        args, refs, uid_to_refidx,
+        args,
+        refs,
+        uid_to_refidx,
         split_csv_path=train_csv,
         batch_size=int(args.batch_size),
         augment=True if not use_explicit_4x else False,
@@ -775,29 +945,41 @@ def run_experiment(args, refs=None, uid_to_refidx=None, encoder=None):
     val_loader = None
     if getattr(args, "use_val", False):
         val_csv = os.path.join(args.save_dir, "val_split.csv")
-        vbs = int(args.batch_size) if int(getattr(args, "val_batch_size", 0)) <= 0 else int(args.val_batch_size)
+        vbs = (
+            int(args.batch_size)
+            if int(getattr(args, "val_batch_size", 0)) <= 0
+            else int(args.val_batch_size)
+        )
         val_loader = _make_loader_from_split(
-            args, refs, uid_to_refidx,
+            args,
+            refs,
+            uid_to_refidx,
             split_csv_path=val_csv,
             batch_size=vbs,
             augment=False,
             shuffle=False,
             strict_balance=True,
-            seed=int(args.seed) + 1
+            seed=int(args.seed) + 1,
         )
 
     test_loader = None
     if getattr(args, "use_test", False):
         test_csv = os.path.join(args.save_dir, "test_split.csv")
-        tbs = int(args.batch_size) if int(getattr(args, "test_batch_size", 0)) <= 0 else int(args.test_batch_size)
+        tbs = (
+            int(args.batch_size)
+            if int(getattr(args, "test_batch_size", 0)) <= 0
+            else int(args.test_batch_size)
+        )
         test_loader = _make_loader_from_split(
-            args, refs, uid_to_refidx,
+            args,
+            refs,
+            uid_to_refidx,
             split_csv_path=test_csv,
             batch_size=tbs,
             augment=False,
             shuffle=False,
             strict_balance=True,
-            seed=int(args.seed) + 2
+            seed=int(args.seed) + 2,
         )
 
     if encoder is None:
@@ -818,12 +1000,15 @@ def run_experiment(args, refs=None, uid_to_refidx=None, encoder=None):
 
         sd = torch.load(args.model_state_path, map_location="cpu", weights_only=False)
         from sae_project.step05_model_encoder import robust_load_state_dict
+
         robust_load_state_dict(model, sd, strict=True)
         encoder = model.encoder
 
-    trainer = GatedSAETrainer(args, encoder, train_loader, val_loader=val_loader, test_loader=test_loader)
+    trainer = GatedSAETrainer(
+        args, encoder, train_loader, val_loader=val_loader, test_loader=test_loader
+    )
     trainer.train()
-    
+
     return trainer, trainer.ckpt_path
 
 
@@ -835,25 +1020,43 @@ def _make_eval_loaders(args, refs, uid_to_refidx):
     train_csv = os.path.join(args.save_dir, "train_split.csv")
     val_csv = os.path.join(args.save_dir, "val_split.csv")
     test_csv = os.path.join(args.save_dir, "test_split.csv")
-    
+
     train_eval_loader = _make_loader_from_split(
-        args, refs, uid_to_refidx, split_csv_path=train_csv,
-        batch_size=args.batch_size, augment=False, shuffle=False,
-        strict_balance=True, seed=args.seed + 100
+        args,
+        refs,
+        uid_to_refidx,
+        split_csv_path=train_csv,
+        batch_size=args.batch_size,
+        augment=False,
+        shuffle=False,
+        strict_balance=True,
+        seed=args.seed + 100,
     )
     val_eval_loader = None
     if os.path.exists(val_csv):
         val_eval_loader = _make_loader_from_split(
-            args, refs, uid_to_refidx, split_csv_path=val_csv,
-            batch_size=args.batch_size, augment=False, shuffle=False,
-            strict_balance=True, seed=args.seed + 102
+            args,
+            refs,
+            uid_to_refidx,
+            split_csv_path=val_csv,
+            batch_size=args.batch_size,
+            augment=False,
+            shuffle=False,
+            strict_balance=True,
+            seed=args.seed + 102,
         )
     test_eval_loader = None
     if os.path.exists(test_csv):
         test_eval_loader = _make_loader_from_split(
-            args, refs, uid_to_refidx, split_csv_path=test_csv,
-            batch_size=args.batch_size, augment=False, shuffle=False,
-            strict_balance=True, seed=args.seed + 101
+            args,
+            refs,
+            uid_to_refidx,
+            split_csv_path=test_csv,
+            batch_size=args.batch_size,
+            augment=False,
+            shuffle=False,
+            strict_balance=True,
+            seed=args.seed + 101,
         )
     return train_eval_loader, val_eval_loader, test_eval_loader
 
@@ -868,11 +1071,11 @@ def main(args_list=None):
     # (default: False if not passed, True if --token_l2_norm is specified)
     args.save_best = True
     args.augment = True
-    
+
     args.probe_epochs = 20
     args.probe_lr = 0.1
     args.probe_batch_size = 256
-    
+
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
@@ -883,19 +1086,19 @@ def main(args_list=None):
 
     run_grid_search = bool(getattr(args, "grid_search", False))
     train_all_layers = bool(getattr(args, "train_all_layers", False))
-    
+
     layers_to_train = ALL_LAYERS if train_all_layers else [args.which_layer]
-    
+
     logger.info("=" * 60)
     logger.info("Gated SAE Training + Concept Evaluation")
     logger.info(f"Layers to train: {layers_to_train}")
     logger.info(f"Grid search: {run_grid_search}")
     logger.info("=" * 60)
-    
+
     # Load data once
     refs = load_all_sample_refs(args.shard_root)
     uid_to_refidx = build_uid_to_refidx(refs)
-    
+
     # Load encoder once
     blocks = parse_int_list(args.blocks, 4)
     dilations = parse_int_list(args.dilations, 4)
@@ -912,25 +1115,27 @@ def main(args_list=None):
     )
     sd = torch.load(args.model_state_path, map_location="cpu", weights_only=False)
     from sae_project.step05_model_encoder import robust_load_state_dict
+
     robust_load_state_dict(model, sd, strict=True)
     encoder = model.encoder
     renorm_unit_per_out_channel_(encoder)
     encoder = encoder.to(torch.device("cuda" if torch.cuda.is_available() else "cpu"))
-    
+
     import gc
+
     del model, sd
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-    
+
     # Standalone Evaluation Mode
     if getattr(args, "eval_ckpt", None):
         ckpt_path = args.eval_ckpt
         logger.info(f"\n[STANDALONE EVALUATION] Loading SAE from: {ckpt_path}")
-        
+
         ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
         ckpt_args = ckpt["args"]
-        
+
         sae = GatedSAE(
             d_in=ckpt_args.get("d_in", args.d_in),
             d_sae=ckpt_args.get("d_sae", args.d_sae),
@@ -940,16 +1145,18 @@ def main(args_list=None):
         sae.load_state_dict(ckpt["sae"])
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         sae.to(device).eval()
-        
+
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-        
+
         trainer = DummyTrainer(encoder, sae, device, best_fvu=ckpt.get("best_fvu", 0.0))
         args.which_layer = ckpt_args.get("which_layer", args.which_layer)
-        
-        train_eval_loader, val_eval_loader, test_eval_loader = _make_eval_loaders(args, refs, uid_to_refidx)
-        
+
+        train_eval_loader, val_eval_loader, test_eval_loader = _make_eval_loaders(
+            args, refs, uid_to_refidx
+        )
+
         exp_config = {
             "exp_id": "eval_only",
             "layer": args.which_layer,
@@ -958,14 +1165,27 @@ def main(args_list=None):
             "aux_coeff": ckpt_args.get("aux_coeff", 0.0),
             "tie_weights": sae.tie_weights,
         }
-        
-        results = evaluate_concepts_for_sae(trainer, train_eval_loader, val_eval_loader, test_eval_loader, args, exp_config)
-        
+
+        results = evaluate_concepts_for_sae(
+            trainer,
+            train_eval_loader,
+            val_eval_loader,
+            test_eval_loader,
+            args,
+            exp_config,
+        )
+
         logger.info(f"\nEvaluation Results for {ckpt_path}:")
-        logger.info(f"  Purity: mean={results['purity_mean']:.3f}, high(>0.9)={results['high_purity_concepts']}")
-        logger.info(f"  Entropy: mean={results['entropy_mean']:.3f}, low(<1.0)={results['low_entropy_concepts']}")
-        logger.info(f"  Probe: std={results['probe_test_acc_standard']:.3f}, str={results['probe_test_acc_strength']:.3f}")
-        
+        logger.info(
+            f"  Purity: mean={results['purity_mean']:.3f}, high(>0.9)={results['high_purity_concepts']}"
+        )
+        logger.info(
+            f"  Entropy: mean={results['entropy_mean']:.3f}, low(<1.0)={results['low_entropy_concepts']}"
+        )
+        logger.info(
+            f"  Probe: std={results['probe_test_acc_standard']:.3f}, str={results['probe_test_acc_strength']:.3f}"
+        )
+
         eval_results_path = ckpt_path.replace(".pt", "_eval_results.csv")
         with open(eval_results_path, "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
@@ -977,19 +1197,27 @@ def main(args_list=None):
     # Summary CSV
     summary_csv_path = os.path.join(args.sae_save_dir, "all_experiments_summary.csv")
     summary_rows = []
-    
+
     if run_grid_search:
         D_SAE_GRID = args.d_sae_grid
         SPARSITY_GRID = args.sparsity_grid
         AUX_COEFF_GRID = args.aux_coeff_grid
         TIE_WEIGHTS_GRID = [bool(tw) for tw in args.tie_weights_grid]
-        
-        total_experiments = len(layers_to_train) * len(D_SAE_GRID) * len(SPARSITY_GRID) * len(AUX_COEFF_GRID) * len(TIE_WEIGHTS_GRID)
+
+        total_experiments = (
+            len(layers_to_train)
+            * len(D_SAE_GRID)
+            * len(SPARSITY_GRID)
+            * len(AUX_COEFF_GRID)
+            * len(TIE_WEIGHTS_GRID)
+        )
         exp_idx = 0
-        
-        logger.info(f"Grid: d_sae={D_SAE_GRID}, Sparsity={SPARSITY_GRID}, Aux={AUX_COEFF_GRID}, Tied={TIE_WEIGHTS_GRID}")
+
+        logger.info(
+            f"Grid: d_sae={D_SAE_GRID}, Sparsity={SPARSITY_GRID}, Aux={AUX_COEFF_GRID}, Tied={TIE_WEIGHTS_GRID}"
+        )
         logger.info(f"Total experiments: {total_experiments}")
-        
+
         for layer in layers_to_train:
             for d_sae, sparsity, aux_coeff, tie_weights in itertools.product(
                 D_SAE_GRID, SPARSITY_GRID, AUX_COEFF_GRID, TIE_WEIGHTS_GRID
@@ -997,38 +1225,61 @@ def main(args_list=None):
                 exp_idx += 1
                 logger.info("\n" + "=" * 60)
                 logger.info(f"[Experiment {exp_idx}/{total_experiments}]")
-                logger.info(f"  layer={layer}, d_sae={d_sae}, sparsity={sparsity}, aux_coeff={aux_coeff}, tie_weights={tie_weights}")
+                logger.info(
+                    f"  layer={layer}, d_sae={d_sae}, sparsity={sparsity}, aux_coeff={aux_coeff}, tie_weights={tie_weights}"
+                )
                 logger.info("=" * 60)
-                
+
                 import copy
+
                 exp_args = copy.deepcopy(args)
                 exp_args.which_layer = layer
                 exp_args.d_sae = d_sae
                 exp_args.final_sparsity_coeff = sparsity
                 exp_args.aux_coeff = aux_coeff
                 exp_args.tie_gate_weights = tie_weights
-                
+
                 exp_config = {
-                    "exp_id": exp_idx, "layer": layer, "d_sae": d_sae,
-                    "sparsity": sparsity, "aux_coeff": aux_coeff, "tie_weights": tie_weights,
+                    "exp_id": exp_idx,
+                    "layer": layer,
+                    "d_sae": d_sae,
+                    "sparsity": sparsity,
+                    "aux_coeff": aux_coeff,
+                    "tie_weights": tie_weights,
                 }
-                
+
                 set_seed(exp_args.seed)
-                
+
                 try:
-                    trainer, ckpt_path = run_experiment(exp_args, refs, uid_to_refidx, encoder)
+                    trainer, ckpt_path = run_experiment(
+                        exp_args, refs, uid_to_refidx, encoder
+                    )
                     trainer.cleanup_for_eval()
-                    
-                    train_eval_loader, val_eval_loader, test_eval_loader = _make_eval_loaders(exp_args, refs, uid_to_refidx)
+
+                    train_eval_loader, val_eval_loader, test_eval_loader = (
+                        _make_eval_loaders(exp_args, refs, uid_to_refidx)
+                    )
                     if train_eval_loader is not None and test_eval_loader is not None:
-                        results = evaluate_concepts_for_sae(trainer, train_eval_loader, val_eval_loader, test_eval_loader, exp_args, exp_config)
+                        results = evaluate_concepts_for_sae(
+                            trainer,
+                            train_eval_loader,
+                            val_eval_loader,
+                            test_eval_loader,
+                            exp_args,
+                            exp_config,
+                        )
                         summary_rows.append(results)
-                        logger.info(f"  Purity: mean={results['purity_mean']:.3f}, high(>0.9)={results['high_purity_concepts']}")
-                        logger.info(f"  Probe: std={results['probe_test_acc_standard']:.3f}, str={results['probe_test_acc_strength']:.3f}")
-                    
+                        logger.info(
+                            f"  Purity: mean={results['purity_mean']:.3f}, high(>0.9)={results['high_purity_concepts']}"
+                        )
+                        logger.info(
+                            f"  Probe: std={results['probe_test_acc_standard']:.3f}, str={results['probe_test_acc_strength']:.3f}"
+                        )
+
                 except Exception as e:
                     logger.error(f"Experiment failed: {e}")
                     import traceback
+
                     traceback.print_exc()
                     continue
     else:
@@ -1036,37 +1287,55 @@ def main(args_list=None):
             logger.info("\n" + "=" * 60)
             logger.info(f"Training Gated SAE for layer: {layer}")
             logger.info("=" * 60)
-            
+
             import copy
+
             exp_args = copy.deepcopy(args)
             exp_args.which_layer = layer
-            
+
             exp_config = {
-                "exp_id": 1, "layer": layer,
+                "exp_id": 1,
+                "layer": layer,
                 "sparsity": args.final_sparsity_coeff,
                 "aux_coeff": args.aux_coeff,
                 "tie_weights": getattr(args, "tie_gate_weights", False),
             }
-            
+
             set_seed(exp_args.seed)
-            
+
             try:
-                trainer, ckpt_path = run_experiment(exp_args, refs, uid_to_refidx, encoder)
+                trainer, ckpt_path = run_experiment(
+                    exp_args, refs, uid_to_refidx, encoder
+                )
                 trainer.cleanup_for_eval()
-                
-                train_eval_loader, val_eval_loader, test_eval_loader = _make_eval_loaders(exp_args, refs, uid_to_refidx)
+
+                train_eval_loader, val_eval_loader, test_eval_loader = (
+                    _make_eval_loaders(exp_args, refs, uid_to_refidx)
+                )
                 if train_eval_loader is not None and test_eval_loader is not None:
-                    results = evaluate_concepts_for_sae(trainer, train_eval_loader, val_eval_loader, test_eval_loader, exp_args, exp_config)
+                    results = evaluate_concepts_for_sae(
+                        trainer,
+                        train_eval_loader,
+                        val_eval_loader,
+                        test_eval_loader,
+                        exp_args,
+                        exp_config,
+                    )
                     summary_rows.append(results)
-                    logger.info(f"  Purity: mean={results['purity_mean']:.3f}, high(>0.9)={results['high_purity_concepts']}")
-                    logger.info(f"  Probe: std={results['probe_test_acc_standard']:.3f}, str={results['probe_test_acc_strength']:.3f}")
-                    
+                    logger.info(
+                        f"  Purity: mean={results['purity_mean']:.3f}, high(>0.9)={results['high_purity_concepts']}"
+                    )
+                    logger.info(
+                        f"  Probe: std={results['probe_test_acc_standard']:.3f}, str={results['probe_test_acc_strength']:.3f}"
+                    )
+
             except Exception as e:
                 logger.error(f"Layer {layer} training failed: {e}")
                 import traceback
+
                 traceback.print_exc()
                 continue
-    
+
     if summary_rows:
         fieldnames = list(summary_rows[0].keys())
         file_exists = os.path.exists(summary_csv_path)
@@ -1075,8 +1344,10 @@ def main(args_list=None):
             if not file_exists:
                 writer.writeheader()
             writer.writerows(summary_rows)
-        logger.info(f"\nAppended {len(summary_rows)} experiment(s) to: {summary_csv_path}")
-    
+        logger.info(
+            f"\nAppended {len(summary_rows)} experiment(s) to: {summary_csv_path}"
+        )
+
     logger.info("\n" + "=" * 60)
     logger.info("All experiments complete!")
     logger.info("=" * 60)

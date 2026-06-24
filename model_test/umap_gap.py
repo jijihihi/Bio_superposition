@@ -17,19 +17,19 @@
 #     --shard_root /home/ubuntu/model-east3/wds_shards_tar \
 #     --samples_per_class 5000
 
-import os
-import sys
-import random
 import argparse
+import os
+import random
+import sys
 from typing import List
 
+import matplotlib
 import numpy as np
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
-import matplotlib
 _IN_COLAB = "google.colab" in sys.modules
 if not _IN_COLAB:
     matplotlib.use("Agg")
@@ -43,30 +43,30 @@ except ImportError:
     os.system("pip -q install umap-learn")
     import umap
 
-from sae_project.step02_logging_utils import get_logger, OUT_DIM
-from sae_project.step03_data_shards import load_all_sample_refs, build_uid_to_refidx
-from sae_project.step04_data_bank import (
-    InMemoryTarBank, InMemorySixteenBitDataset,
-    seed_worker, collate_skip_none,
-)
-from sae_project.step05_model_encoder import (
-    Encoder, SupMoCoModel, parse_int_list,
-    renorm_unit_per_out_channel_, robust_load_state_dict,
-)
+from sae_project.step02_logging_utils import OUT_DIM, get_logger
+from sae_project.step03_data_shards import (build_uid_to_refidx,
+                                            load_all_sample_refs)
+from sae_project.step04_data_bank import (InMemorySixteenBitDataset,
+                                          InMemoryTarBank, collate_skip_none,
+                                          seed_worker)
+from sae_project.step05_model_encoder import (Encoder, SupMoCoModel,
+                                              parse_int_list,
+                                              renorm_unit_per_out_channel_,
+                                              robust_load_state_dict)
 
 logger = get_logger("umap_gap")
 
 CLASS_NAMES = {0: "Control", 1: "SNCA", 2: "GBA", 3: "LRRK2"}
 CLASS_COLORS = {
-    "Control": "#2176AE",   # vivid blue
-    "SNCA": "#E8553A",      # vivid red-orange
-    "GBA": "#1DB954",       # vivid green
-    "LRRK2": "#9B59B6",     # vivid purple
+    "Control": "#2176AE",  # vivid blue
+    "SNCA": "#E8553A",  # vivid red-orange
+    "GBA": "#1DB954",  # vivid green
+    "LRRK2": "#9B59B6",  # vivid purple
 }
 
 
-plt.rcParams['svg.fonttype'] = 'none'
-plt.rcParams['pdf.fonttype'] = 42      
+plt.rcParams["svg.fonttype"] = "none"
+plt.rcParams["pdf.fonttype"] = 42
 sns.set_style("ticks")
 
 
@@ -75,6 +75,7 @@ sns.set_style("ticks")
 # ==============================================================================
 def load_split_csv(csv_path: str) -> List[str]:
     import csv
+
     uids = []
     with open(csv_path, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
@@ -102,7 +103,8 @@ def extract_features(encoder, loader, device, use_bf16=True):
         if x.numel() < 1:
             continue
         x = x.to(device, non_blocking=True).contiguous(
-            memory_format=torch.channels_last)
+            memory_format=torch.channels_last
+        )
         with torch.amp.autocast(**autocast_kwargs):
             feat = encoder(x)
         feat = F.normalize(feat, dim=1)  # L2 normalization
@@ -115,8 +117,9 @@ def extract_features(encoder, loader, device, use_bf16=True):
 # ==============================================================================
 # UMAP plot
 # ==============================================================================
-def plot_umap(coords, labels, output_path,
-              point_size=1.5, alpha=0.2, dpi=300, info_text=""):
+def plot_umap(
+    coords, labels, output_path, point_size=1.5, alpha=0.2, dpi=300, info_text=""
+):
     """Save publication-quality UMAP 2D scatter colored by class (SVG + PNG)."""
     fig, ax = plt.subplots(1, 1, figsize=(7, 7))
 
@@ -130,10 +133,14 @@ def plot_umap(coords, labels, output_path,
         if mask.sum() == 0:
             continue
         ax.scatter(
-            coords[mask, 0], coords[mask, 1],
-            s=point_size, alpha=alpha, rasterized=True,
+            coords[mask, 0],
+            coords[mask, 1],
+            s=point_size,
+            alpha=alpha,
+            rasterized=True,
             label=f"{cls_name} (n={mask.sum():,})",
-            c=CLASS_COLORS[cls_name], edgecolors="none",
+            c=CLASS_COLORS[cls_name],
+            edgecolors="none",
         )
 
     # --- Clean publication style ---
@@ -147,30 +154,50 @@ def plot_umap(coords, labels, output_path,
 
     # Info text (easily removable in Illustrator as a text object)
     if info_text:
-        ax.text(0.02, 0.02, info_text, transform=ax.transAxes,
-                fontsize=8, verticalalignment="bottom", fontstyle="italic",
-                color="#555555",
-                bbox=dict(boxstyle="round,pad=0.3", facecolor="white",
-                          edgecolor="#cccccc", alpha=0.85))
+        ax.text(
+            0.02,
+            0.02,
+            info_text,
+            transform=ax.transAxes,
+            fontsize=8,
+            verticalalignment="bottom",
+            fontstyle="italic",
+            color="#555555",
+            bbox=dict(
+                boxstyle="round,pad=0.3",
+                facecolor="white",
+                edgecolor="#cccccc",
+                alpha=0.85,
+            ),
+        )
 
     # Legend
-    leg = ax.legend(loc="upper right", markerscale=4, fontsize=9,
-                    frameon=True, framealpha=0.9, edgecolor="#cccccc",
-                    handletextpad=0.3, borderpad=0.4)
+    leg = ax.legend(
+        loc="upper right",
+        markerscale=4,
+        fontsize=9,
+        frameon=True,
+        framealpha=0.9,
+        edgecolor="#cccccc",
+        handletextpad=0.3,
+        borderpad=0.4,
+    )
     for lh in leg.legend_handles:
         lh.set_alpha(1.0)  # full opacity in legend
 
     fig.tight_layout(pad=0.3)
 
     # Save PNG
-    fig.savefig(output_path, dpi=dpi, bbox_inches="tight",
-                facecolor="white", edgecolor="none")
+    fig.savefig(
+        output_path, dpi=dpi, bbox_inches="tight", facecolor="white", edgecolor="none"
+    )
     logger.info(f"Saved PNG : {output_path}")
 
     # Save SVG (with rasterized scatter for small file size)
     svg_path = os.path.splitext(output_path)[0] + ".svg"
-    fig.savefig(svg_path, format="svg", bbox_inches="tight",
-                facecolor="white", edgecolor="none")
+    fig.savefig(
+        svg_path, format="svg", bbox_inches="tight", facecolor="white", edgecolor="none"
+    )
     logger.info(f"Saved SVG : {svg_path}")
 
     if _IN_COLAB:
@@ -185,10 +212,15 @@ def get_args():
     p = argparse.ArgumentParser("UMAP of CNN GAP features (L2 normalized)")
 
     p.add_argument("--ckpt_path", type=str, required=True)
-    p.add_argument("--save_dir", type=str, default="",
-                   help="Dir with val/test_split.csv (default: ckpt parent dir)")
-    p.add_argument("--shard_root", type=str,
-                   default="/home/ubuntu/model-east3/wds_shards_tar")
+    p.add_argument(
+        "--save_dir",
+        type=str,
+        default="",
+        help="Dir with val/test_split.csv (default: ckpt parent dir)",
+    )
+    p.add_argument(
+        "--shard_root", type=str, default="/home/ubuntu/model-east3/wds_shards_tar"
+    )
     p.add_argument("--output_dir", type=str, default="")
 
     # Sampling
@@ -204,8 +236,12 @@ def get_args():
     # UMAP
     p.add_argument("--n_neighbors", type=int, default=15)
     p.add_argument("--min_dist", type=float, default=0.15)
-    p.add_argument("--metric", type=str, default="cosine",
-                   choices=["euclidean", "cosine", "correlation"])
+    p.add_argument(
+        "--metric",
+        type=str,
+        default="cosine",
+        choices=["euclidean", "cosine", "correlation"],
+    )
     p.add_argument("--n_components", type=int, default=2)
 
     # Data / plot
@@ -240,10 +276,13 @@ def main():
     blocks = parse_int_list(args.blocks, 4)
     dilations = parse_int_list(args.dilations, 4)
     model = SupMoCoModel(
-        embed_dim=512, blocks=blocks, dilations=dilations,
+        embed_dim=512,
+        blocks=blocks,
+        dilations=dilations,
         refine_blocks=args.refine_blocks,
         ckpt_segments=args.ckpt_segments,
-        proj_layers=2, proj_hidden=2048,
+        proj_layers=2,
+        proj_hidden=2048,
     )
     ckpt = torch.load(args.ckpt_path, map_location="cpu", weights_only=False)
     robust_load_state_dict(model, ckpt, strict=False)
@@ -272,6 +311,7 @@ def main():
 
     # Balanced subsample
     from collections import defaultdict
+
     spc = args.samples_per_class
     if spc > 0:
         rng = random.Random(args.seed)
@@ -287,7 +327,7 @@ def main():
             sampled.extend(idxs[:n])
             logger.info(f"  {CLASS_NAMES[cls]}: {n}/{len(idxs)}")
         ref_indices = sampled
-    
+
     logger.info(f"Total samples: {len(ref_indices)}")
 
     # Dataloader
@@ -295,9 +335,14 @@ def main():
     ib = list(range(len(ref_indices)))
     ds = InMemorySixteenBitDataset(bank, ib, args.img_size, augment=False)
     loader = DataLoader(
-        ds, batch_size=args.batch_size, shuffle=False,
-        num_workers=args.num_workers, pin_memory=True,
-        worker_init_fn=seed_worker, collate_fn=collate_skip_none)
+        ds,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=True,
+        worker_init_fn=seed_worker,
+        collate_fn=collate_skip_none,
+    )
 
     # Extract features
     logger.info("Extracting L2-normalized GAP features...")
@@ -308,8 +353,10 @@ def main():
     torch.cuda.empty_cache()
 
     # Run UMAP
-    logger.info(f"Running UMAP (n_neighbors={args.n_neighbors}, "
-                f"min_dist={args.min_dist}, metric={args.metric})...")
+    logger.info(
+        f"Running UMAP (n_neighbors={args.n_neighbors}, "
+        f"min_dist={args.min_dist}, metric={args.metric})..."
+    )
     reducer = umap.UMAP(
         n_neighbors=args.n_neighbors,
         min_dist=args.min_dist,
@@ -322,22 +369,35 @@ def main():
     logger.info(f"UMAP done: {coords.shape}")
 
     # Save coordinates
-    npz_path = os.path.join(output_dir,
-        f"umap_coords_{model_name}_nn{args.n_neighbors}.npz")
-    np.savez_compressed(npz_path, coords=coords, labels=y,
-                        n_neighbors=args.n_neighbors,
-                        min_dist=args.min_dist, metric=args.metric)
+    npz_path = os.path.join(
+        output_dir, f"umap_coords_{model_name}_nn{args.n_neighbors}.npz"
+    )
+    np.savez_compressed(
+        npz_path,
+        coords=coords,
+        labels=y,
+        n_neighbors=args.n_neighbors,
+        min_dist=args.min_dist,
+        metric=args.metric,
+    )
     logger.info(f"Saved coords: {npz_path}")
 
     # Plot
-    info = (f"n={X.shape[0]:,}  dim={X.shape[1]}\n"
-            f"nn={args.n_neighbors}  min_dist={args.min_dist}  {args.metric}")
+    info = (
+        f"n={X.shape[0]:,}  dim={X.shape[1]}\n"
+        f"nn={args.n_neighbors}  min_dist={args.min_dist}  {args.metric}"
+    )
 
-    png_path = os.path.join(output_dir,
-        f"umap_{model_name}_nn{args.n_neighbors}.png")
-    plot_umap(coords, y, png_path,
-              point_size=args.point_size, alpha=args.alpha,
-              dpi=args.dpi, info_text=info)
+    png_path = os.path.join(output_dir, f"umap_{model_name}_nn{args.n_neighbors}.png")
+    plot_umap(
+        coords,
+        y,
+        png_path,
+        point_size=args.point_size,
+        alpha=args.alpha,
+        dpi=args.dpi,
+        info_text=info,
+    )
 
     logger.info("Done!")
 

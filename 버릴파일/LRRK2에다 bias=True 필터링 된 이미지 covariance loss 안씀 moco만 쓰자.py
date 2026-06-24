@@ -11,18 +11,29 @@
 # - Save split CSVs + resume checkpoint (model_q, model_k, optimizer, scaler, rng)
 # ==============================================================================
 
-import os, re, io, json, math, time, glob, random, argparse, logging, sys, pickle, csv
-from dataclasses import dataclass
-from typing import Dict, List, Tuple, Optional
+import argparse
+import csv
+import glob
+import io
+import json
+import logging
+import math
+import os
+import pickle
+import random
+import re
+import sys
+import time
 from collections import defaultdict, deque
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader, Sampler
+from torch.utils.data import DataLoader, Dataset, Sampler
 from torch.utils.data.dataloader import default_collate
 from torchvision import transforms
 from tqdm.auto import tqdm
@@ -33,12 +44,12 @@ try:
 except Exception:
     # If running in notebook, you can install. In pure python, install beforehand.
     import subprocess
+
     subprocess.check_call([sys.executable, "-m", "pip", "-q", "install", "tifffile"])
     import tifffile
 
 from sklearn.model_selection import train_test_split
 from torch.utils.checkpoint import checkpoint_sequential
-
 
 # ==============================================================================
 # Logging
@@ -56,18 +67,15 @@ logger = logging.getLogger("SupConMoCo_Plate")
 # ==============================================================================
 DEFAULT_SHARD_ROOT = "/content/wds_shards"
 
-LINE_FOLDERS = [
-    "Control_C4", "Control_C18", "Control_C19",
-    "SNCA", "GBA", "LRRK2"
-]
+LINE_FOLDERS = ["Control_C4", "Control_C18", "Control_C19", "SNCA", "GBA", "LRRK2"]
 
 SUPERCLASS_MAP = {
-    "Control_C4":  "Control",
+    "Control_C4": "Control",
     "Control_C18": "Control",
     "Control_C19": "Control",
-    "SNCA":        "SNCA",
-    "GBA":         "GBA",
-    "LRRK2":       "LRRK2",
+    "SNCA": "SNCA",
+    "GBA": "GBA",
+    "LRRK2": "LRRK2",
 }
 CLASS_TO_LABEL = {"Control": 0, "SNCA": 1, "GBA": 2, "LRRK2": 3}
 
@@ -93,10 +101,12 @@ def set_seed(seed: int):
     except Exception:
         pass
 
+
 def seed_worker(worker_id: int):
     worker_seed = torch.initial_seed() % 2**32
     np.random.seed(worker_seed)
     random.seed(worker_seed)
+
 
 def collate_skip_none(batch):
     batch = [b for b in batch if b is not None]
@@ -121,12 +131,14 @@ class SampleRef:
     label: int
     plate: str
 
+
 def _infer_line_and_plate_from_tarpath(tar_path: str) -> Tuple[str, str]:
     parts = tar_path.replace("\\", "/").split("/")
     line = parts[-3]
     m = PLATE_DIR_RE.search(parts[-2])
     plate = m.group(1) if m else "UNKNOWN"
     return line, plate
+
 
 def build_tar_index_if_needed(tar_path: str):
     idx_path = tar_path + ".pkl"
@@ -137,6 +149,7 @@ def build_tar_index_if_needed(tar_path: str):
     items = {}
 
     import tarfile
+
     with tarfile.open(tar_path, "r") as tf:
         for m in tf.getmembers():
             if not m.isreg():
@@ -158,12 +171,17 @@ def build_tar_index_if_needed(tar_path: str):
     pairs = []
     for pref, it in items.items():
         if "tif_off" in it and "js_off" in it:
-            pairs.append((pref, it["tif_off"], it["tif_size"], it["js_off"], it["js_size"]))
+            pairs.append(
+                (pref, it["tif_off"], it["tif_size"], it["js_off"], it["js_size"])
+            )
 
     with open(idx_path, "wb") as f:
         pickle.dump(pairs, f, protocol=pickle.HIGHEST_PROTOCOL)
 
-    logger.info(f"[tar-index] built {len(pairs)} pairs: {os.path.basename(tar_path)} ({time.time()-t0:.1f}s)")
+    logger.info(
+        f"[tar-index] built {len(pairs)} pairs: {os.path.basename(tar_path)} ({time.time()-t0:.1f}s)"
+    )
+
 
 def load_all_sample_refs(shard_root: str) -> List[SampleRef]:
     tar_paths = sorted(glob.glob(os.path.join(shard_root, "*", "plate=*", "*.tar")))
@@ -183,18 +201,20 @@ def load_all_sample_refs(shard_root: str) -> List[SampleRef]:
             pairs = pickle.load(f)
 
         for pref, tif_off, tif_size, js_off, js_size in pairs:
-            refs.append(SampleRef(
-                tar_path=tp,
-                prefix=pref,
-                tif_off=int(tif_off),
-                tif_size=int(tif_size),
-                js_off=int(js_off),
-                js_size=int(js_size),
-                line=line,
-                superclass=superclass,
-                label=label,
-                plate=plate
-            ))
+            refs.append(
+                SampleRef(
+                    tar_path=tp,
+                    prefix=pref,
+                    tif_off=int(tif_off),
+                    tif_size=int(tif_size),
+                    js_off=int(js_off),
+                    js_size=int(js_size),
+                    line=line,
+                    superclass=superclass,
+                    label=label,
+                    plate=plate,
+                )
+            )
 
     logger.info(f"Loaded sample refs: {len(refs)}")
     return refs
@@ -203,7 +223,9 @@ def load_all_sample_refs(shard_root: str) -> List[SampleRef]:
 # ==============================================================================
 # 3) Balanced subset selection (line & plate aware)
 # ==============================================================================
-def select_balanced_subset(refs: List[SampleRef], max_samples_total: int, seed: int) -> List[int]:
+def select_balanced_subset(
+    refs: List[SampleRef], max_samples_total: int, seed: int
+) -> List[int]:
     rng = random.Random(seed)
 
     by_super = defaultdict(list)
@@ -211,7 +233,12 @@ def select_balanced_subset(refs: List[SampleRef], max_samples_total: int, seed: 
         by_super[r.superclass].append(i)
 
     per_class = max_samples_total // 4
-    targets = {"Control": per_class, "SNCA": per_class, "GBA": per_class, "LRRK2": per_class}
+    targets = {
+        "Control": per_class,
+        "SNCA": per_class,
+        "GBA": per_class,
+        "LRRK2": per_class,
+    }
     rem = max_samples_total - per_class * 4
     for k in ["Control", "SNCA", "GBA", "LRRK2"]:
         if rem <= 0:
@@ -294,7 +321,7 @@ class StrictPlateBalancedBatchSamplerOnBank(Sampler[List[int]]):
             self.orig[(sup, line, plate)].append(j)
 
         self.line_plates = defaultdict(list)
-        for (sup, line, plate) in self.orig.keys():
+        for sup, line, plate in self.orig.keys():
             self.line_plates[(sup, line)].append(plate)
         for k in self.line_plates:
             self.line_plates[k] = sorted(set(self.line_plates[k]))
@@ -385,7 +412,7 @@ class StrictPlateBalancedBatchSamplerOnBank(Sampler[List[int]]):
 
             if len(batch) < self.batch_size:
                 break
-            yield batch[:self.batch_size]
+            yield batch[: self.batch_size]
 
 
 # ==============================================================================
@@ -402,13 +429,16 @@ def validate_uint16_rgb(img: np.ndarray, img_size: int):
     if (h, w) != (img_size, img_size):
         raise ValueError(f"size must be {(img_size, img_size)}, got {(h, w)}")
 
+
 class SafeInstanceNormalize:
     def __init__(self, threshold: float = 0.01):
         self.threshold = float(threshold)
+
     def __call__(self, tensor: torch.Tensor) -> torch.Tensor:
-        mean = tensor.mean(dim=[1,2], keepdim=True)
-        std = tensor.std(dim=[1,2], keepdim=True).clamp_min(self.threshold)
+        mean = tensor.mean(dim=[1, 2], keepdim=True)
+        std = tensor.std(dim=[1, 2], keepdim=True).clamp_min(self.threshold)
         return (tensor - mean) / std
+
 
 class InMemoryTarBank:
     def __init__(self, refs: List[SampleRef], ref_indices: List[int], img_size: int):
@@ -422,9 +452,12 @@ class InMemoryTarBank:
         self.lines: List[str] = [""] * len(ref_indices)
         self.uids: List[str] = [""] * len(ref_indices)
 
-        logger.info(f"⚡ Preloading {len(ref_indices)} images into RAM from tar shards...")
+        logger.info(
+            f"⚡ Preloading {len(ref_indices)} images into RAM from tar shards..."
+        )
 
         tar_to_fh = {}
+
         def read_bytes(tp: str, off: int, size: int) -> bytes:
             fh = tar_to_fh.get(tp, None)
             if fh is None:
@@ -457,10 +490,20 @@ class InMemoryTarBank:
             except Exception:
                 pass
 
-        logger.info(f"Preload done. bad={bad}/{len(ref_indices)} elapsed={(time.time()-t0)/60:.1f} min")
+        logger.info(
+            f"Preload done. bad={bad}/{len(ref_indices)} elapsed={(time.time()-t0)/60:.1f} min"
+        )
+
 
 class InMemorySixteenBitDataset(Dataset):
-    def __init__(self, bank: InMemoryTarBank, indices_in_bank: List[int], img_size: int, two_crops: bool, augment: bool):
+    def __init__(
+        self,
+        bank: InMemoryTarBank,
+        indices_in_bank: List[int],
+        img_size: int,
+        two_crops: bool,
+        augment: bool,
+    ):
         self.bank = bank
         self.ib = indices_in_bank
         self.img_size = int(img_size)
@@ -468,16 +511,20 @@ class InMemorySixteenBitDataset(Dataset):
         self.augment = bool(augment)
 
         if self.augment:
-            aug = transforms.RandomChoice([
-                transforms.Lambda(lambda x: x),
-                transforms.Lambda(lambda x: torch.rot90(x, 1, [1,2])),
-                transforms.Lambda(lambda x: torch.rot90(x, 2, [1,2])),
-                transforms.Lambda(lambda x: torch.rot90(x, 3, [1,2])),
-            ])
+            aug = transforms.RandomChoice(
+                [
+                    transforms.Lambda(lambda x: x),
+                    transforms.Lambda(lambda x: torch.rot90(x, 1, [1, 2])),
+                    transforms.Lambda(lambda x: torch.rot90(x, 2, [1, 2])),
+                    transforms.Lambda(lambda x: torch.rot90(x, 3, [1, 2])),
+                ]
+            )
         else:
             aug = transforms.Lambda(lambda x: x)
 
-        self.transform = transforms.Compose([aug, SafeInstanceNormalize(threshold=0.01)])
+        self.transform = transforms.Compose(
+            [aug, SafeInstanceNormalize(threshold=0.01)]
+        )
 
     def __len__(self):
         return len(self.ib)
@@ -493,8 +540,8 @@ class InMemorySixteenBitDataset(Dataset):
         line = self.bank.lines[j]
         uid = self.bank.uids[j]
 
-        x = (img.astype(np.float32) / 65535.0)
-        x = torch.from_numpy(x).permute(2,0,1)
+        x = img.astype(np.float32) / 65535.0
+        x = torch.from_numpy(x).permute(2, 0, 1)
 
         if self.two_crops:
             v1 = self.transform(x)
@@ -508,16 +555,27 @@ class InMemorySixteenBitDataset(Dataset):
 # ==============================================================================
 # 5.5) Split CSV save/load
 # ==============================================================================
-def save_split_csv(uids: List[str], labels: List[int], refs_by_uid: Dict[str, SampleRef], save_dir: str, filename: str):
+def save_split_csv(
+    uids: List[str],
+    labels: List[int],
+    refs_by_uid: Dict[str, SampleRef],
+    save_dir: str,
+    filename: str,
+):
     os.makedirs(save_dir, exist_ok=True)
     path = os.path.join(save_dir, filename)
     with open(path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        w.writerow(["uid", "label", "superclass", "line", "plate", "tar_path", "prefix"])
+        w.writerow(
+            ["uid", "label", "superclass", "line", "plate", "tar_path", "prefix"]
+        )
         for uid, lb in zip(uids, labels):
             r = refs_by_uid[uid]
-            w.writerow([uid, int(lb), r.superclass, r.line, r.plate, r.tar_path, r.prefix])
+            w.writerow(
+                [uid, int(lb), r.superclass, r.line, r.plate, r.tar_path, r.prefix]
+            )
     logger.info(f"Saved split CSV -> {path}")
+
 
 def load_split_csv(csv_path: str) -> List[str]:
     out = []
@@ -538,28 +596,44 @@ def parse_int_list(s: str, n: int) -> Tuple[int, ...]:
         raise ValueError(f"Expected {n} ints, got {len(vals)} from '{s}'")
     return tuple(vals)
 
+
 @torch.no_grad()
 def renorm_unit_per_out_channel_(model: nn.Module, eps: float = 1e-12):
     for m in model.modules():
         if isinstance(m, nn.Conv2d):
             w = m.weight.data
             n = w.flatten(1).norm(dim=1, keepdim=True).clamp_min(eps)
-            w.div_(n.view(-1,1,1,1))
+            w.div_(n.view(-1, 1, 1, 1))
         elif isinstance(m, nn.Linear):
             w = m.weight.data
             n = w.norm(dim=1, keepdim=True).clamp_min(eps)
             w.div_(n)
 
+
 OUT_DIM = 512
 
+
 def conv2d(in_ch, out_ch, k=3, stride=1, padding=1, dilation=1, bias=True):
-    return nn.Conv2d(in_ch, out_ch, kernel_size=k, stride=stride, padding=padding, dilation=dilation, bias=bias)
+    return nn.Conv2d(
+        in_ch,
+        out_ch,
+        kernel_size=k,
+        stride=stride,
+        padding=padding,
+        dilation=dilation,
+        bias=bias,
+    )
+
 
 class ResBlock(nn.Module):
     def __init__(self, in_ch, out_ch, dilation=1):
         super().__init__()
-        self.c1 = conv2d(in_ch, out_ch, 3, 1, padding=dilation, dilation=dilation, bias=True)
-        self.c2 = conv2d(out_ch, out_ch, 3, 1, padding=dilation, dilation=dilation, bias=True)
+        self.c1 = conv2d(
+            in_ch, out_ch, 3, 1, padding=dilation, dilation=dilation, bias=True
+        )
+        self.c2 = conv2d(
+            out_ch, out_ch, 3, 1, padding=dilation, dilation=dilation, bias=True
+        )
         self.proj = None
         if in_ch != out_ch:
             self.proj = conv2d(in_ch, out_ch, 1, 1, padding=0, bias=False)
@@ -574,8 +648,11 @@ class ResBlock(nn.Module):
             identity = self.proj(identity)
         return x + identity
 
+
 class Stage(nn.Module):
-    def __init__(self, in_ch, out_ch, n_blocks, dilation, use_ckpt: bool, ckpt_segments: int):
+    def __init__(
+        self, in_ch, out_ch, n_blocks, dilation, use_ckpt: bool, ckpt_segments: int
+    ):
         super().__init__()
         self.use_ckpt = bool(use_ckpt)
         self.ckpt_segments = int(ckpt_segments)
@@ -585,34 +662,68 @@ class Stage(nn.Module):
         self.blocks = nn.Sequential(*blocks)
 
     def forward(self, x):
-        if self.use_ckpt and self.training and self.ckpt_segments > 1 and len(self.blocks) > 1:
+        if (
+            self.use_ckpt
+            and self.training
+            and self.ckpt_segments > 1
+            and len(self.blocks) > 1
+        ):
             seg = min(self.ckpt_segments, len(self.blocks))
             return checkpoint_sequential(self.blocks, seg, x, use_reentrant=False)
         return self.blocks(x)
 
-class Encoder(nn.Module):
-    def __init__(self, blocks=(2,2,4,4), dilations=(1,1,1,1), refine_blocks=1, ckpt_segments=2):
-        super().__init__()
-        b2,b3,b4,b5 = blocks
-        d2,d3,d4,d5 = dilations
 
-        self.stem = nn.Sequential(conv2d(3, 64, k=3, stride=2, padding=1, bias=True))  # 128->64
+class Encoder(nn.Module):
+    def __init__(
+        self,
+        blocks=(2, 2, 4, 4),
+        dilations=(1, 1, 1, 1),
+        refine_blocks=1,
+        ckpt_segments=2,
+    ):
+        super().__init__()
+        b2, b3, b4, b5 = blocks
+        d2, d3, d4, d5 = dilations
+
+        self.stem = nn.Sequential(
+            conv2d(3, 64, k=3, stride=2, padding=1, bias=True)
+        )  # 128->64
         self.stage2 = Stage(64, 128, b2, d2, use_ckpt=False, ckpt_segments=1)
         self.stage3 = Stage(128, 256, b3, d3, use_ckpt=False, ckpt_segments=1)
-        self.stage4 = Stage(256, 512, b4, d4, use_ckpt=True, ckpt_segments=ckpt_segments)
-        self.stage5 = Stage(512, OUT_DIM, b5, d5, use_ckpt=True, ckpt_segments=ckpt_segments)
-        self.refine = Stage(OUT_DIM, OUT_DIM, int(refine_blocks), 1, use_ckpt=True, ckpt_segments=ckpt_segments)
+        self.stage4 = Stage(
+            256, 512, b4, d4, use_ckpt=True, ckpt_segments=ckpt_segments
+        )
+        self.stage5 = Stage(
+            512, OUT_DIM, b5, d5, use_ckpt=True, ckpt_segments=ckpt_segments
+        )
+        self.refine = Stage(
+            OUT_DIM,
+            OUT_DIM,
+            int(refine_blocks),
+            1,
+            use_ckpt=True,
+            ckpt_segments=ckpt_segments,
+        )
 
-        self.trunk = nn.Sequential(self.stem, self.stage2, self.stage3, self.stage4, self.stage5, self.refine)
-        self.gap = nn.AdaptiveAvgPool2d((1,1))
+        self.trunk = nn.Sequential(
+            self.stem, self.stage2, self.stage3, self.stage4, self.stage5, self.refine
+        )
+        self.gap = nn.AdaptiveAvgPool2d((1, 1))
 
     def forward(self, x):
         x = self.trunk(x)
         x = self.gap(x).flatten(1)
         return x
 
-def build_projector(in_dim: int, embed_dim: int, proj_layers: int, proj_hidden: int,
-                    use_bn: bool, dropout: float) -> nn.Module:
+
+def build_projector(
+    in_dim: int,
+    embed_dim: int,
+    proj_layers: int,
+    proj_hidden: int,
+    use_bn: bool,
+    dropout: float,
+) -> nn.Module:
     proj_layers = int(proj_layers)
     proj_hidden = int(proj_hidden)
     dropout = float(dropout)
@@ -653,12 +764,13 @@ def build_projector(in_dim: int, embed_dim: int, proj_layers: int, proj_hidden: 
 
     raise ValueError(f"Unsupported proj_layers={proj_layers}")
 
+
 class SupConMoCoModel(nn.Module):
     def __init__(
         self,
         embed_dim=512,
-        blocks=(2,2,4,4),
-        dilations=(1,1,1,1),
+        blocks=(2, 2, 4, 4),
+        dilations=(1, 1, 1, 1),
         refine_blocks=1,
         ckpt_segments=2,
         proj_layers: int = 2,
@@ -671,7 +783,7 @@ class SupConMoCoModel(nn.Module):
             blocks=blocks,
             dilations=dilations,
             refine_blocks=refine_blocks,
-            ckpt_segments=ckpt_segments
+            ckpt_segments=ckpt_segments,
         )
         self.projector = build_projector(
             in_dim=OUT_DIM,
@@ -683,10 +795,10 @@ class SupConMoCoModel(nn.Module):
         )
 
     def forward(self, x):
-        pooled = self.encoder(x)            # (B, OUT_DIM)
-        pooled = F.normalize(pooled, dim=1) # amount normalization
-        z = self.projector(pooled)          # (B, embed_dim)
-        return F.normalize(z, dim=1)        # contrastive normalize
+        pooled = self.encoder(x)  # (B, OUT_DIM)
+        pooled = F.normalize(pooled, dim=1)  # amount normalization
+        z = self.projector(pooled)  # (B, embed_dim)
+        return F.normalize(z, dim=1)  # contrastive normalize
 
 
 # ==============================================================================
@@ -699,9 +811,11 @@ def momentum_update_(model_q: nn.Module, model_k: nn.Module, m: float):
 
 
 def supervised_contrastive_q_vs_k(
-    q: torch.Tensor, y_q: torch.Tensor,
-    k: torch.Tensor, y_k: torch.Tensor,
-    temperature: float
+    q: torch.Tensor,
+    y_q: torch.Tensor,
+    k: torch.Tensor,
+    y_k: torch.Tensor,
+    temperature: float,
 ) -> torch.Tensor:
     q = q.float()
     k = k.float()
@@ -709,7 +823,7 @@ def supervised_contrastive_q_vs_k(
     logits = logits - logits.max(dim=1, keepdim=True).values
 
     with torch.no_grad():
-        pos = (y_q.view(-1,1) == y_k.view(1,-1))
+        pos = y_q.view(-1, 1) == y_k.view(1, -1)
         pos_cnt = pos.sum(dim=1).clamp_min(1)
 
     exp = torch.exp(logits)
@@ -733,6 +847,7 @@ def _get_rng_state():
         st["cuda"] = torch.cuda.get_rng_state_all()
     return st
 
+
 def _set_rng_state(st: dict):
     try:
         random.setstate(st["python"])
@@ -743,8 +858,19 @@ def _set_rng_state(st: dict):
     except Exception as e:
         logger.info(f"[resume] RNG restore skipped: {e}")
 
-def save_ckpt(path, epoch, global_step, model_q, model_k, opt, scaler,
-              best_acc, patience_counter, args):
+
+def save_ckpt(
+    path,
+    epoch,
+    global_step,
+    model_q,
+    model_k,
+    opt,
+    scaler,
+    best_acc,
+    patience_counter,
+    args,
+):
     ckpt = {
         "epoch": int(epoch),
         "global_step": int(global_step),
@@ -758,6 +884,7 @@ def save_ckpt(path, epoch, global_step, model_q, model_k, opt, scaler,
         "rng": _get_rng_state(),
     }
     torch.save(ckpt, path)
+
 
 def load_ckpt(path, model_q, model_k, opt, scaler, device, strict=False):
     ckpt = torch.load(path, map_location="cpu", weights_only=False)
@@ -805,10 +932,18 @@ def bake_unitnorm_encoder(model_q: SupConMoCoModel, args, device):
     renorm_unit_per_out_channel_(baked)
     return baked
 
-def linear_probe_val_acc(args, device, baked_encoder: nn.Module, train_lp_loader, val_lp_loader) -> float:
+
+def linear_probe_val_acc(
+    args, device, baked_encoder: nn.Module, train_lp_loader, val_lp_loader
+) -> float:
     probe = nn.Linear(OUT_DIM, args.num_classes, bias=False).to(device)
     ce = nn.CrossEntropyLoss()
-    opt = optim.SGD(probe.parameters(), lr=args.lp_lr, momentum=args.lp_momentum, weight_decay=args.lp_wd)
+    opt = optim.SGD(
+        probe.parameters(),
+        lr=args.lp_lr,
+        momentum=args.lp_momentum,
+        weight_decay=args.lp_wd,
+    )
 
     enc_bs = int(args.lp_enc_bs)
     use_bf16 = bool(args.use_bf16) and (device.type == "cuda")
@@ -820,7 +955,9 @@ def linear_probe_val_acc(args, device, baked_encoder: nn.Module, train_lp_loader
 
     probe.train()
     for ep in range(1, args.lp_epochs + 1):
-        pbar = tqdm(train_lp_loader, desc=f"LP Train ep{ep}/{args.lp_epochs}", leave=False)
+        pbar = tqdm(
+            train_lp_loader, desc=f"LP Train ep{ep}/{args.lp_epochs}", leave=False
+        )
         for batch in pbar:
             if batch is None:
                 continue
@@ -829,8 +966,12 @@ def linear_probe_val_acc(args, device, baked_encoder: nn.Module, train_lp_loader
                 continue
 
             for i in range(0, x_cpu.size(0), enc_bs):
-                xb = x_cpu[i:i+enc_bs].to(device, non_blocking=True).contiguous(memory_format=torch.channels_last)
-                yb = y_cpu[i:i+enc_bs].to(device, non_blocking=True)
+                xb = (
+                    x_cpu[i : i + enc_bs]
+                    .to(device, non_blocking=True)
+                    .contiguous(memory_format=torch.channels_last)
+                )
+                yb = y_cpu[i : i + enc_bs].to(device, non_blocking=True)
 
                 with torch.no_grad():
                     with torch.amp.autocast(**autocast_kwargs):
@@ -858,8 +999,12 @@ def linear_probe_val_acc(args, device, baked_encoder: nn.Module, train_lp_loader
                 continue
 
             for i in range(0, x_cpu.size(0), enc_bs):
-                xb = x_cpu[i:i+enc_bs].to(device, non_blocking=True).contiguous(memory_format=torch.channels_last)
-                yb = y_cpu[i:i+enc_bs].to(device, non_blocking=True)
+                xb = (
+                    x_cpu[i : i + enc_bs]
+                    .to(device, non_blocking=True)
+                    .contiguous(memory_format=torch.channels_last)
+                )
+                yb = y_cpu[i : i + enc_bs].to(device, non_blocking=True)
 
                 with torch.amp.autocast(**autocast_kwargs):
                     feat = baked_encoder(xb)
@@ -877,7 +1022,9 @@ def linear_probe_val_acc(args, device, baked_encoder: nn.Module, train_lp_loader
 # ==============================================================================
 # 10) Warmup + Cosine scheduler helper
 # ==============================================================================
-def lr_at_step(global_step: int, base_lr: float, min_lr: float, warmup_steps: int, total_steps: int) -> float:
+def lr_at_step(
+    global_step: int, base_lr: float, min_lr: float, warmup_steps: int, total_steps: int
+) -> float:
     if warmup_steps <= 0:
         warmup_steps = 0
     if global_step < warmup_steps and warmup_steps > 0:
@@ -891,7 +1038,9 @@ def lr_at_step(global_step: int, base_lr: float, min_lr: float, warmup_steps: in
 # 11) Trainer (NO XBM)
 # ==============================================================================
 class Trainer:
-    def __init__(self, args, model_q, model_k, train_loader, train_lp_loader, val_lp_loader):
+    def __init__(
+        self, args, model_q, model_k, train_loader, train_lp_loader, val_lp_loader
+    ):
         self.args = args
         self.model_q = model_q
         self.model_k = model_k
@@ -911,7 +1060,7 @@ class Trainer:
             self.model_q.parameters(),
             lr=args.lr,
             momentum=float(args.sgd_momentum),
-            weight_decay=float(args.wd),      # SGD는 L2 regularization
+            weight_decay=float(args.wd),  # SGD는 L2 regularization
             nesterov=bool(args.sgd_nesterov),
         )
 
@@ -920,7 +1069,9 @@ class Trainer:
         self.warmup_steps = max(0, int(args.warmup_epochs * self.steps_per_epoch))
 
         self.use_bf16 = bool(args.use_bf16) and (self.device.type == "cuda")
-        self.scaler = torch.amp.GradScaler("cuda", enabled=(torch.cuda.is_available() and not self.use_bf16))
+        self.scaler = torch.amp.GradScaler(
+            "cuda", enabled=(torch.cuda.is_available() and not self.use_bf16)
+        )
 
         os.makedirs(args.save_dir, exist_ok=True)
         self.best_path = os.path.join(args.save_dir, "best_model.pt")
@@ -936,7 +1087,9 @@ class Trainer:
         self.patience_counter = 0
 
         resume_path = ""
-        if getattr(args, "auto_resume", False) and os.path.exists(self.resume_ckpt_path):
+        if getattr(args, "auto_resume", False) and os.path.exists(
+            self.resume_ckpt_path
+        ):
             resume_path = self.resume_ckpt_path
         elif getattr(args, "resume_path", ""):
             resume_path = args.resume_path
@@ -945,17 +1098,21 @@ class Trainer:
             logger.info(f"[resume] Loading checkpoint: {resume_path}")
             ep, gs, best_acc, pat = load_ckpt(
                 resume_path,
-                self.model_q, self.model_k,
-                self.opt, self.scaler,
+                self.model_q,
+                self.model_k,
+                self.opt,
+                self.scaler,
                 self.device,
-                strict=bool(getattr(args, "resume_strict", False))
+                strict=bool(getattr(args, "resume_strict", False)),
             )
             self.start_epoch = ep + 1
             self.global_step = gs
             self.best_acc = best_acc
             self.patience_counter = pat
-            logger.info(f"[resume] start_epoch={self.start_epoch}, global_step={self.global_step}, "
-                        f"best_acc={self.best_acc*100:.2f}%, patience={self.patience_counter}")
+            logger.info(
+                f"[resume] start_epoch={self.start_epoch}, global_step={self.global_step}, "
+                f"best_acc={self.best_acc*100:.2f}%, patience={self.patience_counter}"
+            )
 
     def train_epoch(self, epoch: int):
         self.model_q.train()
@@ -965,12 +1122,13 @@ class Trainer:
         steps = 0
 
         autocast_kwargs = dict(device_type="cuda", enabled=torch.cuda.is_available())
-        
 
         if self.use_bf16:
             autocast_kwargs["dtype"] = torch.bfloat16
 
-        pbar = tqdm(self.train_loader, desc=f"Train E{epoch}/{self.args.epochs}", leave=True)
+        pbar = tqdm(
+            self.train_loader, desc=f"Train E{epoch}/{self.args.epochs}", leave=True
+        )
         for batch in pbar:
             if batch is None:
                 continue
@@ -979,14 +1137,24 @@ class Trainer:
             if y.numel() < 2:
                 continue
 
-            v1 = v1.to(self.device, non_blocking=True).contiguous(memory_format=torch.channels_last)
-            v2 = v2.to(self.device, non_blocking=True).contiguous(memory_format=torch.channels_last)
-            y  = y.to(self.device, non_blocking=True)
+            v1 = v1.to(self.device, non_blocking=True).contiguous(
+                memory_format=torch.channels_last
+            )
+            v2 = v2.to(self.device, non_blocking=True).contiguous(
+                memory_format=torch.channels_last
+            )
+            y = y.to(self.device, non_blocking=True)
 
             with torch.no_grad():
                 momentum_update_(self.model_q, self.model_k, float(self.args.moco_m))
 
-            lr = lr_at_step(self.global_step, self.args.lr, self.args.min_lr, self.warmup_steps, self.total_steps)
+            lr = lr_at_step(
+                self.global_step,
+                self.args.lr,
+                self.args.min_lr,
+                self.warmup_steps,
+                self.total_steps,
+            )
             for pg in self.opt.param_groups:
                 pg["lr"] = lr
 
@@ -997,27 +1165,35 @@ class Trainer:
                 with torch.no_grad():
                     k = self.model_k(v2)
 
-                loss = supervised_contrastive_q_vs_k(q, y, k, y, temperature=float(self.args.temp))
+                loss = supervised_contrastive_q_vs_k(
+                    q, y, k, y, temperature=float(self.args.temp)
+                )
 
                 if self.args.symmetric_loss:
                     q2 = self.model_q(v2)
                     with torch.no_grad():
                         k2 = self.model_k(v1)
-                    loss2 = supervised_contrastive_q_vs_k(q2, y, k2, y, temperature=float(self.args.temp))
+                    loss2 = supervised_contrastive_q_vs_k(
+                        q2, y, k2, y, temperature=float(self.args.temp)
+                    )
                     loss = 0.5 * (loss + loss2)
             did_step = False
 
             if self.use_bf16:
                 loss.backward()
                 if self.args.grad_clip > 0:
-                    torch.nn.utils.clip_grad_norm_(self.model_q.parameters(), float(self.args.grad_clip))
+                    torch.nn.utils.clip_grad_norm_(
+                        self.model_q.parameters(), float(self.args.grad_clip)
+                    )
                 self.opt.step()
                 did_step = True
             else:
                 self.scaler.scale(loss).backward()
                 if self.args.grad_clip > 0:
                     self.scaler.unscale_(self.opt)
-                    torch.nn.utils.clip_grad_norm_(self.model_q.parameters(), float(self.args.grad_clip))
+                    torch.nn.utils.clip_grad_norm_(
+                        self.model_q.parameters(), float(self.args.grad_clip)
+                    )
                 self.scaler.step(self.opt)
                 self.scaler.update()
                 did_step = True  # 보통 True로 두면 되지만, 더 엄밀히 하려면 scaler 내부 상태 체크 필요
@@ -1038,7 +1214,9 @@ class Trainer:
         return 0.0 if steps == 0 else total_loss / steps
 
     def run(self):
-        logger.info(f"Device: {self.device}, bf16={self.use_bf16}, TF32={torch.backends.cuda.matmul.allow_tf32}")
+        logger.info(
+            f"Device: {self.device}, bf16={self.use_bf16}, TF32={torch.backends.cuda.matmul.allow_tf32}"
+        )
 
         for epoch in range(self.start_epoch, self.args.epochs + 1):
             tqdm.write(f"\n===== Epoch {epoch}/{self.args.epochs} =====")
@@ -1046,11 +1224,19 @@ class Trainer:
             train_loss = self.train_epoch(epoch)
 
             baked_encoder = bake_unitnorm_encoder(self.model_q, self.args, self.device)
-            val_acc = linear_probe_val_acc(self.args, self.device, baked_encoder, self.train_lp_loader, self.val_lp_loader)
+            val_acc = linear_probe_val_acc(
+                self.args,
+                self.device,
+                baked_encoder,
+                self.train_lp_loader,
+                self.val_lp_loader,
+            )
             del baked_encoder
             torch.cuda.empty_cache()
 
-            tqdm.write(f"Epoch {epoch:03d} | TrainLoss: {train_loss:.4f} | LP ValAcc: {val_acc*100:.2f}%")
+            tqdm.write(
+                f"Epoch {epoch:03d} | TrainLoss: {train_loss:.4f} | LP ValAcc: {val_acc*100:.2f}%"
+            )
 
             torch.save(self.model_q.state_dict(), self.last_path)
 
@@ -1064,17 +1250,21 @@ class Trainer:
                 scaler=self.scaler,
                 best_acc=self.best_acc,
                 patience_counter=self.patience_counter,
-                args=self.args
+                args=self.args,
             )
 
             if val_acc > self.best_acc:
                 self.best_acc = val_acc
                 self.patience_counter = 0
                 torch.save(self.model_q.state_dict(), self.best_path)
-                tqdm.write(f"  -> Saved Best (LP ValAcc={val_acc*100:.2f}%) to {self.best_path}")
+                tqdm.write(
+                    f"  -> Saved Best (LP ValAcc={val_acc*100:.2f}%) to {self.best_path}"
+                )
             else:
                 self.patience_counter += 1
-                tqdm.write(f"  -> No improve (best={self.best_acc*100:.2f}%) [{self.patience_counter}/{self.args.patience}]")
+                tqdm.write(
+                    f"  -> No improve (best={self.best_acc*100:.2f}%) [{self.patience_counter}/{self.args.patience}]"
+                )
                 if self.patience_counter >= self.args.patience:
                     tqdm.write("Early Stopping Triggered")
                     break
@@ -1084,16 +1274,22 @@ class Trainer:
 # 12) Args
 # ==============================================================================
 def get_args():
-    p = argparse.ArgumentParser("SupCon+MoCo (NO XBM) + Plate-balanced + LinearProbe ES")
+    p = argparse.ArgumentParser(
+        "SupCon+MoCo (NO XBM) + Plate-balanced + LinearProbe ES"
+    )
 
     # Experiment
     p.add_argument("--seed", type=int, default=120)
-    p.add_argument("--save_dir", type=str, default="/content/drive/MyDrive/Final_paper/Model_MoCo_only_PlateLP_seed_120")
+    p.add_argument(
+        "--save_dir",
+        type=str,
+        default="/content/drive/MyDrive/Final_paper/Model_MoCo_only_PlateLP_seed_120",
+    )
     p.add_argument("--shard_root", type=str, default=DEFAULT_SHARD_ROOT)
 
     # Data
     p.add_argument("--max_samples", type=int, default=108000)
-    p.add_argument("--test_ratio", type=float, default=1/3)
+    p.add_argument("--test_ratio", type=float, default=1 / 3)
     p.add_argument("--val_ratio", type=float, default=0.25)
     p.add_argument("--img_size", type=int, default=128)
     p.add_argument("--batch_size", type=int, default=512)
@@ -1111,8 +1307,7 @@ def get_args():
     p.add_argument("--wd", type=float, default=1e-4)
     p.add_argument("--sgd_momentum", type=float, default=0.9)
     p.add_argument("--sgd_nesterov", action="store_true")  # 필요하면 켜기
-    
-   
+
     p.add_argument("--temp", type=float, default=0.1)
     p.add_argument("--warmup_epochs", type=int, default=4)
     p.add_argument("--min_lr", type=float, default=0.0)
@@ -1125,7 +1320,7 @@ def get_args():
     p.add_argument("--moco_m", type=float, default=0.995)
 
     # Projector
-    p.add_argument("--proj_layers", type=int, default=2, choices=[1,2,3])
+    p.add_argument("--proj_layers", type=int, default=2, choices=[1, 2, 3])
     p.add_argument("--proj_hidden", type=int, default=2048)
     p.add_argument("--proj_bn", action="store_true")
     p.add_argument("--proj_dropout", type=float, default=0.0)
@@ -1163,7 +1358,9 @@ def main():
     os.makedirs(args.save_dir, exist_ok=True)
 
     resume_ckpt_path = os.path.join(args.save_dir, "resume_ckpt.pt")
-    will_resume = (args.auto_resume and os.path.exists(resume_ckpt_path)) or (args.resume_path != "")
+    will_resume = (args.auto_resume and os.path.exists(resume_ckpt_path)) or (
+        args.resume_path != ""
+    )
 
     with open(os.path.join(args.save_dir, "args.json"), "w", encoding="utf-8") as f:
         json.dump(vars(args), f, indent=2, ensure_ascii=False)
@@ -1173,86 +1370,125 @@ def main():
     refs = load_all_sample_refs(args.shard_root)
 
     train_csv = os.path.join(args.save_dir, "train_split.csv")
-    val_csv   = os.path.join(args.save_dir, "val_split.csv")
-    test_csv  = os.path.join(args.save_dir, "test_split.csv")
+    val_csv = os.path.join(args.save_dir, "val_split.csv")
+    test_csv = os.path.join(args.save_dir, "test_split.csv")
 
-    if will_resume and os.path.exists(train_csv) and os.path.exists(val_csv) and os.path.exists(test_csv):
+    if (
+        will_resume
+        and os.path.exists(train_csv)
+        and os.path.exists(val_csv)
+        and os.path.exists(test_csv)
+    ):
         logger.info("[resume] Using existing split CSVs (no re-splitting).")
         X_train = load_split_csv(train_csv)
-        X_val   = load_split_csv(val_csv)
+        X_val = load_split_csv(val_csv)
 
         uid_to_refidx_all = {f"{r.tar_path}:{r.prefix}": i for i, r in enumerate(refs)}
         missing = [u for u in (X_train + X_val) if u not in uid_to_refidx_all]
         if len(missing) > 0:
-            raise RuntimeError(f"[resume] Some uids from split CSV are missing in current shard_root. 예: {missing[:5]}")
+            raise RuntimeError(
+                f"[resume] Some uids from split CSV are missing in current shard_root. 예: {missing[:5]}"
+            )
 
         train_refidx = [uid_to_refidx_all[u] for u in X_train]
-        val_refidx   = [uid_to_refidx_all[u] for u in X_val]
+        val_refidx = [uid_to_refidx_all[u] for u in X_val]
 
     else:
         subset_refidx = select_balanced_subset(refs, args.max_samples, args.seed)
         logger.info(f"Subset size: {len(subset_refidx)}")
 
-        uids   = [f"{refs[i].tar_path}:{refs[i].prefix}" for i in subset_refidx]
+        uids = [f"{refs[i].tar_path}:{refs[i].prefix}" for i in subset_refidx]
         labels = [refs[i].label for i in subset_refidx]
-        lines  = [refs[i].line  for i in subset_refidx]
+        lines = [refs[i].line for i in subset_refidx]
 
-        line_to_id = {ln:i for i, ln in enumerate(sorted(set(lines)))}
+        line_to_id = {ln: i for i, ln in enumerate(sorted(set(lines)))}
         strat = [line_to_id[ln] for ln in lines]
 
         X_temp, X_test, y_temp, y_test, strat_temp, strat_test = train_test_split(
-            uids, labels, strat, test_size=args.test_ratio, random_state=args.seed, stratify=strat
+            uids,
+            labels,
+            strat,
+            test_size=args.test_ratio,
+            random_state=args.seed,
+            stratify=strat,
         )
         X_train, X_val, y_train, y_val, strat_train, strat_val = train_test_split(
-            X_temp, y_temp, strat_temp, test_size=args.val_ratio, random_state=args.seed, stratify=strat_temp
+            X_temp,
+            y_temp,
+            strat_temp,
+            test_size=args.val_ratio,
+            random_state=args.seed,
+            stratify=strat_temp,
         )
-        logger.info(f"Split -> Train {len(X_train)}, Val {len(X_val)}, Test {len(X_test)}")
+        logger.info(
+            f"Split -> Train {len(X_train)}, Val {len(X_val)}, Test {len(X_test)}"
+        )
 
-        refs_by_uid = {f"{refs[i].tar_path}:{refs[i].prefix}": refs[i] for i in subset_refidx}
+        refs_by_uid = {
+            f"{refs[i].tar_path}:{refs[i].prefix}": refs[i] for i in subset_refidx
+        }
         save_split_csv(X_train, y_train, refs_by_uid, args.save_dir, "train_split.csv")
-        save_split_csv(X_val,   y_val,   refs_by_uid, args.save_dir, "val_split.csv")
-        save_split_csv(X_test,  y_test,  refs_by_uid, args.save_dir, "test_split.csv")
+        save_split_csv(X_val, y_val, refs_by_uid, args.save_dir, "val_split.csv")
+        save_split_csv(X_test, y_test, refs_by_uid, args.save_dir, "test_split.csv")
 
-        uid_to_refidx = {f"{refs[i].tar_path}:{refs[i].prefix}": i for i in subset_refidx}
+        uid_to_refidx = {
+            f"{refs[i].tar_path}:{refs[i].prefix}": i for i in subset_refidx
+        }
         train_refidx = [uid_to_refidx[u] for u in X_train]
-        val_refidx   = [uid_to_refidx[u] for u in X_val]
+        val_refidx = [uid_to_refidx[u] for u in X_val]
 
     # Banks (keep your original style: separate train/val banks)
     train_bank = InMemoryTarBank(refs, train_refidx, args.img_size)
-    val_bank   = InMemoryTarBank(refs, val_refidx, args.img_size)
+    val_bank = InMemoryTarBank(refs, val_refidx, args.img_size)
 
     train_ib = list(range(len(train_refidx)))
-    val_ib   = list(range(len(val_refidx)))
+    val_ib = list(range(len(val_refidx)))
 
-    train_ds = InMemorySixteenBitDataset(train_bank, train_ib, args.img_size, two_crops=True,  augment=True)
+    train_ds = InMemorySixteenBitDataset(
+        train_bank, train_ib, args.img_size, two_crops=True, augment=True
+    )
 
-    train_lp_ds = InMemorySixteenBitDataset(train_bank, train_ib, args.img_size, two_crops=False, augment=False)
-    val_lp_ds   = InMemorySixteenBitDataset(val_bank,   val_ib,   args.img_size, two_crops=False, augment=False)
+    train_lp_ds = InMemorySixteenBitDataset(
+        train_bank, train_ib, args.img_size, two_crops=False, augment=False
+    )
+    val_lp_ds = InMemorySixteenBitDataset(
+        val_bank, val_ib, args.img_size, two_crops=False, augment=False
+    )
 
-    train_sampler = StrictPlateBalancedBatchSamplerOnBank(train_bank, batch_size=args.batch_size, seed=args.seed)
+    train_sampler = StrictPlateBalancedBatchSamplerOnBank(
+        train_bank, batch_size=args.batch_size, seed=args.seed
+    )
 
     pin = torch.cuda.is_available()
 
     train_loader = DataLoader(
-        train_ds, batch_sampler=train_sampler,
-        num_workers=0, pin_memory=pin,
+        train_ds,
+        batch_sampler=train_sampler,
+        num_workers=0,
+        pin_memory=pin,
         worker_init_fn=seed_worker,
         collate_fn=collate_skip_none,
     )
 
     train_lp_loader = DataLoader(
-        train_lp_ds, batch_size=args.lp_batch_size, shuffle=True,
-        num_workers=0, pin_memory=pin,
+        train_lp_ds,
+        batch_size=args.lp_batch_size,
+        shuffle=True,
+        num_workers=0,
+        pin_memory=pin,
         worker_init_fn=seed_worker,
         collate_fn=collate_skip_none,
-        drop_last=False
+        drop_last=False,
     )
     val_lp_loader = DataLoader(
-        val_lp_ds, batch_size=args.lp_batch_size, shuffle=False,
-        num_workers=0, pin_memory=pin,
+        val_lp_ds,
+        batch_size=args.lp_batch_size,
+        shuffle=False,
+        num_workers=0,
+        pin_memory=pin,
         worker_init_fn=seed_worker,
         collate_fn=collate_skip_none,
-        drop_last=False
+        drop_last=False,
     )
 
     blocks = parse_int_list(args.blocks, 4)
@@ -1289,8 +1525,11 @@ def main():
     except Exception as e:
         logger.info(f"[compile] torch.compile not available: {e}")
 
-    trainer = Trainer(args, model_q, model_k, train_loader, train_lp_loader, val_lp_loader)
+    trainer = Trainer(
+        args, model_q, model_k, train_loader, train_lp_loader, val_lp_loader
+    )
     trainer.run()
+
 
 if __name__ == "__main__":
     main()

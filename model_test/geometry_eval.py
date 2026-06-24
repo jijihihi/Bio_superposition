@@ -33,35 +33,38 @@
 #   pip install GraphRicciCurvature networkx
 # ==============================================================================
 
-import os
-import sys
+import argparse
 import csv
 import json
+import os
+import sys
 import time
-import argparse
-import numpy as np
 
 import matplotlib
+import numpy as np
+
 _IN_COLAB = "google.colab" in sys.modules
 if not _IN_COLAB:
     matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import seaborn as sns
-
-from sae_project.step02_logging_utils import get_logger, SUPERCLASS_MAP, CLASS_TO_LABEL
-from apoptosis_prediction.local_knn_std import load_cache
-from model_test.knn_fewshot_eval import _weighted_vote, NUM_CLASSES, CLASS_NAMES
-
 # GPU detection
 import torch
+
+from apoptosis_prediction.local_knn_std import load_cache
+from model_test.knn_fewshot_eval import (CLASS_NAMES, NUM_CLASSES,
+                                         _weighted_vote)
+from sae_project.step02_logging_utils import (CLASS_TO_LABEL, SUPERCLASS_MAP,
+                                              get_logger)
+
 _HAS_CUDA = torch.cuda.is_available()
 _DEVICE = torch.device("cuda" if _HAS_CUDA else "cpu")
 
 logger = get_logger("geometry_eval")
 
-plt.rcParams['svg.fonttype'] = 'none'
-plt.rcParams['pdf.fonttype'] = 42
-plt.rcParams['font.family'] = 'sans-serif'
+plt.rcParams["svg.fonttype"] = "none"
+plt.rcParams["pdf.fonttype"] = 42
+plt.rcParams["font.family"] = "sans-serif"
 sns.set_style("ticks")
 
 
@@ -71,96 +74,163 @@ sns.set_style("ticks")
 def get_args():
     p = argparse.ArgumentParser(
         description="Intrinsic geometry evaluation: "
-                    "Ollivier-Ricci curvature & δ-hyperbolicity")
+        "Ollivier-Ricci curvature & δ-hyperbolicity"
+    )
 
     # Data
     p.add_argument("--cnn_cache", type=str, default="")
     p.add_argument("--sae_cache", type=str, default="")
     p.add_argument("--dead_threshold", type=float, default=1e-5)
-    p.add_argument("--gap_l2_norm", action="store_true",
-                   help="L2 normalize feature vectors")
-    p.add_argument("--label", type=str, default="",
-                   help="Custom label for this run")
+    p.add_argument(
+        "--gap_l2_norm", action="store_true", help="L2 normalize feature vectors"
+    )
+    p.add_argument("--label", type=str, default="", help="Custom label for this run")
 
     # Geometry parameters
-    p.add_argument("--k_neighbors", type=int, nargs="+", default=[15],
-                   help="K for KNN graph construction (multiple for sweep). "
-                        "Default: 15")
-    p.add_argument("--ricci_alpha", type=float, default=0.5,
-                   help="Ollivier-Ricci alpha (lazy random walk param). "
-                        "0.5 = standard. Default: 0.5")
-    p.add_argument("--delta_n_samples", type=int, default=10000,
-                   help="Number of random quadruples for δ-hyperbolicity. "
-                        "Default: 10000")
+    p.add_argument(
+        "--k_neighbors",
+        type=int,
+        nargs="+",
+        default=[15],
+        help="K for KNN graph construction (multiple for sweep). " "Default: 15",
+    )
+    p.add_argument(
+        "--ricci_alpha",
+        type=float,
+        default=0.5,
+        help="Ollivier-Ricci alpha (lazy random walk param). "
+        "0.5 = standard. Default: 0.5",
+    )
+    p.add_argument(
+        "--delta_n_samples",
+        type=int,
+        default=10000,
+        help="Number of random quadruples for δ-hyperbolicity. " "Default: 10000",
+    )
 
     # Diffusion distance (recommended for biological data)
-    p.add_argument("--use_diffusion", action="store_true",
-                   help="Use diffusion distance instead of Euclidean. "
-                        "Computes sc.tl.diffmap and uses X_diffmap coordinates. "
-                        "More robust to noise, respects manifold structure.")
-    p.add_argument("--n_diffmap_comps", type=int, default=100,
-                   help="Number of diffusion map components to compute. "
-                        "DC0 (constant) is excluded automatically. Default: 15")
-    p.add_argument("--pca_dim", type=int, default=300,
-                   help="PCA dimensions before diffmap (0 = skip PCA). Default: 50")
-    p.add_argument("--n_neighbors_diffmap", type=int, default=15,
-                   help="K for scanpy KNN graph (adaptive kernel). Default: 30")
+    p.add_argument(
+        "--use_diffusion",
+        action="store_true",
+        help="Use diffusion distance instead of Euclidean. "
+        "Computes sc.tl.diffmap and uses X_diffmap coordinates. "
+        "More robust to noise, respects manifold structure.",
+    )
+    p.add_argument(
+        "--n_diffmap_comps",
+        type=int,
+        default=100,
+        help="Number of diffusion map components to compute. "
+        "DC0 (constant) is excluded automatically. Default: 15",
+    )
+    p.add_argument(
+        "--pca_dim",
+        type=int,
+        default=300,
+        help="PCA dimensions before diffmap (0 = skip PCA). Default: 50",
+    )
+    p.add_argument(
+        "--n_neighbors_diffmap",
+        type=int,
+        default=15,
+        help="K for scanpy KNN graph (adaptive kernel). Default: 30",
+    )
 
     # Subsampling (CRITICAL for Ricci — O(N·K²) per edge)
-    p.add_argument("--samples_per_class", type=int, default=500,
-                   help="Max samples per class. Default: 500 "
-                        "(2000 total for 4 classes)")
+    p.add_argument(
+        "--samples_per_class",
+        type=int,
+        default=500,
+        help="Max samples per class. Default: 500 " "(2000 total for 4 classes)",
+    )
 
     # Analysis scope
-    p.add_argument("--per_class", action="store_true",
-                   help="Also compute per-class curvature distributions")
+    p.add_argument(
+        "--per_class",
+        action="store_true",
+        help="Also compute per-class curvature distributions",
+    )
 
     # ── Intrinsic Geometry gate ──────────────────────────────────────
     # Ricci curvature and δ-hyperbolicity are O(N·K²) and very slow.
     # Only computed when this flag is set.
-    p.add_argument("--compute_geometry", action="store_true",
-                   help="Compute Ollivier-Ricci curvature and Gromov "
-                        "δ-hyperbolicity. VERY SLOW — skip by default.")
+    p.add_argument(
+        "--compute_geometry",
+        action="store_true",
+        help="Compute Ollivier-Ricci curvature and Gromov "
+        "δ-hyperbolicity. VERY SLOW — skip by default.",
+    )
 
     # ── Apoptosis local std analysis ─────────────────────────────────
-    p.add_argument("--apoptosis_csv", type=str, default="",
-                   help="Path to per-image apoptosis CSV "
-                        "(required for local apoptosis std analysis).")
-    p.add_argument("--apoptosis_k_neighbors", type=int, nargs="+",
-                   default=[5, 10, 15, 20, 25],
-                   help="K values for apoptosis local std sweep. "
-                        "Default: 5 10 15 20 25")
+    p.add_argument(
+        "--apoptosis_csv",
+        type=str,
+        default="",
+        help="Path to per-image apoptosis CSV "
+        "(required for local apoptosis std analysis).",
+    )
+    p.add_argument(
+        "--apoptosis_k_neighbors",
+        type=int,
+        nargs="+",
+        default=[5, 10, 15, 20, 25],
+        help="K values for apoptosis local std sweep. " "Default: 5 10 15 20 25",
+    )
 
     # KNN confidence filter — clean subset
-    p.add_argument("--knn_filter", action="store_true",
-                   help="Filter to correctly classified samples (LOO KNN). "
-                        "Runs geometry on both full and clean subsets.")
-    p.add_argument("--knn_filter_k", type=int, default=10,
-                   help="K for LOO KNN filter. Default: 10")
-    p.add_argument("--knn_filter_weights", type=str, default="inv_sq",
-                   choices=["inv_sq", "distance", "uniform"],
-                   help="KNN weighting: inv_sq (1/d²), distance (1/d), "
-                        "uniform. Default: inv_sq")
+    p.add_argument(
+        "--knn_filter",
+        action="store_true",
+        help="Filter to correctly classified samples (LOO KNN). "
+        "Runs geometry on both full and clean subsets.",
+    )
+    p.add_argument(
+        "--knn_filter_k", type=int, default=10, help="K for LOO KNN filter. Default: 10"
+    )
+    p.add_argument(
+        "--knn_filter_weights",
+        type=str,
+        default="inv_sq",
+        choices=["inv_sq", "distance", "uniform"],
+        help="KNN weighting: inv_sq (1/d²), distance (1/d), "
+        "uniform. Default: inv_sq",
+    )
 
     # DPT vs cosine rank correlation
-    p.add_argument("--rank_correlation", action="store_true",
-                   help="Compute DPT vs cosine rank correlation "
-                        "(isometry test)")
-    p.add_argument("--n_rank_anchors", type=int, default=300,
-                   help="Number of anchor points for rank correlation. "
-                        "Default: 300")
-    p.add_argument("--rank_pca_dim", type=int, default=0,
-                   help="PCA dims for DPT in rank correlation. "
-                        "0 = skip PCA (raw space). Default: 0")
-    p.add_argument("--rank_n_neighbors", type=int, default=15,
-                   help="K for scanpy neighbors in rank DPT. Default: 15")
+    p.add_argument(
+        "--rank_correlation",
+        action="store_true",
+        help="Compute DPT vs cosine rank correlation " "(isometry test)",
+    )
+    p.add_argument(
+        "--n_rank_anchors",
+        type=int,
+        default=300,
+        help="Number of anchor points for rank correlation. " "Default: 300",
+    )
+    p.add_argument(
+        "--rank_pca_dim",
+        type=int,
+        default=0,
+        help="PCA dims for DPT in rank correlation. "
+        "0 = skip PCA (raw space). Default: 0",
+    )
+    p.add_argument(
+        "--rank_n_neighbors",
+        type=int,
+        default=15,
+        help="K for scanpy neighbors in rank DPT. Default: 15",
+    )
 
     # ── Pairwise distance dump (for GAM fitting / downstream analysis) ──
-    p.add_argument("--save_pairwise", action="store_true",
-                   help="Save all sampled pairwise (cosine_dist, dpt_dist) "
-                        "with point IDs/classes to NPZ + CSV. "
-                        "Requires --rank_correlation to be set. "
-                        "Files: pairwise_distances_<label>.npz/.csv")
+    p.add_argument(
+        "--save_pairwise",
+        action="store_true",
+        help="Save all sampled pairwise (cosine_dist, dpt_dist) "
+        "with point IDs/classes to NPZ + CSV. "
+        "Requires --rank_correlation to be set. "
+        "Files: pairwise_distances_<label>.npz/.csv",
+    )
 
     # Output
     p.add_argument("--output_dir", type=str, default="")
@@ -171,17 +241,17 @@ def get_args():
     # When --summarize_dir is given, skip normal evaluation and instead
     # aggregate all apop_std_cosine_vs_dpt.json files found under that
     # directory, grouping by CNN/SAE, and print mean±std across seeds.
-    p.add_argument("--summarize_dir", type=str, default="",
-                   help="Aggregate apop_std results under this directory. "
-                        "Groups cnn_seed_* / sae_seed_* subdirs, computes "
-                        "mean±std across seeds per (metric, k). "
-                        "Saves aggregated_apop_std_summary.csv/json.")
+    p.add_argument(
+        "--summarize_dir",
+        type=str,
+        default="",
+        help="Aggregate apop_std results under this directory. "
+        "Groups cnn_seed_* / sae_seed_* subdirs, computes "
+        "mean±std across seeds per (metric, k). "
+        "Saves aggregated_apop_std_summary.csv/json.",
+    )
 
     return p.parse_args()
-
-
-
-
 
 
 # ==============================================================================
@@ -260,13 +330,13 @@ def aggregate_all_metrics(base_dir, out_dir=None, dpi=200):
                 continue
             n = len(arr)
             stats[grp][mname] = {
-                "mean":   float(np.mean(arr)),
-                "sem":    float(np.std(arr) / np.sqrt(n)),
-                "std":    float(np.std(arr)),
+                "mean": float(np.mean(arr)),
+                "sem": float(np.std(arr) / np.sqrt(n)),
+                "std": float(np.std(arr)),
                 "median": float(np.median(arr)),
-                "min":    float(np.min(arr)),
-                "max":    float(np.max(arr)),
-                "n":      n,
+                "min": float(np.min(arr)),
+                "max": float(np.max(arr)),
+                "n": n,
             }
 
     # ── 4. Print Tables ───────────────────────────────────────────────
@@ -279,17 +349,27 @@ def aggregate_all_metrics(base_dir, out_dir=None, dpi=200):
     csv_path = os.path.join(out_dir, "aggregated_metrics_summary.csv")
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         import csv as _csv
+
         w = _csv.writer(f)
-        w.writerow(["group", "metric", "mean", "sem", "std",
-                    "median", "min", "max", "n"])
+        w.writerow(
+            ["group", "metric", "mean", "sem", "std", "median", "min", "max", "n"]
+        )
         for grp in sorted(stats):
             for mname in sorted(stats[grp]):
                 v = stats[grp][mname]
-                w.writerow([grp, mname,
-                             f"{v['mean']:.6f}", f"{v['sem']:.6f}",
-                             f"{v['std']:.6f}",  f"{v['median']:.6f}",
-                             f"{v['min']:.6f}",  f"{v['max']:.6f}",
-                             v['n']])
+                w.writerow(
+                    [
+                        grp,
+                        mname,
+                        f"{v['mean']:.6f}",
+                        f"{v['sem']:.6f}",
+                        f"{v['std']:.6f}",
+                        f"{v['median']:.6f}",
+                        f"{v['min']:.6f}",
+                        f"{v['max']:.6f}",
+                        v["n"],
+                    ]
+                )
     logger.info(f"  Saved: {csv_path}")
 
     # ── 7. Save JSON ──────────────────────────────────────────────────
@@ -311,9 +391,11 @@ def aggregate_apop_std_results(base_dir, out_dir=None, dpi=200):
 
 # ── Readers ────────────────────────────────────────────────────────────
 
+
 def _infer_groups_from_jsons(base_dir):
     """Fallback: find any apop_std/rank_correlation JSON and group by dirname."""
     import glob
+
     dirs = {}
     for jf in glob.glob(os.path.join(base_dir, "**", "*.json"), recursive=True):
         d = os.path.dirname(jf)
@@ -338,6 +420,7 @@ def _src_to_group(src_key):
 def _read_rank_correlation(seed_dir, acc):
     """Read rank_correlation.json and accumulate isometry metrics."""
     import glob
+
     # Try both directly in seed_dir and in k_*/ subdirs
     candidates = glob.glob(os.path.join(seed_dir, "rank_correlation.json"))
     candidates += glob.glob(os.path.join(seed_dir, "k_*", "rank_correlation.json"))
@@ -357,11 +440,17 @@ def _read_rank_correlation(seed_dir, acc):
 
             # Scalar isometry metrics
             for mname in [
-                "spearman_mean", "spearman_std", "spearman_median",
-                "kendall_mean",  "kendall_std",  "kendall_median",
-                "pearson_mean",  "pearson_std",
+                "spearman_mean",
+                "spearman_std",
+                "spearman_median",
+                "kendall_mean",
+                "kendall_std",
+                "kendall_median",
+                "pearson_mean",
+                "pearson_std",
                 "kruskal_stress",
-                "npr_mean", "npr_std",
+                "npr_mean",
+                "npr_std",
             ]:
                 if mname in src_data and isinstance(src_data[mname], (int, float)):
                     acc.setdefault(mname, []).append(float(src_data[mname]))
@@ -375,31 +464,44 @@ def _read_rank_correlation(seed_dir, acc):
                         continue
                     if isinstance(k_data, dict):
                         for stat in ["mean", "std", "median"]:
-                            if stat in k_data and isinstance(k_data[stat], (int, float)):
+                            if stat in k_data and isinstance(
+                                k_data[stat], (int, float)
+                            ):
                                 acc.setdefault(f"npr_k{k_str}_{stat}", []).append(
-                                    float(k_data[stat]))
+                                    float(k_data[stat])
+                                )
                     elif isinstance(k_data, list):
                         arr = [v for v in k_data if isinstance(v, (int, float))]
                         if arr:
                             acc.setdefault(f"npr_k{k_str}_mean", []).append(
-                                float(np.mean(arr)))
+                                float(np.mean(arr))
+                            )
 
             # Per-class spearman/kendall/pearson (average across classes)
-            for prefix in ["per_class_spearman", "per_class_kendall",
-                           "per_class_pearson", "per_class_stress"]:
+            for prefix in [
+                "per_class_spearman",
+                "per_class_kendall",
+                "per_class_pearson",
+                "per_class_stress",
+            ]:
                 if prefix not in src_data or not isinstance(src_data[prefix], dict):
                     continue
-                vals = [v for v in src_data[prefix].values()
-                        if isinstance(v, (int, float)) and np.isfinite(v)]
+                vals = [
+                    v
+                    for v in src_data[prefix].values()
+                    if isinstance(v, (int, float)) and np.isfinite(v)
+                ]
                 if vals:
                     base_name = prefix.replace("per_class_", "") + "_mean"
                     acc.setdefault(f"cls_avg_{base_name}", []).append(
-                        float(np.mean(vals)))
+                        float(np.mean(vals))
+                    )
 
 
 def _read_apop_std(seed_dir, acc):
     """Read apop_std_cosine_vs_dpt.json and accumulate apoptosis local std."""
     import glob
+
     candidates = glob.glob(os.path.join(seed_dir, "apop_std_cosine_vs_dpt.json"))
 
     for fpath in candidates:
@@ -418,7 +520,8 @@ def _read_apop_std(seed_dir, acc):
                 for stat in ["mean_std", "median_std", "std_std"]:
                     if stat in kdata and isinstance(kdata[stat], (int, float)):
                         acc.setdefault(f"apop_{metric}_k{k_str}_{stat}", []).append(
-                            float(kdata[stat]))
+                            float(kdata[stat])
+                        )
 
         # Compute paired Δ (DPT - cosine) right here per seed
         for k_str in data.get("cosine", {}):
@@ -437,9 +540,9 @@ def _read_apop_std(seed_dir, acc):
 def _read_geometry_results(seed_dir, acc):
     """Read geometry_results*.json for Ricci curvature and δ-hyperbolicity."""
     import glob
+
     candidates = glob.glob(os.path.join(seed_dir, "geometry_results*.json"))
-    candidates += glob.glob(os.path.join(seed_dir, "k_*",
-                                         "geometry_results*.json"))
+    candidates += glob.glob(os.path.join(seed_dir, "k_*", "geometry_results*.json"))
 
     for fpath in candidates:
         try:
@@ -455,8 +558,7 @@ def _read_geometry_results(seed_dir, acc):
             # Ricci
             ricci = src_data.get("ricci", {})
             if isinstance(ricci, dict) and "error" not in ricci:
-                for m in ["mean", "median", "std",
-                          "frac_positive", "frac_negative"]:
+                for m in ["mean", "median", "std", "frac_positive", "frac_negative"]:
                     if m in ricci and isinstance(ricci[m], (int, float)):
                         acc.setdefault(f"ricci_{m}", []).append(float(ricci[m]))
 
@@ -472,66 +574,66 @@ def _read_geometry_results(seed_dir, acc):
 
 _METRIC_CATEGORIES = {
     "Isometry (Cosine vs DPT)": [
-        ("spearman_mean",    "Spearman ρ  (mean)"),
-        ("spearman_median",  "Spearman ρ  (median)"),
-        ("kendall_mean",     "Kendall τ   (mean)"),
-        ("kendall_median",   "Kendall τ   (median)"),
-        ("pearson_mean",     "Pearson r   (mean)"),
-        ("kruskal_stress",   "Kruskal stress"),
-        ("npr_mean",         "NPR         (mean, default k)"),
-        ("npr_k5_mean",      "NPR k=5"),
-        ("npr_k10_mean",     "NPR k=10"),
-        ("npr_k15_mean",     "NPR k=15"),
-        ("npr_k20_mean",     "NPR k=20"),
-        ("npr_k25_mean",     "NPR k=25"),
+        ("spearman_mean", "Spearman ρ  (mean)"),
+        ("spearman_median", "Spearman ρ  (median)"),
+        ("kendall_mean", "Kendall τ   (mean)"),
+        ("kendall_median", "Kendall τ   (median)"),
+        ("pearson_mean", "Pearson r   (mean)"),
+        ("kruskal_stress", "Kruskal stress"),
+        ("npr_mean", "NPR         (mean, default k)"),
+        ("npr_k5_mean", "NPR k=5"),
+        ("npr_k10_mean", "NPR k=10"),
+        ("npr_k15_mean", "NPR k=15"),
+        ("npr_k20_mean", "NPR k=20"),
+        ("npr_k25_mean", "NPR k=25"),
     ],
     "Apoptosis local std — cosine KNN": [
-        ("apop_cosine_k5_mean_std",    "cosine k=5  mean_std"),
-        ("apop_cosine_k10_mean_std",   "cosine k=10 mean_std"),
-        ("apop_cosine_k15_mean_std",   "cosine k=15 mean_std"),
-        ("apop_cosine_k20_mean_std",   "cosine k=20 mean_std"),
-        ("apop_cosine_k25_mean_std",   "cosine k=25 mean_std"),
-        ("apop_cosine_k5_median_std",  "cosine k=5  median_std"),
+        ("apop_cosine_k5_mean_std", "cosine k=5  mean_std"),
+        ("apop_cosine_k10_mean_std", "cosine k=10 mean_std"),
+        ("apop_cosine_k15_mean_std", "cosine k=15 mean_std"),
+        ("apop_cosine_k20_mean_std", "cosine k=20 mean_std"),
+        ("apop_cosine_k25_mean_std", "cosine k=25 mean_std"),
+        ("apop_cosine_k5_median_std", "cosine k=5  median_std"),
         ("apop_cosine_k10_median_std", "cosine k=10 median_std"),
         ("apop_cosine_k15_median_std", "cosine k=15 median_std"),
         ("apop_cosine_k20_median_std", "cosine k=20 median_std"),
         ("apop_cosine_k25_median_std", "cosine k=25 median_std"),
     ],
     "Apoptosis local std — DPT KNN": [
-        ("apop_DPT_k5_mean_std",    "DPT k=5  mean_std"),
-        ("apop_DPT_k10_mean_std",   "DPT k=10 mean_std"),
-        ("apop_DPT_k15_mean_std",   "DPT k=15 mean_std"),
-        ("apop_DPT_k20_mean_std",   "DPT k=20 mean_std"),
-        ("apop_DPT_k25_mean_std",   "DPT k=25 mean_std"),
-        ("apop_DPT_k5_median_std",  "DPT k=5  median_std"),
+        ("apop_DPT_k5_mean_std", "DPT k=5  mean_std"),
+        ("apop_DPT_k10_mean_std", "DPT k=10 mean_std"),
+        ("apop_DPT_k15_mean_std", "DPT k=15 mean_std"),
+        ("apop_DPT_k20_mean_std", "DPT k=20 mean_std"),
+        ("apop_DPT_k25_mean_std", "DPT k=25 mean_std"),
+        ("apop_DPT_k5_median_std", "DPT k=5  median_std"),
         ("apop_DPT_k10_median_std", "DPT k=10 median_std"),
         ("apop_DPT_k15_median_std", "DPT k=15 median_std"),
         ("apop_DPT_k20_median_std", "DPT k=20 median_std"),
         ("apop_DPT_k25_median_std", "DPT k=25 median_std"),
     ],
     "Apoptosis local std — Δ (DPT - cosine)": [
-        ("apop_delta_k5_mean_std",    "Δ mean_std   k=5"),
-        ("apop_delta_k10_mean_std",   "Δ mean_std   k=10"),
-        ("apop_delta_k15_mean_std",   "Δ mean_std   k=15"),
-        ("apop_delta_k20_mean_std",   "Δ mean_std   k=20"),
-        ("apop_delta_k25_mean_std",   "Δ mean_std   k=25"),
-        ("apop_delta_k5_median_std",  "Δ median_std k=5"),
+        ("apop_delta_k5_mean_std", "Δ mean_std   k=5"),
+        ("apop_delta_k10_mean_std", "Δ mean_std   k=10"),
+        ("apop_delta_k15_mean_std", "Δ mean_std   k=15"),
+        ("apop_delta_k20_mean_std", "Δ mean_std   k=20"),
+        ("apop_delta_k25_mean_std", "Δ mean_std   k=25"),
+        ("apop_delta_k5_median_std", "Δ median_std k=5"),
         ("apop_delta_k10_median_std", "Δ median_std k=10"),
         ("apop_delta_k15_median_std", "Δ median_std k=15"),
         ("apop_delta_k20_median_std", "Δ median_std k=20"),
         ("apop_delta_k25_median_std", "Δ median_std k=25"),
     ],
     "Ricci Curvature": [
-        ("ricci_mean",          "Ricci mean"),
-        ("ricci_median",        "Ricci median"),
-        ("ricci_std",           "Ricci std"),
+        ("ricci_mean", "Ricci mean"),
+        ("ricci_median", "Ricci median"),
+        ("ricci_std", "Ricci std"),
         ("ricci_frac_positive", "Frac positive edges"),
         ("ricci_frac_negative", "Frac negative edges"),
     ],
     "δ-Hyperbolicity": [
-        ("hyp_delta",     "δ"),
+        ("hyp_delta", "δ"),
         ("hyp_delta_rel", "δ/diameter (relative)"),
-        ("hyp_diameter",  "Graph diameter"),
+        ("hyp_diameter", "Graph diameter"),
     ],
 }
 
@@ -546,9 +648,7 @@ def _print_agg_tables(stats):
     for cat_name, mlist in _METRIC_CATEGORIES.items():
         # Check if any metric in this category exists in any group
         has_any = any(
-            mname in stats.get(grp, {})
-            for mname, _ in mlist
-            for grp in groups
+            mname in stats.get(grp, {}) for mname, _ in mlist for grp in groups
         )
         if not has_any:
             continue
@@ -558,8 +658,8 @@ def _print_agg_tables(stats):
         hdr = f"  {'Metric':<32s}"
         for grp in groups:
             n_seeds = max(
-                (stats[grp].get(mname, {}).get("n", 0) for mname, _ in mlist),
-                default=0)
+                (stats[grp].get(mname, {}).get("n", 0) for mname, _ in mlist), default=0
+            )
             hdr += f"  {grp:>8s}({n_seeds:d}s) mean±SEM"
         logger.info(hdr)
         logger.info(f"  {'─'*70}")
@@ -585,8 +685,10 @@ def _print_cnn_sae_comparison(stats):
     logger.info(f"\n{'='*80}")
     logger.info(f"  CNN vs SAE — per-metric comparison")
     logger.info(f"{'='*80}")
-    logger.info(f"  {'Metric':<32s}  {'CNN mean':>12s}  {'SAE mean':>12s}"
-                f"  {'Δ(CNN-SAE)':>12s}  Direction")
+    logger.info(
+        f"  {'Metric':<32s}  {'CNN mean':>12s}  {'SAE mean':>12s}"
+        f"  {'Δ(CNN-SAE)':>12s}  Direction"
+    )
     logger.info(f"  {'─'*80}")
 
     all_metric_names = []
@@ -611,54 +713,62 @@ def _print_cnn_sae_comparison(stats):
             s_val = s["mean"] if s else float("nan")
             delta = c_val - s_val
             # Higher-is-better metrics
-            higher_is_better = any(kw in mname for kw in [
-                "spearman", "kendall", "pearson", "npr", "ricci_frac_pos"])
+            higher_is_better = any(
+                kw in mname
+                for kw in ["spearman", "kendall", "pearson", "npr", "ricci_frac_pos"]
+            )
             # Lower-is-better metrics
-            lower_is_better = any(kw in mname for kw in [
-                "kruskal", "apop_", "hyp_delta"])
+            lower_is_better = any(
+                kw in mname for kw in ["kruskal", "apop_", "hyp_delta"]
+            )
             if higher_is_better:
                 direction = "✓ SAE better" if s_val > c_val else "✗ CNN better"
             elif lower_is_better:
                 direction = "✓ SAE better" if s_val < c_val else "✗ CNN better"
             else:
                 direction = "—"
-            logger.info(f"  {label:<32s}  {c_val:>12.5f}  {s_val:>12.5f}"
-                        f"  {delta:>+12.5f}  {direction}")
+            logger.info(
+                f"  {label:<32s}  {c_val:>12.5f}  {s_val:>12.5f}"
+                f"  {delta:>+12.5f}  {direction}"
+            )
 
     logger.info(f"{'='*80}")
 
 
 # ── Comparison plot ─────────────────────────────────────────────────────
 
+
 def _plot_aggregated_metrics(stats, out_dir, dpi=200):
     """Bar charts: CNN vs SAE for key summary metrics."""
     # Select representative scalar metrics for plotting
     plot_metrics = [
-        ("spearman_mean",        "Spearman ρ"),
-        ("kendall_mean",         "Kendall τ"),
-        ("pearson_mean",         "Pearson r"),
-        ("kruskal_stress",       "Kruskal stress"),
-        ("npr_k5_mean",          "NPR k=5"),
-        ("npr_k15_mean",         "NPR k=15"),
-        ("apop_cosine_k5_mean_std",  "Apop std\ncosine k=5"),
-        ("apop_DPT_k5_mean_std",     "Apop std\nDPT k=5"),
-        ("apop_delta_k5_mean_std",   "Δ apop std\nDPT-cos k=5"),
-        ("ricci_mean",           "Ricci mean"),
-        ("ricci_frac_positive",  "Ricci frac+"),
-        ("hyp_delta",            "δ-Hyperbolicity"),
+        ("spearman_mean", "Spearman ρ"),
+        ("kendall_mean", "Kendall τ"),
+        ("pearson_mean", "Pearson r"),
+        ("kruskal_stress", "Kruskal stress"),
+        ("npr_k5_mean", "NPR k=5"),
+        ("npr_k15_mean", "NPR k=15"),
+        ("apop_cosine_k5_mean_std", "Apop std\ncosine k=5"),
+        ("apop_DPT_k5_mean_std", "Apop std\nDPT k=5"),
+        ("apop_delta_k5_mean_std", "Δ apop std\nDPT-cos k=5"),
+        ("ricci_mean", "Ricci mean"),
+        ("ricci_frac_positive", "Ricci frac+"),
+        ("hyp_delta", "δ-Hyperbolicity"),
     ]
 
     # Filter to available metrics
-    available = [(mn, lbl) for mn, lbl in plot_metrics
-                 if any(mn in stats.get(g, {}) for g in stats)]
+    available = [
+        (mn, lbl)
+        for mn, lbl in plot_metrics
+        if any(mn in stats.get(g, {}) for g in stats)
+    ]
     if not available:
         return
 
     n_metrics = len(available)
     n_cols = min(6, n_metrics)
     n_rows = (n_metrics + n_cols - 1) // n_cols
-    fig, axes = plt.subplots(n_rows, n_cols,
-                             figsize=(3.2 * n_cols, 3.5 * n_rows))
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(3.2 * n_cols, 3.5 * n_rows))
     axes = np.array(axes).reshape(-1)
 
     colors_map = {"CNN": "#3A7EBF", "SAE": "#E8833A"}
@@ -667,16 +777,29 @@ def _plot_aggregated_metrics(stats, out_dir, dpi=200):
     for ax_idx, (mname, label) in enumerate(available):
         ax = axes[ax_idx]
         vals = [stats[g].get(mname, {}).get("mean", np.nan) for g in groups]
-        sems = [stats[g].get(mname, {}).get("sem",  np.nan) for g in groups]
-        ns   = [stats[g].get(mname, {}).get("n",  0)        for g in groups]
+        sems = [stats[g].get(mname, {}).get("sem", np.nan) for g in groups]
+        ns = [stats[g].get(mname, {}).get("n", 0) for g in groups]
         x = np.arange(len(groups))
-        bars = ax.bar(x, vals, color=[colors_map.get(g, "#999") for g in groups],
-                      alpha=0.82, width=0.5, zorder=3)
-        ax.errorbar(x, vals, yerr=sems, fmt="none", color="black",
-                    capsize=4, linewidth=1.5, zorder=4)
+        bars = ax.bar(
+            x,
+            vals,
+            color=[colors_map.get(g, "#999") for g in groups],
+            alpha=0.82,
+            width=0.5,
+            zorder=3,
+        )
+        ax.errorbar(
+            x,
+            vals,
+            yerr=sems,
+            fmt="none",
+            color="black",
+            capsize=4,
+            linewidth=1.5,
+            zorder=4,
+        )
         ax.set_xticks(x)
-        ax.set_xticklabels([f"{g}\n(n={n})" for g, n in zip(groups, ns)],
-                           fontsize=8)
+        ax.set_xticklabels([f"{g}\n(n={n})" for g, n in zip(groups, ns)], fontsize=8)
         ax.set_title(label, fontsize=9, fontweight="bold")
         ax.grid(True, alpha=0.15, axis="y")
         sns.despine(ax=ax)
@@ -685,19 +808,19 @@ def _plot_aggregated_metrics(stats, out_dir, dpi=200):
     for ax in axes[n_metrics:]:
         ax.set_visible(False)
 
-    fig.suptitle("Aggregated Geometry Metrics — CNN vs SAE (mean ± SEM across seeds)",
-                 fontsize=11, fontweight="bold")
+    fig.suptitle(
+        "Aggregated Geometry Metrics — CNN vs SAE (mean ± SEM across seeds)",
+        fontsize=11,
+        fontweight="bold",
+    )
     fig.tight_layout()
     fname = "aggregated_metrics_comparison"
     for ext in [".png", ".svg"]:
-        fig.savefig(os.path.join(out_dir, fname + ext),
-                    dpi=dpi, bbox_inches="tight")
+        fig.savefig(os.path.join(out_dir, fname + ext), dpi=dpi, bbox_inches="tight")
     logger.info(f"  Saved: {fname}.png/.svg")
     if _IN_COLAB:
         plt.show()
     plt.close(fig)
-
-
 
 
 # ==============================================================================
@@ -722,8 +845,7 @@ def build_knn_graph(X, k, labels=None):
     n = len(X)
     k_actual = min(k, n - 1)
 
-    nn = NearestNeighbors(n_neighbors=k_actual + 1, metric="euclidean",
-                          n_jobs=-1)
+    nn = NearestNeighbors(n_neighbors=k_actual + 1, metric="euclidean", n_jobs=-1)
     nn.fit(X)
     distances, indices = nn.kneighbors(X)
 
@@ -739,8 +861,10 @@ def build_knn_graph(X, k, labels=None):
             if not G.has_edge(i, j):
                 G.add_edge(i, j, weight=float(d))
 
-    logger.info(f"    KNN graph: {G.number_of_nodes()} nodes, "
-                f"{G.number_of_edges()} edges (k={k_actual})")
+    logger.info(
+        f"    KNN graph: {G.number_of_nodes()} nodes, "
+        f"{G.number_of_edges()} edges (k={k_actual})"
+    )
     return G
 
 
@@ -763,19 +887,19 @@ def compute_ricci_curvature(X, k, alpha=0.5, labels=None):
 
     logger.info(f"    Computing Ollivier-Ricci curvature (alpha={alpha})...")
     t0 = time.time()
-    # Force method="OT" (Exact Wasserstein/EMD). 
+    # Force method="OT" (Exact Wasserstein/EMD).
     # Sinkhorn is prone to numerical underflow (divide by zero) and is slower for small k.
-    orc = OllivierRicci(G, alpha=alpha, method="OTD", verbose="ERROR",
-                        proc=os.cpu_count())  # multiprocessing
+    orc = OllivierRicci(
+        G, alpha=alpha, method="OTD", verbose="ERROR", proc=os.cpu_count()
+    )  # multiprocessing
     orc.compute_ricci_curvature()
     elapsed = time.time() - t0
     logger.info(f"    Ricci computation: {elapsed:.1f}s ({os.cpu_count()} procs)")
 
     # Extract edge curvatures
-    curvatures = np.array([
-        d.get("ricciCurvature", 0.0)
-        for u, v, d in orc.G.edges(data=True)
-    ])
+    curvatures = np.array(
+        [d.get("ricciCurvature", 0.0) for u, v, d in orc.G.edges(data=True)]
+    )
 
     # Summary statistics
     stats = {
@@ -793,10 +917,12 @@ def compute_ricci_curvature(X, k, alpha=0.5, labels=None):
         "compute_time_s": elapsed,
     }
 
-    logger.info(f"    Ricci curvature: mean={stats['mean']:.4f}, "
-                f"median={stats['median']:.4f}, "
-                f"positive={stats['frac_positive']:.1%}, "
-                f"negative={stats['frac_negative']:.1%}")
+    logger.info(
+        f"    Ricci curvature: mean={stats['mean']:.4f}, "
+        f"median={stats['median']:.4f}, "
+        f"positive={stats['frac_positive']:.1%}, "
+        f"negative={stats['frac_negative']:.1%}"
+    )
 
     return curvatures, stats, orc.G
 
@@ -819,8 +945,10 @@ def compute_ricci_per_class(G_ricci, labels):
                 cls_curvs.append(d.get("ricciCurvature", 0.0))
         if cls_curvs:
             class_curvatures[cls] = np.array(cls_curvs)
-            logger.info(f"      {cls}: {len(cls_curvs)} intra-class edges, "
-                        f"mean={np.mean(cls_curvs):.4f}")
+            logger.info(
+                f"      {cls}: {len(cls_curvs)} intra-class edges, "
+                f"mean={np.mean(cls_curvs):.4f}"
+            )
 
     return class_curvatures
 
@@ -861,10 +989,12 @@ def compute_delta_hyperbolicity(X, n_quadruples=10000, seed=42):
         del X_t, D_t
         torch.cuda.empty_cache()
     else:
-        mem_gb = (n * n * 8) / (1024 ** 3)
+        mem_gb = (n * n * 8) / (1024**3)
         if n > 30000:
-            logger.warning(f"    N={n}: distance matrix ~{mem_gb:.1f} GB. "
-                           f"Ensure sufficient RAM.")
+            logger.warning(
+                f"    N={n}: distance matrix ~{mem_gb:.1f} GB. "
+                f"Ensure sufficient RAM."
+            )
         D = squareform(pdist(X, metric="euclidean"))
 
     diameter = float(np.max(D))
@@ -904,9 +1034,11 @@ def compute_delta_hyperbolicity(X, n_quadruples=10000, seed=42):
         "n_samples": n,
     }
 
-    logger.info(f"    δ-hyperbolicity: δ={max_delta:.4f}, "
-                f"δ/diameter={delta_rel:.4f}, "
-                f"δ_median={np.median(delta_values):.4f}")
+    logger.info(
+        f"    δ-hyperbolicity: δ={max_delta:.4f}, "
+        f"δ/diameter={delta_rel:.4f}, "
+        f"δ_median={np.median(delta_values):.4f}"
+    )
 
     return max_delta, delta_rel, delta_values, stats
 
@@ -916,9 +1048,13 @@ def compute_delta_hyperbolicity(X, n_quadruples=10000, seed=42):
 # ==============================================================================
 def plot_ricci_comparison(curvature_dict, out_dir, dpi=200):
     """Overlaid histogram of Ricci curvatures for CNN vs SAE."""
-    colors = {"CNN": "#3A7EBF", "SAE": "#E8833A",
-              "CNN (stage5_mid)": "#88BEDC", "CNN (stage5_out)": "#3A7EBF",
-              "CNN (refine_out)": "#1B4876"}
+    colors = {
+        "CNN": "#3A7EBF",
+        "SAE": "#E8833A",
+        "CNN (stage5_mid)": "#88BEDC",
+        "CNN (stage5_out)": "#3A7EBF",
+        "CNN (refine_out)": "#1B4876",
+    }
 
     fig, ax = plt.subplots(figsize=(8, 5))
 
@@ -930,17 +1066,25 @@ def plot_ricci_comparison(curvature_dict, out_dir, dpi=200):
                 color = colors[key]
                 break
 
-        ax.hist(curvatures, bins=80, alpha=0.45, color=color,
-                edgecolor="none", label=source_label, density=True)
+        ax.hist(
+            curvatures,
+            bins=80,
+            alpha=0.45,
+            color=color,
+            edgecolor="none",
+            label=source_label,
+            density=True,
+        )
         # KDE overlay
         from scipy.stats import gaussian_kde
+
         kde = gaussian_kde(curvatures, bw_method=0.15)
-        x_range = np.linspace(curvatures.min() - 0.1,
-                              curvatures.max() + 0.1, 300)
+        x_range = np.linspace(curvatures.min() - 0.1, curvatures.max() + 0.1, 300)
         ax.plot(x_range, kde(x_range), color=color, linewidth=2)
 
-    ax.axvline(0, color="red", linestyle="--", linewidth=1.2, alpha=0.7,
-               label="κ = 0 (flat)")
+    ax.axvline(
+        0, color="red", linestyle="--", linewidth=1.2, alpha=0.7, label="κ = 0 (flat)"
+    )
     ax.set_xlabel("Ollivier-Ricci Curvature (κ)", fontsize=12)
     ax.set_ylabel("Density", fontsize=12)
     ax.set_title("Edge Curvature Distribution", fontsize=14, fontweight="bold")
@@ -951,8 +1095,7 @@ def plot_ricci_comparison(curvature_dict, out_dir, dpi=200):
 
     fname = "ricci_curvature_comparison"
     for ext in [".png", ".svg"]:
-        fig.savefig(os.path.join(out_dir, fname + ext),
-                    dpi=dpi, bbox_inches="tight")
+        fig.savefig(os.path.join(out_dir, fname + ext), dpi=dpi, bbox_inches="tight")
     logger.info(f"  Saved: {fname}.png/.svg")
     if _IN_COLAB:
         plt.show()
@@ -964,15 +1107,21 @@ def plot_ricci_per_class(class_curvatures, source_label, out_dir, dpi=200):
     classes = sorted(class_curvatures.keys())
     data = [class_curvatures[c] for c in classes]
     class_colors = {
-        "Control": "#55A868", "SNCA": "#C44E52",
-        "GBA": "#8172B2", "LRRK2": "#CCB974",
+        "Control": "#55A868",
+        "SNCA": "#C44E52",
+        "GBA": "#8172B2",
+        "LRRK2": "#CCB974",
     }
 
     fig, ax = plt.subplots(figsize=(6, 5))
 
-    parts = ax.violinplot(data, positions=range(len(classes)),
-                          showmeans=True, showmedians=True,
-                          showextrema=False)
+    parts = ax.violinplot(
+        data,
+        positions=range(len(classes)),
+        showmeans=True,
+        showmedians=True,
+        showextrema=False,
+    )
     for i, pc in enumerate(parts["bodies"]):
         c = class_colors.get(classes[i], "#999999")
         pc.set_facecolor(c)
@@ -984,8 +1133,9 @@ def plot_ricci_per_class(class_curvatures, source_label, out_dir, dpi=200):
     ax.set_xticks(range(len(classes)))
     ax.set_xticklabels(classes, fontsize=11, fontweight="bold")
     ax.set_ylabel("Ollivier-Ricci κ", fontsize=12)
-    ax.set_title(f"Intra-class Curvature — {source_label}",
-                 fontsize=13, fontweight="bold")
+    ax.set_title(
+        f"Intra-class Curvature — {source_label}", fontsize=13, fontweight="bold"
+    )
     ax.grid(True, alpha=0.15, axis="y")
     sns.despine()
     fig.tight_layout()
@@ -993,8 +1143,7 @@ def plot_ricci_per_class(class_curvatures, source_label, out_dir, dpi=200):
     safe = source_label.lower().replace(" ", "_").replace("(", "").replace(")", "")
     fname = f"ricci_per_class_{safe}"
     for ext in [".png", ".svg"]:
-        fig.savefig(os.path.join(out_dir, fname + ext),
-                    dpi=dpi, bbox_inches="tight")
+        fig.savefig(os.path.join(out_dir, fname + ext), dpi=dpi, bbox_inches="tight")
     if _IN_COLAB:
         plt.show()
     plt.close(fig)
@@ -1009,15 +1158,23 @@ def plot_delta_comparison(delta_dict, out_dir, dpi=200):
 
     # Panel A: δ (absolute)
     deltas = [delta_dict[s]["delta"] for s in sources]
-    bars = axes[0].bar(range(len(sources)), deltas,
-                       color=[colors_list[i % len(colors_list)]
-                              for i in range(len(sources))],
-                       alpha=0.8, edgecolor="white")
+    bars = axes[0].bar(
+        range(len(sources)),
+        deltas,
+        color=[colors_list[i % len(colors_list)] for i in range(len(sources))],
+        alpha=0.8,
+        edgecolor="white",
+    )
     for bar, v in zip(bars, deltas):
-        axes[0].text(bar.get_x() + bar.get_width() / 2,
-                     bar.get_height() + 0.001,
-                     f"{v:.4f}", ha="center", va="bottom",
-                     fontsize=9, fontweight="bold")
+        axes[0].text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.001,
+            f"{v:.4f}",
+            ha="center",
+            va="bottom",
+            fontsize=9,
+            fontweight="bold",
+        )
     axes[0].set_xticks(range(len(sources)))
     axes[0].set_xticklabels(sources, fontsize=9, rotation=15, ha="right")
     axes[0].set_ylabel("δ", fontsize=12)
@@ -1026,20 +1183,27 @@ def plot_delta_comparison(delta_dict, out_dir, dpi=200):
 
     # Panel B: δ/diameter (normalized)
     delta_rels = [delta_dict[s]["delta_rel"] for s in sources]
-    bars = axes[1].bar(range(len(sources)), delta_rels,
-                       color=[colors_list[i % len(colors_list)]
-                              for i in range(len(sources))],
-                       alpha=0.8, edgecolor="white")
+    bars = axes[1].bar(
+        range(len(sources)),
+        delta_rels,
+        color=[colors_list[i % len(colors_list)] for i in range(len(sources))],
+        alpha=0.8,
+        edgecolor="white",
+    )
     for bar, v in zip(bars, delta_rels):
-        axes[1].text(bar.get_x() + bar.get_width() / 2,
-                     bar.get_height() + 0.001,
-                     f"{v:.4f}", ha="center", va="bottom",
-                     fontsize=9, fontweight="bold")
+        axes[1].text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.001,
+            f"{v:.4f}",
+            ha="center",
+            va="bottom",
+            fontsize=9,
+            fontweight="bold",
+        )
     axes[1].set_xticks(range(len(sources)))
     axes[1].set_xticklabels(sources, fontsize=9, rotation=15, ha="right")
     axes[1].set_ylabel("δ / diameter", fontsize=12)
-    axes[1].set_title("Normalized δ-Hyperbolicity",
-                      fontsize=13, fontweight="bold")
+    axes[1].set_title("Normalized δ-Hyperbolicity", fontsize=13, fontweight="bold")
     axes[1].grid(True, alpha=0.15, axis="y")
 
     for ax in axes:
@@ -1048,8 +1212,7 @@ def plot_delta_comparison(delta_dict, out_dir, dpi=200):
 
     fname = "delta_hyperbolicity_comparison"
     for ext in [".png", ".svg"]:
-        fig.savefig(os.path.join(out_dir, fname + ext),
-                    dpi=dpi, bbox_inches="tight")
+        fig.savefig(os.path.join(out_dir, fname + ext), dpi=dpi, bbox_inches="tight")
     logger.info(f"  Saved: {fname}.png/.svg")
     if _IN_COLAB:
         plt.show()
@@ -1059,8 +1222,7 @@ def plot_delta_comparison(delta_dict, out_dir, dpi=200):
 # ==============================================================================
 # LOO KNN confidence filter — correctly classified samples only
 # ==============================================================================
-def filter_correct_by_loo_knn(X, superclasses, k=10, weights="inv_sq",
-                              seed=42):
+def filter_correct_by_loo_knn(X, superclasses, k=10, weights="inv_sq", seed=42):
     """Leave-one-out KNN: classify each sample using the rest, keep correct.
 
     Uses the same inverse-distance-squared weighting as knn_fewshot_eval.py.
@@ -1090,18 +1252,16 @@ def filter_correct_by_loo_knn(X, superclasses, k=10, weights="inv_sq",
     logger.info(f"  LOO KNN filter: n={n}, k={k_actual}, weights={weights}")
 
     # Find k+1 neighbors (first one is self)
-    nn = NearestNeighbors(n_neighbors=k_actual + 1, metric="euclidean",
-                          n_jobs=-1)
+    nn = NearestNeighbors(n_neighbors=k_actual + 1, metric="euclidean", n_jobs=-1)
     nn.fit(X_v)
     distances, indices = nn.kneighbors(X_v)
 
     # Exclude self (index 0)
     distances = distances[:, 1:]  # (n, k)
-    indices = indices[:, 1:]      # (n, k)
+    indices = indices[:, 1:]  # (n, k)
 
     # Weighted vote
-    y_pred = _weighted_vote(distances, indices, y_v, k_actual,
-                            weights, NUM_CLASSES)
+    y_pred = _weighted_vote(distances, indices, y_v, k_actual, weights, NUM_CLASSES)
 
     correct = y_pred == y_v
     accuracy = float(correct.mean())
@@ -1120,8 +1280,9 @@ def filter_correct_by_loo_knn(X, superclasses, k=10, weights="inv_sq",
     correct_mask[valid_indices[correct]] = True
 
     logger.info(f"    LOO KNN accuracy: {accuracy:.4f}")
-    logger.info(f"    Correct: {correct_mask.sum()}/{len(X)} "
-                f"({correct_mask.mean():.1%})")
+    logger.info(
+        f"    Correct: {correct_mask.sum()}/{len(X)} " f"({correct_mask.mean():.1%})"
+    )
     for cn, acc in per_class_acc.items():
         logger.info(f"      {cn:>8s}: {acc:.4f}")
 
@@ -1132,8 +1293,8 @@ def filter_correct_by_loo_knn(X, superclasses, k=10, weights="inv_sq",
 # Apoptosis local std: cosine KNN vs DPT KNN
 # ==============================================================================
 def compute_local_apop_std_knn_vs_dpt(
-        X, uids, superclasses, apoptosis_csv, k_list,
-        pca_dim=0, n_neighbors_dpt=15, seed=42):
+    X, uids, superclasses, apoptosis_csv, k_list, pca_dim=0, n_neighbors_dpt=15, seed=42
+):
     """Compare apoptosis rate local std under cosine KNN vs DPT KNN.
 
     For each sample with a valid apoptosis rate:
@@ -1158,8 +1319,10 @@ def compute_local_apop_std_knn_vs_dpt(
     -------
     results : dict — structured results per metric_type and k
     """
-    from apoptosis_prediction.local_knn_std import load_cache as _lc  # noqa: unused
-    from kendall_correlation_coefficient.dpt_kendall import load_and_match_apoptosis
+    from apoptosis_prediction.local_knn_std import \
+        load_cache as _lc  # noqa: unused
+    from kendall_correlation_coefficient.dpt_kendall import \
+        load_and_match_apoptosis
 
     logger.info(f"\n  ── Apoptosis Local Std: cosine vs DPT ──")
     logger.info(f"  Loading apoptosis CSV: {apoptosis_csv}")
@@ -1183,43 +1346,47 @@ def compute_local_apop_std_knn_vs_dpt(
     X_norm = X_v / np.linalg.norm(X_v, axis=1, keepdims=True).clip(min=1e-12)
     if _HAS_CUDA and n <= 15000:
         import torch as _t
+
         Xn_t = _t.from_numpy(X_norm.astype(np.float32)).to(_DEVICE)
         cos_full = (1.0 - (_t.mm(Xn_t, Xn_t.T)).cpu().numpy()).astype(np.float64)
         del Xn_t
         torch.cuda.empty_cache()
     else:
         cos_full = 1.0 - X_norm @ X_norm.T
-    np.fill_diagonal(cos_full, np.inf)          # exclude self
+    np.fill_diagonal(cos_full, np.inf)  # exclude self
 
     # ── 2. DPT distance matrix ──
     logger.info(f"  Computing dense DPT ({n}×{n})...")
     dpt_matrix, _ = compute_dense_dpt_distances(
-        X_v, n_neighbors=n_neighbors_dpt, pca_dim=pca_dim, seed=seed)
-    np.fill_diagonal(dpt_matrix, np.inf)        # exclude self
+        X_v, n_neighbors=n_neighbors_dpt, pca_dim=pca_dim, seed=seed
+    )
+    np.fill_diagonal(dpt_matrix, np.inf)  # exclude self
 
     # ── 3. Sweep over K ──
     results = {}
     max_k = min(max(k_list), n - 1)
 
     # Pre-sort once
-    cos_sorted = np.argsort(cos_full, axis=1)   # (n, n-1)
-    dpt_sorted = np.argsort(dpt_matrix, axis=1) # (n, n-1)
+    cos_sorted = np.argsort(cos_full, axis=1)  # (n, n-1)
+    dpt_sorted = np.argsort(dpt_matrix, axis=1)  # (n, n-1)
 
     logger.info(f"  K sweep: {k_list}")
-    logger.info(f"  {'Metric':12s}  {'K':>4s}  "
-                f"{'mean_std':>10s}  {'std_std':>10s}  {'median_std':>10s}")
+    logger.info(
+        f"  {'Metric':12s}  {'K':>4s}  "
+        f"{'mean_std':>10s}  {'std_std':>10s}  {'median_std':>10s}"
+    )
     logger.info(f"  {'─'*55}")
 
     for metric_name, sorted_idx in [("cosine", cos_sorted), ("DPT", dpt_sorted)]:
         results[metric_name] = {}
         for k in k_list:
             k_use = min(k, n - 1)
-            neighbor_idx = sorted_idx[:, :k_use]           # (n, k_use)
-            neighbor_apop = apop_v[neighbor_idx]           # (n, k_use)
-            local_stds = np.std(neighbor_apop, axis=1)     # (n,)
+            neighbor_idx = sorted_idx[:, :k_use]  # (n, k_use)
+            neighbor_apop = apop_v[neighbor_idx]  # (n, k_use)
+            local_stds = np.std(neighbor_apop, axis=1)  # (n,)
 
-            m_mean   = float(np.mean(local_stds))
-            m_std    = float(np.std(local_stds))
+            m_mean = float(np.mean(local_stds))
+            m_std = float(np.std(local_stds))
             m_median = float(np.median(local_stds))
 
             # Per-class breakdown
@@ -1228,21 +1395,23 @@ def compute_local_apop_std_knn_vs_dpt(
                 cls_m = sc_v == cls
                 if cls_m.sum() >= 2:
                     per_class[cls] = {
-                        "mean":   float(np.mean(local_stds[cls_m])),
+                        "mean": float(np.mean(local_stds[cls_m])),
                         "median": float(np.median(local_stds[cls_m])),
-                        "std":    float(np.std(local_stds[cls_m])),
-                        "n":      int(cls_m.sum()),
+                        "std": float(np.std(local_stds[cls_m])),
+                        "n": int(cls_m.sum()),
                     }
 
             results[metric_name][str(k)] = {
-                "mean_std":   m_mean,
-                "std_std":    m_std,
+                "mean_std": m_mean,
+                "std_std": m_std,
                 "median_std": m_median,
-                "n":          n,
-                "per_class":  per_class,
+                "n": n,
+                "per_class": per_class,
             }
-            logger.info(f"  {metric_name:12s}  {k:>4d}  "
-                        f"{m_mean:10.5f}  {m_std:10.5f}  {m_median:10.5f}")
+            logger.info(
+                f"  {metric_name:12s}  {k:>4d}  "
+                f"{m_mean:10.5f}  {m_std:10.5f}  {m_median:10.5f}"
+            )
 
     # ── 4. Δ summary (DPT – cosine, negative = DPT has tighter neighborhoods) ──
     logger.info(f"  {'─'*55}")
@@ -1250,12 +1419,18 @@ def compute_local_apop_std_knn_vs_dpt(
     for k in k_list:
         ks = str(k)
         if ks in results["cosine"] and ks in results["DPT"]:
-            delta_mean   = results["DPT"][ks]["mean_std"]   - results["cosine"][ks]["mean_std"]
-            delta_median = results["DPT"][ks]["median_std"] - results["cosine"][ks]["median_std"]
+            delta_mean = (
+                results["DPT"][ks]["mean_std"] - results["cosine"][ks]["mean_std"]
+            )
+            delta_median = (
+                results["DPT"][ks]["median_std"] - results["cosine"][ks]["median_std"]
+            )
             results[ks + "_delta"] = {"mean": delta_mean, "median": delta_median}
             sign = "↓ DPT tighter" if delta_mean < 0 else "↑ cosine tighter"
-            logger.info(f"    k={k:>2d}: Δmean={delta_mean:+.5f}  "
-                        f"Δmedian={delta_median:+.5f}  ({sign})")
+            logger.info(
+                f"    k={k:>2d}: Δmean={delta_mean:+.5f}  "
+                f"Δmedian={delta_median:+.5f}  ({sign})"
+            )
 
     return results
 
@@ -1266,45 +1441,56 @@ def plot_apop_std_comparison(results_by_source, k_list, out_dir, dpi=200):
         return
 
     colors = {
-        "CNN cosine": "#3A7EBF", "CNN DPT": "#1B4876",
-        "SAE cosine": "#E8833A", "SAE DPT": "#8B3A0A",
+        "CNN cosine": "#3A7EBF",
+        "CNN DPT": "#1B4876",
+        "SAE cosine": "#E8833A",
+        "SAE DPT": "#8B3A0A",
     }
     lss = {"cosine": "--", "DPT": "-"}
 
     fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
 
     for stat_key, ax, stat_label in [
-            ("mean_std", axes[0], "Mean local apoptosis std"),
-            ("median_std", axes[1], "Median local apoptosis std")]:
+        ("mean_std", axes[0], "Mean local apoptosis std"),
+        ("median_std", axes[1], "Median local apoptosis std"),
+    ]:
 
         for src_label, res in results_by_source.items():
             for metric in ["cosine", "DPT"]:
                 if metric not in res:
                     continue
-                ys = [res[metric].get(str(k), {}).get(stat_key, np.nan)
-                      for k in k_list]
+                ys = [res[metric].get(str(k), {}).get(stat_key, np.nan) for k in k_list]
                 key = f"{src_label} {metric}"
                 color = colors.get(key, "#999999")
                 ls = lss.get(metric, "-")
-                ax.plot(k_list, ys, ls, marker="o", color=color,
-                        linewidth=2, markersize=6,
-                        label=key, alpha=0.9)
+                ax.plot(
+                    k_list,
+                    ys,
+                    ls,
+                    marker="o",
+                    color=color,
+                    linewidth=2,
+                    markersize=6,
+                    label=key,
+                    alpha=0.9,
+                )
 
         ax.set_xlabel("K (neighbors)", fontsize=11)
         ax.set_ylabel(stat_label, fontsize=11)
-        ax.set_title(f"Local Apoptosis Std\n({stat_label})",
-                     fontsize=12, fontweight="bold")
+        ax.set_title(
+            f"Local Apoptosis Std\n({stat_label})", fontsize=12, fontweight="bold"
+        )
         ax.legend(fontsize=8, ncol=2)
         ax.grid(True, alpha=0.15)
         sns.despine(ax=ax)
 
-    fig.suptitle("Cosine KNN vs DPT KNN — Local Apoptosis Std",
-                 fontsize=13, fontweight="bold")
+    fig.suptitle(
+        "Cosine KNN vs DPT KNN — Local Apoptosis Std", fontsize=13, fontweight="bold"
+    )
     fig.tight_layout()
     fname = "apop_std_cosine_vs_dpt"
     for ext in [".png", ".svg"]:
-        fig.savefig(os.path.join(out_dir, fname + ext),
-                    dpi=dpi, bbox_inches="tight")
+        fig.savefig(os.path.join(out_dir, fname + ext), dpi=dpi, bbox_inches="tight")
     logger.info(f"  Saved: {fname}.png/.svg")
     if _IN_COLAB:
         plt.show()
@@ -1339,8 +1525,8 @@ def compute_dense_dpt_distances(X, n_neighbors=15, pca_dim=0, seed=42):
     dpt_matrix : np.ndarray (N, N) — pairwise DPT distances
     eigenvalues : np.ndarray — all eigenvalues of transition matrix
     """
-    import scanpy as sc
     import anndata
+    import scanpy as sc
 
     n = len(X)
     logger.info(f"    Dense DPT: N={n}, k={n_neighbors}, pca_dim={pca_dim}")
@@ -1349,6 +1535,7 @@ def compute_dense_dpt_distances(X, n_neighbors=15, pca_dim=0, seed=42):
     adata = anndata.AnnData(X.astype(np.float32))
     if pca_dim > 0 and X.shape[1] > pca_dim:
         from sklearn.decomposition import PCA
+
         pca = PCA(n_components=pca_dim, random_state=seed)
         adata.obsm["X_pca"] = pca.fit_transform(X).astype(np.float32)
         n_pcs = pca_dim
@@ -1357,8 +1544,9 @@ def compute_dense_dpt_distances(X, n_neighbors=15, pca_dim=0, seed=42):
         n_pcs = X.shape[1]
 
     k_nn = min(n_neighbors, n - 1)
-    sc.pp.neighbors(adata, n_neighbors=k_nn, n_pcs=n_pcs,
-                    use_rep="X_pca", random_state=seed)
+    sc.pp.neighbors(
+        adata, n_neighbors=k_nn, n_pcs=n_pcs, use_rep="X_pca", random_state=seed
+    )
 
     # ── 2. Extract transition matrix T (row-stochastic) ──
     # scanpy stores connectivities (symmetric, weighted adjacency)
@@ -1416,16 +1604,21 @@ def compute_dense_dpt_distances(X, n_neighbors=15, pca_dim=0, seed=42):
 
     # DPT distance matrix — GPU if available
     if _HAS_CUDA:
-        wc = torch.from_numpy(
-            (evecs_use * weights[None, :]).astype(np.float32)).to(_DEVICE)
+        wc = torch.from_numpy((evecs_use * weights[None, :]).astype(np.float32)).to(
+            _DEVICE
+        )
         dpt_matrix_t = torch.cdist(wc, wc)  # (N, N) Euclidean in weighted space
         dpt_matrix = dpt_matrix_t.cpu().numpy().astype(np.float64)
         del wc, dpt_matrix_t
         torch.cuda.empty_cache()
     else:
         weighted_coords = evecs_use * weights[None, :]
-        sq_norms = (weighted_coords ** 2).sum(axis=1)
-        dpt_sq = sq_norms[:, None] + sq_norms[None, :] - 2 * weighted_coords @ weighted_coords.T
+        sq_norms = (weighted_coords**2).sum(axis=1)
+        dpt_sq = (
+            sq_norms[:, None]
+            + sq_norms[None, :]
+            - 2 * weighted_coords @ weighted_coords.T
+        )
         dpt_matrix = np.sqrt(np.maximum(dpt_sq, 0.0))
 
     n_used = valid_mask.sum()
@@ -1439,9 +1632,15 @@ def compute_dense_dpt_distances(X, n_neighbors=15, pca_dim=0, seed=42):
 # ==============================================================================
 # DPT vs Cosine Rank Correlation — Isometry test
 # ==============================================================================
-def compute_rank_correlation(X, superclasses, n_anchors=300,
-                             pca_dim=300, n_neighbors=15, seed=42,
-                             return_full_matrices=False):
+def compute_rank_correlation(
+    X,
+    superclasses,
+    n_anchors=300,
+    pca_dim=300,
+    n_neighbors=15,
+    seed=42,
+    return_full_matrices=False,
+):
     """Compare DPT geodesic distance ranking vs cosine similarity ranking.
 
     Parameters
@@ -1451,9 +1650,9 @@ def compute_rank_correlation(X, superclasses, n_anchors=300,
         under keys '_dpt_matrix' and '_cos_full' (used by save_pairwise_distances_for_gam).
         These are large (N² float32) — only set when --save_pairwise is requested.
     """
-    import scanpy as sc
     import anndata
-    from scipy.stats import spearmanr, kendalltau, pearsonr
+    import scanpy as sc
+    from scipy.stats import kendalltau, pearsonr, spearmanr
 
     n = len(X)
     rng = np.random.RandomState(seed)
@@ -1465,7 +1664,8 @@ def compute_rank_correlation(X, superclasses, n_anchors=300,
     # ── 1. DPT distances (dense eigendecomposition — all eigenvectors) ──
     logger.info(f"    Computing dense DPT...")
     dpt_matrix, dpt_evals = compute_dense_dpt_distances(
-        X, n_neighbors=n_neighbors, pca_dim=pca_dim, seed=seed)
+        X, n_neighbors=n_neighbors, pca_dim=pca_dim, seed=seed
+    )
 
     # ── 2. Cosine distance ──
     X_norm = X / np.linalg.norm(X, axis=1, keepdims=True).clip(min=1e-12)
@@ -1535,7 +1735,7 @@ def compute_rank_correlation(X, superclasses, n_anchors=300,
 
     dpt_pairs = dpt_matrix[pi_r, pi_c]
     cos_pairs = cos_full[pi_r, pi_c]
-    
+
     cls_r = sc_arr[pi_r]
     cls_c = sc_arr[pi_c]
     # Label pair with class name if they match, else "Inter-class"
@@ -1551,24 +1751,24 @@ def compute_rank_correlation(X, superclasses, n_anchors=300,
     # Calculated PER CLASS for intra-class pairs
     per_class_stress = {}
     unique_classes = sorted([c for c in set(sc_arr)])
-    
+
     for cls in unique_classes:
-        mask = (pair_cls_fin == cls)
+        mask = pair_cls_fin == cls
         dpt_cls = dpt_fin[mask]
         cos_cls = cos_fin[mask]
-        
+
         if len(dpt_cls) > 10:
             A = np.vstack([dpt_cls, np.ones(len(dpt_cls))]).T
             slope, intercept = np.linalg.lstsq(A, cos_cls, rcond=None)[0]
             cos_pred = slope * dpt_cls + intercept
             residuals = cos_cls - cos_pred
-            stress = float(np.sqrt((residuals ** 2).sum() / (cos_cls ** 2).sum()))
+            stress = float(np.sqrt((residuals**2).sum() / (cos_cls**2).sum()))
             per_class_stress[cls] = stress
 
     if per_class_stress:
         kruskal_stress = float(np.mean(list(per_class_stress.values())))
     else:
-        kruskal_stress = float('nan')
+        kruskal_stress = float("nan")
 
     logger.info(f"    Kruskal stress-1 (mean): {kruskal_stress:.4f}")
     for cls, stress in per_class_stress.items():
@@ -1577,35 +1777,37 @@ def compute_rank_correlation(X, superclasses, n_anchors=300,
     # ── 5. KNN Neighborhood Preservation Ratio (Whitney quality) ──
     # For each point, do top-K neighbors match between cosine and DPT space?
     max_k_npr = min(15, n - 1)
-    
+
     # Pre-compute up to max_k
-    cos_knn_all = np.argsort(cos_full, axis=1)[:, 1:max_k_npr+1]  # (N, max_k)
-    dpt_knn_all = np.argsort(dpt_matrix, axis=1)[:, 1:max_k_npr+1]
+    cos_knn_all = np.argsort(cos_full, axis=1)[:, 1 : max_k_npr + 1]  # (N, max_k)
+    dpt_knn_all = np.argsort(dpt_matrix, axis=1)[:, 1 : max_k_npr + 1]
 
     npr_k_list = [k for k in [5, 10, 15] if k <= max_k_npr]
     npr_all = {}
-    
+
     logger.info(f"    NPR multi-k results:")
     for k in npr_k_list:
-        overlap = np.array([
-            len(np.intersect1d(cos_knn_all[i, :k], dpt_knn_all[i, :k])) / k
-            for i in range(n)
-        ])
-        
+        overlap = np.array(
+            [
+                len(np.intersect1d(cos_knn_all[i, :k], dpt_knn_all[i, :k])) / k
+                for i in range(n)
+            ]
+        )
+
         pk_npr = {}
         for cn in sorted(set(sc_arr)):
             cn_mask = sc_arr == cn
             if cn_mask.sum() > 0:
                 pk_npr[cn] = float(overlap[cn_mask].mean())
-                
+
         mean_v = float(overlap.mean())
         std_v = float(overlap.std())
-        
+
         npr_all[str(k)] = {
             "mean": mean_v,
             "std": std_v,
             "per_class": pk_npr,
-            "_npr_vals": overlap
+            "_npr_vals": overlap,
         }
         logger.info(f"      k={k:<2d}: {mean_v:.4f} ± {std_v:.4f}")
 
@@ -1632,8 +1834,8 @@ def compute_rank_correlation(X, superclasses, n_anchors=300,
         "kendall_mean": float(np.mean(kendall_all)),
         "kendall_std": float(np.std(kendall_all)),
         "kendall_median": float(np.median(kendall_all)),
-        "pearson_mean": float(np.mean(pearson_all)) if pearson_all else float('nan'),
-        "pearson_std": float(np.std(pearson_all)) if pearson_all else float('nan'),
+        "pearson_mean": float(np.mean(pearson_all)) if pearson_all else float("nan"),
+        "pearson_std": float(np.std(pearson_all)) if pearson_all else float("nan"),
         "n_anchors_valid": len(spearman_all),
         "kruskal_stress": kruskal_stress,
         "per_class_stress": per_class_stress,
@@ -1646,53 +1848,79 @@ def compute_rank_correlation(X, superclasses, n_anchors=300,
             for k, v in npr_all.items()
         },
         "per_class_spearman": {
-            cn: {"mean": float(np.mean(vals)), "std": float(np.std(vals)),
-                 "n": len(vals)}
-            for cn, vals in per_class_spearman.items() if len(vals) > 0
+            cn: {
+                "mean": float(np.mean(vals)),
+                "std": float(np.std(vals)),
+                "n": len(vals),
+            }
+            for cn, vals in per_class_spearman.items()
+            if len(vals) > 0
         },
         "per_class_kendall": {
-            cn: {"mean": float(np.mean(vals)), "std": float(np.std(vals)),
-                 "n": len(vals)}
-            for cn, vals in per_class_kendall.items() if len(vals) > 0
+            cn: {
+                "mean": float(np.mean(vals)),
+                "std": float(np.std(vals)),
+                "n": len(vals),
+            }
+            for cn, vals in per_class_kendall.items()
+            if len(vals) > 0
         },
         "per_class_pearson": {
-            cn: {"mean": float(np.mean(vals)), "std": float(np.std(vals)),
-                 "n": len(vals)}
-            for cn, vals in per_class_pearson.items() if len(vals) > 0
+            cn: {
+                "mean": float(np.mean(vals)),
+                "std": float(np.std(vals)),
+                "n": len(vals),
+            }
+            for cn, vals in per_class_pearson.items()
+            if len(vals) > 0
         },
         "_dpt_pairs": dpt_fin,
         "_cos_pairs": cos_fin,
         "_cls_pairs": pair_cls_fin,
         "_npr_vals": overlap_per_point,
-        "_npr_all_vals": {k: v["_npr_vals"] for k, v in npr_all.items()}
+        "_npr_all_vals": {k: v["_npr_vals"] for k, v in npr_all.items()},
     }
 
     # ── Full N×N matrices for per-class exhaustive pairwise dump ──
     if return_full_matrices:
-        results["_dpt_matrix"]  = dpt_matrix   # (N, N) float64/32
-        results["_cos_full"]    = cos_full      # (N, N) float32
-        results["_sc_arr"]      = sc_arr        # (N,) str
-        logger.info(f"    Storing full N×N matrices for pairwise dump "
-                    f"(dpt_matrix: {dpt_matrix.nbytes/1e6:.0f} MB, "
-                    f"cos_full: {cos_full.nbytes/1e6:.0f} MB)")
+        results["_dpt_matrix"] = dpt_matrix  # (N, N) float64/32
+        results["_cos_full"] = cos_full  # (N, N) float32
+        results["_sc_arr"] = sc_arr  # (N,) str
+        logger.info(
+            f"    Storing full N×N matrices for pairwise dump "
+            f"(dpt_matrix: {dpt_matrix.nbytes/1e6:.0f} MB, "
+            f"cos_full: {cos_full.nbytes/1e6:.0f} MB)"
+        )
 
-    logger.info(f"    Spearman ρ: {results['spearman_mean']:.4f} "
-                f"± {results['spearman_std']:.4f} "
-                f"(median={results['spearman_median']:.4f})")
-    logger.info(f"    Kendall τ:  {results['kendall_mean']:.4f} "
-                f"± {results['kendall_std']:.4f}")
-    if not np.isnan(results['pearson_mean']):
-        logger.info(f"    Pearson r:  {results['pearson_mean']:.4f} "
-                    f"± {results['pearson_std']:.4f}")
-                    
+    logger.info(
+        f"    Spearman ρ: {results['spearman_mean']:.4f} "
+        f"± {results['spearman_std']:.4f} "
+        f"(median={results['spearman_median']:.4f})"
+    )
+    logger.info(
+        f"    Kendall τ:  {results['kendall_mean']:.4f} "
+        f"± {results['kendall_std']:.4f}"
+    )
+    if not np.isnan(results["pearson_mean"]):
+        logger.info(
+            f"    Pearson r:  {results['pearson_mean']:.4f} "
+            f"± {results['pearson_std']:.4f}"
+        )
+
     logger.info("    Per-class correlations (ρ / τ / r):")
     for cn in results["per_class_spearman"].keys():
         s_rho = results["per_class_spearman"][cn]
-        s_tau = results.get("per_class_kendall", {}).get(cn, {"mean": float("nan"), "std": float("nan")})
-        s_pr = results.get("per_class_pearson", {}).get(cn, {"mean": float("nan"), "std": float("nan")})
-        logger.info(f"      {cn:>8s}: ρ={s_rho['mean']:.4f}±{s_rho['std']:.2f} | "
-                    f"τ={s_tau['mean']:.4f}±{s_tau['std']:.2f} | "
-                    f"r={s_pr['mean']:.4f}±{s_pr['std']:.2f} (n={s_rho['n']})")
+        s_tau = results.get("per_class_kendall", {}).get(
+            cn, {"mean": float("nan"), "std": float("nan")}
+        )
+        s_pr = results.get("per_class_pearson", {}).get(
+            cn, {"mean": float("nan"), "std": float("nan")}
+        )
+        logger.info(
+            f"      {cn:>8s}: ρ={s_rho['mean']:.4f}±{s_rho['std']:.2f} | "
+            f"τ={s_tau['mean']:.4f}±{s_tau['std']:.2f} | "
+            f"r={s_pr['mean']:.4f}±{s_pr['std']:.2f} (n={s_rho['n']})"
+        )
 
     return results
 
@@ -1701,8 +1929,8 @@ def compute_rank_correlation(X, superclasses, n_anchors=300,
 # Pairwise distance dump for GAM fitting
 # ==============================================================================
 def save_pairwise_distances_for_gam(
-        corr_dict, sources, out_dir,
-        n_inter_sample=500_000):
+    corr_dict, sources, out_dir, n_inter_sample=500_000
+):
     """Save ALL per-class pairwise (cosine, DPT) distances using full N×N matrices.
 
     Strategy
@@ -1731,7 +1959,8 @@ def save_pairwise_distances_for_gam(
     pair_type       U8 str  (N_pairs,)  — 'intra' or 'inter'
     """
     import csv as _csv
-    from scipy.stats import spearmanr, kendalltau, pearsonr
+
+    from scipy.stats import kendalltau, pearsonr, spearmanr
 
     os.makedirs(out_dir, exist_ok=True)
 
@@ -1741,33 +1970,43 @@ def save_pairwise_distances_for_gam(
 
         # ── Check full matrices available ──────────────────────────────
         dpt_matrix = rc.get("_dpt_matrix")
-        cos_full   = rc.get("_cos_full")
-        sc_arr     = rc.get("_sc_arr")
+        cos_full = rc.get("_cos_full")
+        sc_arr = rc.get("_sc_arr")
 
         if dpt_matrix is None or cos_full is None or sc_arr is None:
             # Fallback to sampled pairs from Kruskal computation
-            logger.warning(f"  [{label}] Full matrices not available "
-                           f"(--save_pairwise requires --rank_correlation). "
-                           f"Falling back to sampled Kruskal pairs.")
+            logger.warning(
+                f"  [{label}] Full matrices not available "
+                f"(--save_pairwise requires --rank_correlation). "
+                f"Falling back to sampled Kruskal pairs."
+            )
             dpt_f = rc.get("_dpt_pairs")
             cos_f = rc.get("_cos_pairs")
             cls_f = rc.get("_cls_pairs")
             if dpt_f is None:
                 continue
-            _save_npz_and_csv(label, out_dir,
-                              np.asarray(cos_f, dtype=np.float32),
-                              np.asarray(dpt_f, dtype=np.float32),
-                              np.asarray(cls_f, dtype=str),
-                              np.asarray(cls_f, dtype=str))
+            _save_npz_and_csv(
+                label,
+                out_dir,
+                np.asarray(cos_f, dtype=np.float32),
+                np.asarray(dpt_f, dtype=np.float32),
+                np.asarray(cls_f, dtype=str),
+                np.asarray(cls_f, dtype=str),
+            )
             continue
 
         dpt_matrix = np.asarray(dpt_matrix, dtype=np.float32)
-        cos_full   = np.asarray(cos_full,   dtype=np.float32)
-        sc_arr     = np.asarray(sc_arr,     dtype=str)
-        n          = len(sc_arr)
+        cos_full = np.asarray(cos_full, dtype=np.float32)
+        sc_arr = np.asarray(sc_arr, dtype=str)
+        n = len(sc_arr)
 
-        safe = label.replace(" ", "_").replace("(", "").replace(")", "") \
-                    .replace("/", "_").replace("\\", "_")
+        safe = (
+            label.replace(" ", "_")
+            .replace("(", "")
+            .replace(")", "")
+            .replace("/", "_")
+            .replace("\\", "_")
+        )
 
         unique_classes = sorted(set(sc_arr.tolist()))
         logger.info(f"\n  [{label}]  n={n}")
@@ -1782,44 +2021,50 @@ def save_pairwise_distances_for_gam(
 
             # Extract sub-matrix
             sub_dpt = dpt_matrix[np.ix_(cls_idx, cls_idx)]
-            sub_cos = cos_full  [np.ix_(cls_idx, cls_idx)]
+            sub_cos = cos_full[np.ix_(cls_idx, cls_idx)]
 
             # Upper triangle (k=1: exclude diagonal)
             ri, ci = np.triu_indices(nc, k=1)
             cos_v = sub_cos[ri, ci].astype(np.float32)
             dpt_v = sub_dpt[ri, ci].astype(np.float32)
-            ci_v  = np.full(len(ri), cls, dtype="U32")
+            ci_v = np.full(len(ri), cls, dtype="U32")
 
             # Per-class NPZ
             cls_safe = cls.replace(" ", "_")
             npz_path = os.path.join(out_dir, f"pairwise_{safe}_intra_{cls_safe}.npz")
             np.savez_compressed(
                 npz_path,
-                cosine_dist = cos_v,
-                dpt_dist    = dpt_v,
-                class_i     = ci_v,
-                class_j     = ci_v,
-                pair_type   = np.full(len(ri), "intra", dtype="U8"),
+                cosine_dist=cos_v,
+                dpt_dist=dpt_v,
+                class_i=ci_v,
+                class_j=ci_v,
+                pair_type=np.full(len(ri), "intra", dtype="U8"),
             )
-            logger.info(f"      Saved: {npz_path}  ({cos_v.nbytes/1e6:.0f} MB uncompressed)")
+            logger.info(
+                f"      Saved: {npz_path}  ({cos_v.nbytes/1e6:.0f} MB uncompressed)"
+            )
 
             del sub_dpt, sub_cos, ri, ci, cos_v, dpt_v
 
         # ── Combined NPZ: 100% Exhaustive Upper Triangle (Inter + Intra) ──
-        logger.info("    Extracting FULL N x N upper triangle for combined NPZ (Inter + Intra)...")
+        logger.info(
+            "    Extracting FULL N x N upper triangle for combined NPZ (Inter + Intra)..."
+        )
         rng = np.random.RandomState(42)
         ri_all, ci_all_idx = np.triu_indices(n, k=1)
-        
+
         cos_all = cos_full[ri_all, ci_all_idx].astype(np.float32)
         dpt_all = dpt_matrix[ri_all, ci_all_idx].astype(np.float32)
-        ci_all  = sc_arr[ri_all]
-        cj_all  = sc_arr[ci_all_idx]
+        ci_all = sc_arr[ri_all]
+        cj_all = sc_arr[ci_all_idx]
         type_all = np.where(ci_all == cj_all, "intra", "inter").astype("U8")
 
         # Shuffle for unbiased head CSV
         perm = rng.permutation(len(cos_all))
-        cos_all = cos_all[perm]; dpt_all = dpt_all[perm]
-        ci_all  = ci_all[perm];  cj_all  = cj_all[perm]
+        cos_all = cos_all[perm]
+        dpt_all = dpt_all[perm]
+        ci_all = ci_all[perm]
+        cj_all = cj_all[perm]
         type_all = type_all[perm]
 
         total_pairs = len(cos_all)
@@ -1828,15 +2073,17 @@ def save_pairwise_distances_for_gam(
         # Overall correlations (subsample 5M for speed)
         fin = np.isfinite(cos_all) & np.isfinite(dpt_all)
         samp_n = min(5_000_000, fin.sum())
-        idx_s  = rng.choice(np.where(fin)[0], size=samp_n, replace=False)
+        idx_s = rng.choice(np.where(fin)[0], size=samp_n, replace=False)
         rho_all = float(spearmanr(cos_all[idx_s], dpt_all[idx_s]).statistic)
         tau_all = float(kendalltau(cos_all[idx_s], dpt_all[idx_s]).statistic)
-        pr_all  = float(pearsonr( cos_all[idx_s], dpt_all[idx_s]).statistic)
+        pr_all = float(pearsonr(cos_all[idx_s], dpt_all[idx_s]).statistic)
 
-        logger.info(f"    Overall (subsample {samp_n:,}): "
-                    f"Spearman={rho_all:.4f}  "
-                    f"Kendall={tau_all:.4f}  "
-                    f"Pearson={pr_all:.4f}")
+        logger.info(
+            f"    Overall (subsample {samp_n:,}): "
+            f"Spearman={rho_all:.4f}  "
+            f"Kendall={tau_all:.4f}  "
+            f"Pearson={pr_all:.4f}"
+        )
 
         # Bin analysis (12 bins)
         bins = np.percentile(cos_all[fin], np.linspace(0, 100, 13))
@@ -1847,20 +2094,22 @@ def save_pairwise_distances_for_gam(
                 continue
             d_m = float(np.mean(dpt_all[mask]))
             c_m = float(np.mean(cos_all[mask]))
-            logger.info(f"      [{c_m:.4f}] DPT={d_m:.4f}  Δ={d_m-c_m:+.4f}  n={mask.sum():,}")
+            logger.info(
+                f"      [{c_m:.4f}] DPT={d_m:.4f}  Δ={d_m-c_m:+.4f}  n={mask.sum():,}"
+            )
 
         # Save combined NPZ
         combined_path = os.path.join(out_dir, f"pairwise_{safe}_combined.npz")
         np.savez_compressed(
             combined_path,
-            cosine_dist = cos_all,
-            dpt_dist    = dpt_all,
-            class_i     = ci_all,
-            class_j     = cj_all,
-            pair_type   = type_all,
-            spearman    = np.array(rho_all),
-            kendall     = np.array(tau_all),
-            pearson     = np.array(pr_all),
+            cosine_dist=cos_all,
+            dpt_dist=dpt_all,
+            class_i=ci_all,
+            class_j=cj_all,
+            pair_type=type_all,
+            spearman=np.array(rho_all),
+            kendall=np.array(tau_all),
+            pearson=np.array(pr_all),
         )
         logger.info(f"    Saved combined NPZ: {combined_path}")
 
@@ -1869,31 +2118,49 @@ def save_pairwise_distances_for_gam(
         n_head = min(20_000, total_pairs)
         with open(csv_path, "w", newline="", encoding="utf-8") as f:
             w = _csv.writer(f)
-            w.writerow(["cosine_dist", "dpt_dist",
-                        "class_i", "class_j", "pair_type", "dpt_minus_cosine"])
+            w.writerow(
+                [
+                    "cosine_dist",
+                    "dpt_dist",
+                    "class_i",
+                    "class_j",
+                    "pair_type",
+                    "dpt_minus_cosine",
+                ]
+            )
             for k in range(n_head):
-                w.writerow([
-                    f"{cos_all[k]:.6f}", f"{dpt_all[k]:.6f}",
-                    ci_all[k], cj_all[k], type_all[k],
-                    f"{float(dpt_all[k]) - float(cos_all[k]):+.6f}",
-                ])
+                w.writerow(
+                    [
+                        f"{cos_all[k]:.6f}",
+                        f"{dpt_all[k]:.6f}",
+                        ci_all[k],
+                        cj_all[k],
+                        type_all[k],
+                        f"{float(dpt_all[k]) - float(cos_all[k]):+.6f}",
+                    ]
+                )
         logger.info(f"    Saved head CSV ({n_head} rows): {csv_path}")
 
         # Summary JSON
         summ_path = os.path.join(out_dir, f"pairwise_{safe}_summary.json")
         with open(summ_path, "w") as f:
-            json.dump({
-                "label":        label,
-                "n_total":      int(total_pairs),
-                "n_intra":      int((type_all == "intra").sum()),
-                "n_inter":      int((type_all == "inter").sum()),
-                "spearman":     rho_all,
-                "kendall":      tau_all,
-                "pearson":      pr_all,
-                "cosine_range": [float(cos_all.min()), float(cos_all.max())],
-                "dpt_range":    [float(dpt_all.min()), float(dpt_all.max())],
-                "classes":      unique_classes,
-            }, f, indent=2, default=str)
+            json.dump(
+                {
+                    "label": label,
+                    "n_total": int(total_pairs),
+                    "n_intra": int((type_all == "intra").sum()),
+                    "n_inter": int((type_all == "inter").sum()),
+                    "spearman": rho_all,
+                    "kendall": tau_all,
+                    "pearson": pr_all,
+                    "cosine_range": [float(cos_all.min()), float(cos_all.max())],
+                    "dpt_range": [float(dpt_all.min()), float(dpt_all.max())],
+                    "classes": unique_classes,
+                },
+                f,
+                indent=2,
+                default=str,
+            )
         logger.info(f"    Saved summary JSON: {summ_path}")
 
         # Free memory
@@ -1905,11 +2172,15 @@ def _save_npz_and_csv(label, out_dir, cos_arr, dpt_arr, ci_arr, cj_arr):
     safe = label.replace(" ", "_").replace("(", "").replace(")", "")
     type_arr = np.where(ci_arr == cj_arr, "intra", "inter").astype("U8")
     npz_path = os.path.join(out_dir, f"pairwise_{safe}_sampled.npz")
-    np.savez_compressed(npz_path,
-                        cosine_dist=cos_arr, dpt_dist=dpt_arr,
-                        class_i=ci_arr, class_j=cj_arr, pair_type=type_arr)
+    np.savez_compressed(
+        npz_path,
+        cosine_dist=cos_arr,
+        dpt_dist=dpt_arr,
+        class_i=ci_arr,
+        class_j=cj_arr,
+        pair_type=type_arr,
+    )
     logger.info(f"  Saved (sampled fallback): {npz_path}")
-
 
 
 def plot_rank_correlation(corr_dict, out_dir, dpi=200):
@@ -1922,40 +2193,63 @@ def plot_rank_correlation(corr_dict, out_dir, dpi=200):
     # Panel A: Spearman
     vals = [corr_dict[s].get("spearman_mean", 0) for s in sources]
     errs = [corr_dict[s].get("spearman_std", 0) for s in sources]
-    cols = [next((v for k, v in colors.items() if k in s), "#999")
-            for s in sources]
+    cols = [next((v for k, v in colors.items() if k in s), "#999") for s in sources]
 
-    bars = axes[0].bar(range(len(sources)), vals, yerr=errs,
-                       color=cols, alpha=0.8, edgecolor="white",
-                       capsize=5)
+    bars = axes[0].bar(
+        range(len(sources)),
+        vals,
+        yerr=errs,
+        color=cols,
+        alpha=0.8,
+        edgecolor="white",
+        capsize=5,
+    )
     for bar, v in zip(bars, vals):
-        axes[0].text(bar.get_x() + bar.get_width()/2,
-                     bar.get_height() + 0.01,
-                     f"{v:.3f}", ha="center", va="bottom",
-                     fontsize=9, fontweight="bold")
+        axes[0].text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.01,
+            f"{v:.3f}",
+            ha="center",
+            va="bottom",
+            fontsize=9,
+            fontweight="bold",
+        )
     axes[0].set_xticks(range(len(sources)))
     axes[0].set_xticklabels(sources, fontsize=9, rotation=15, ha="right")
     axes[0].set_ylabel("Spearman ρ", fontsize=12)
-    axes[0].set_title("DPT vs Cosine Distance\n(Spearman)",
-                      fontsize=13, fontweight="bold")
+    axes[0].set_title(
+        "DPT vs Cosine Distance\n(Spearman)", fontsize=13, fontweight="bold"
+    )
     axes[0].grid(True, alpha=0.15, axis="y")
 
     # Panel B: Kendall
     vals = [corr_dict[s].get("kendall_mean", 0) for s in sources]
     errs = [corr_dict[s].get("kendall_std", 0) for s in sources]
-    bars = axes[1].bar(range(len(sources)), vals, yerr=errs,
-                       color=cols, alpha=0.8, edgecolor="white",
-                       capsize=5)
+    bars = axes[1].bar(
+        range(len(sources)),
+        vals,
+        yerr=errs,
+        color=cols,
+        alpha=0.8,
+        edgecolor="white",
+        capsize=5,
+    )
     for bar, v in zip(bars, vals):
-        axes[1].text(bar.get_x() + bar.get_width()/2,
-                     bar.get_height() + 0.01,
-                     f"{v:.3f}", ha="center", va="bottom",
-                     fontsize=9, fontweight="bold")
+        axes[1].text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.01,
+            f"{v:.3f}",
+            ha="center",
+            va="bottom",
+            fontsize=9,
+            fontweight="bold",
+        )
     axes[1].set_xticks(range(len(sources)))
     axes[1].set_xticklabels(sources, fontsize=9, rotation=15, ha="right")
     axes[1].set_ylabel("Kendall τ", fontsize=12)
-    axes[1].set_title("DPT vs Cosine Distance\n(Kendall)",
-                      fontsize=13, fontweight="bold")
+    axes[1].set_title(
+        "DPT vs Cosine Distance\n(Kendall)", fontsize=13, fontweight="bold"
+    )
     axes[1].grid(True, alpha=0.15, axis="y")
 
     for ax in axes:
@@ -1964,8 +2258,7 @@ def plot_rank_correlation(corr_dict, out_dir, dpi=200):
 
     fname = "rank_correlation_comparison"
     for ext in [".png", ".svg"]:
-        fig.savefig(os.path.join(out_dir, fname + ext),
-                    dpi=dpi, bbox_inches="tight")
+        fig.savefig(os.path.join(out_dir, fname + ext), dpi=dpi, bbox_inches="tight")
     logger.info(f"  Saved: {fname}.png/.svg")
     if _IN_COLAB:
         plt.show()
@@ -1977,34 +2270,36 @@ def plot_dpt_vs_cosine_scatter(corr_dict, out_dir, dpi=200):
     sources = [s for s in corr_dict if "_dpt_pairs" in corr_dict[s]]
     if not sources:
         return
-    
+
     # Flatten all classes across sources to find unique intra-classes
     all_classes = set()
     for s in sources:
         all_classes.update(np.unique(corr_dict[s]["_cls_pairs"]))
     classes = [c for c in sorted(all_classes) if c != "Inter-class"]
-    
+
     n_src = len(sources)
     n_cls = len(classes)
-    
-    fig, axes = plt.subplots(n_src, n_cls, figsize=(4 * n_cls, 4 * n_src), squeeze=False)
+
+    fig, axes = plt.subplots(
+        n_src, n_cls, figsize=(4 * n_cls, 4 * n_src), squeeze=False
+    )
 
     for i, src in enumerate(sources):
         d = corr_dict[src]
         dpt_p = d["_dpt_pairs"]
         cos_p = d["_cos_pairs"]
         cls_p = d["_cls_pairs"]
-        
+
         for j, cls in enumerate(classes):
             ax = axes[i, j]
-            mask = (cls_p == cls)
+            mask = cls_p == cls
             if not np.any(mask):
-                ax.axis('off')
+                ax.axis("off")
                 continue
-                
+
             y_vals = dpt_p[mask]
             x_vals = cos_p[mask]
-            
+
             # Subsample for plotting if > 5000 per class
             if len(y_vals) > 5000:
                 sel = np.random.RandomState(42).choice(len(y_vals), 5000, replace=False)
@@ -2019,20 +2314,30 @@ def plot_dpt_vs_cosine_scatter(corr_dict, out_dir, dpi=200):
                 x_range = np.linspace(x_vals.min(), x_vals.max(), 100)
                 if abs(slope) > 1e-10:
                     y_fit = (x_range - intercept) / slope
-                    ax.plot(x_range, y_fit, color="red", linewidth=1.5, linestyle="--", alpha=0.8)
+                    ax.plot(
+                        x_range,
+                        y_fit,
+                        color="red",
+                        linewidth=1.5,
+                        linestyle="--",
+                        alpha=0.8,
+                    )
 
             ax.set_xlabel("Cosine Distance", fontsize=10)
             if j == 0:
                 ax.set_ylabel(f"DPT Distance\n{src}", fontsize=11, fontweight="bold")
             else:
                 ax.set_ylabel("DPT Distance", fontsize=10)
-            
+
             stress = d.get("per_class_stress", {}).get(cls, float("nan"))
             npr = d.get("per_class_npr", {}).get(cls, float("nan"))
             rho = d.get("per_class_spearman", {}).get(cls, {}).get("mean", float("nan"))
-            
-            ax.set_title(f"{cls}\nStress={stress:.3f} NPR={npr:.3f} ρ={rho:.3f}", 
-                         fontsize=10, fontweight="bold")
+
+            ax.set_title(
+                f"{cls}\nStress={stress:.3f} NPR={npr:.3f} ρ={rho:.3f}",
+                fontsize=10,
+                fontweight="bold",
+            )
             ax.grid(True, alpha=0.15)
             sns.despine(ax=ax)
 
@@ -2052,8 +2357,7 @@ def plot_isometry_summary(corr_dict, out_dir, dpi=200):
     if not sources:
         return
     colors_map = {"CNN": "#3A7EBF", "SAE": "#E8833A"}
-    cols = [next((v for k, v in colors_map.items() if k in s), "#999")
-            for s in sources]
+    cols = [next((v for k, v in colors_map.items() if k in s), "#999") for s in sources]
 
     fig, axes = plt.subplots(1, 4, figsize=(16, 4))
     metrics = [
@@ -2065,30 +2369,38 @@ def plot_isometry_summary(corr_dict, out_dir, dpi=200):
 
     for ax, (key, err_key, label, higher_better) in zip(axes, metrics):
         vals = [corr_dict[s].get(key, 0) for s in sources]
-        errs = ([corr_dict[s].get(err_key, 0) for s in sources]
-                if err_key else None)
-        bars = ax.bar(range(len(sources)), vals,
-                      yerr=errs, color=cols, alpha=0.8,
-                      edgecolor="white", capsize=4)
+        errs = [corr_dict[s].get(err_key, 0) for s in sources] if err_key else None
+        bars = ax.bar(
+            range(len(sources)),
+            vals,
+            yerr=errs,
+            color=cols,
+            alpha=0.8,
+            edgecolor="white",
+            capsize=4,
+        )
         for bar, v in zip(bars, vals):
-            ax.text(bar.get_x() + bar.get_width()/2,
-                    bar.get_height() + 0.005,
-                    f"{v:.3f}", ha="center", va="bottom",
-                    fontsize=9, fontweight="bold")
+            ax.text(
+                bar.get_x() + bar.get_width() / 2,
+                bar.get_height() + 0.005,
+                f"{v:.3f}",
+                ha="center",
+                va="bottom",
+                fontsize=9,
+                fontweight="bold",
+            )
         ax.set_xticks(range(len(sources)))
         ax.set_xticklabels(sources, fontsize=8, rotation=20, ha="right")
         ax.set_ylabel(label, fontsize=11)
         arrow = "↑" if higher_better else "↓"
-        ax.set_title(f"{label} ({arrow} better)",
-                     fontsize=11, fontweight="bold")
+        ax.set_title(f"{label} ({arrow} better)", fontsize=11, fontweight="bold")
         ax.grid(True, alpha=0.15, axis="y")
         sns.despine(ax=ax)
 
     fig.tight_layout()
     fname = "isometry_summary"
     for ext in [".png", ".svg"]:
-        fig.savefig(os.path.join(out_dir, fname + ext),
-                    dpi=dpi, bbox_inches="tight")
+        fig.savefig(os.path.join(out_dir, fname + ext), dpi=dpi, bbox_inches="tight")
     logger.info(f"  Saved: {fname}.png/.svg")
     if _IN_COLAB:
         plt.show()
@@ -2100,26 +2412,34 @@ def plot_npr_distribution(corr_dict, out_dir, dpi=200):
     sources = [s for s in corr_dict if "_npr_all_vals" in corr_dict[s]]
     if not sources:
         return
-        
+
     colors_map = {"CNN": "#3A7EBF", "SAE": "#E8833A"}
     n_src = len(sources)
-    
+
     fig, axes = plt.subplots(1, n_src, figsize=(5 * n_src, 4.5), squeeze=False)
-    
+
     # Color palette for different Ks
     k_colors = {"5": "#2ca02c", "10": "#d62728", "15": "#9467bd"}
-    
+
     for idx, src in enumerate(sources):
         ax = axes[0, idx]
         d = corr_dict[src]
         all_vals = d.get("_npr_all_vals", {})
-        
+
         # Plot K=10 specifically as the background histogram to anchor the visual
         k_npr = str(d.get("npr_k", 10))
         if k_npr in all_vals:
             col = next((v for k, v in colors_map.items() if k in src), "#999")
-            sns.histplot(all_vals[k_npr], bins=11, element="bars", color=col, 
-                         stat="density", ax=ax, alpha=0.2, label=f"k={k_npr} (bars)")
+            sns.histplot(
+                all_vals[k_npr],
+                bins=11,
+                element="bars",
+                color=col,
+                stat="density",
+                ax=ax,
+                alpha=0.2,
+                label=f"k={k_npr} (bars)",
+            )
             npr_mean = d.get("npr_mean", float("nan"))
             ax.axvline(npr_mean, color="red", linestyle="--", linewidth=2, alpha=0.7)
 
@@ -2128,16 +2448,22 @@ def plot_npr_distribution(corr_dict, out_dir, dpi=200):
             if kval in all_vals:
                 vals = all_vals[kval]
                 line_col = k_colors.get(kval, "#333333")
-                sns.kdeplot(vals, color=line_col, ax=ax, lw=2.5, label=f"k={kval} (KDE)")
-        
+                sns.kdeplot(
+                    vals, color=line_col, ax=ax, lw=2.5, label=f"k={kval} (KDE)"
+                )
+
         ax.set_xlabel("NPR (KNN Overlap Ratio)", fontsize=11)
         ax.set_ylabel("Density", fontsize=11)
-        ax.set_title(f"{src}\nKNN Overlap Distribution (K=5,10,15)", fontsize=12, fontweight="bold")
+        ax.set_title(
+            f"{src}\nKNN Overlap Distribution (K=5,10,15)",
+            fontsize=12,
+            fontweight="bold",
+        )
         ax.set_xlim(-0.05, 1.05)
         ax.grid(True, alpha=0.15)
         ax.legend(loc="upper left")
         sns.despine(ax=ax)
-        
+
     fig.tight_layout()
     fname = "npr_distribution"
     for ext in [".png", ".svg"]:
@@ -2151,8 +2477,9 @@ def plot_npr_distribution(corr_dict, out_dir, dpi=200):
 # ==============================================================================
 # Load and preprocess
 # ==============================================================================
-def load_and_preprocess(cache_path, dead_threshold, gap_l2_norm,
-                        samples_per_class=500, seed=42):
+def load_and_preprocess(
+    cache_path, dead_threshold, gap_l2_norm, samples_per_class=500, seed=42
+):
     """Load cache, apply L2 norm, subsample.
 
     Returns: X, superclasses (list[str]), source_label
@@ -2180,8 +2507,7 @@ def load_and_preprocess(cache_path, dead_threshold, gap_l2_norm,
         keep = sorted(keep)
         X = X[keep]
         superclasses = [superclasses[i] for i in keep]
-        logger.info(f"  Subsampled: {len(keep)} total "
-                    f"(≤{samples_per_class}/class)")
+        logger.info(f"  Subsampled: {len(keep)} total " f"(≤{samples_per_class}/class)")
 
     logger.info(f"  Features: {X.shape}")
     return X, superclasses, source_label
@@ -2190,8 +2516,7 @@ def load_and_preprocess(cache_path, dead_threshold, gap_l2_norm,
 # ==============================================================================
 # Diffusion Map embedding — adaptive kernel → diffusion distance
 # ==============================================================================
-def compute_diffusion_coords(X, n_comps=15, pca_dim=50, n_neighbors=30,
-                              seed=42):
+def compute_diffusion_coords(X, n_comps=15, pca_dim=50, n_neighbors=30, seed=42):
     """Compute diffusion map coordinates.
 
     Pipeline: [PCA] → sc.pp.neighbors (adaptive kernel) → sc.tl.diffmap
@@ -2212,24 +2537,28 @@ def compute_diffusion_coords(X, n_comps=15, pca_dim=50, n_neighbors=30,
     X_diff : np.ndarray (N, n_comps) — diffusion coordinates
     evals : np.ndarray — eigenvalues
     """
-    import scanpy as sc
     import anndata
+    import scanpy as sc
 
-    logger.info(f"  Computing diffusion map (n_comps={n_comps}, "
-                f"pca_dim={pca_dim}, n_neighbors={n_neighbors})...")
+    logger.info(
+        f"  Computing diffusion map (n_comps={n_comps}, "
+        f"pca_dim={pca_dim}, n_neighbors={n_neighbors})..."
+    )
 
     adata = anndata.AnnData(X.astype(np.float32))
 
     # PCA
     if pca_dim > 0 and X.shape[1] > pca_dim:
         from sklearn.decomposition import PCA
+
         pca = PCA(n_components=pca_dim, random_state=seed)
         X_pca = pca.fit_transform(X)
         adata.obsm["X_pca"] = X_pca.astype(np.float32)
         n_pcs = pca_dim
         var_explained = pca.explained_variance_ratio_.sum()
-        logger.info(f"    PCA: {X.shape[1]} → {pca_dim} dims "
-                    f"({var_explained:.1%} variance)")
+        logger.info(
+            f"    PCA: {X.shape[1]} → {pca_dim} dims " f"({var_explained:.1%} variance)"
+        )
     else:
         adata.obsm["X_pca"] = X.astype(np.float32)
         n_pcs = X.shape[1]
@@ -2237,19 +2566,21 @@ def compute_diffusion_coords(X, n_comps=15, pca_dim=50, n_neighbors=30,
 
     # KNN with adaptive kernel
     k_actual = min(n_neighbors, len(X) - 1)
-    sc.pp.neighbors(adata, n_neighbors=k_actual, n_pcs=n_pcs,
-                    use_rep="X_pca", random_state=seed)
+    sc.pp.neighbors(
+        adata, n_neighbors=k_actual, n_pcs=n_pcs, use_rep="X_pca", random_state=seed
+    )
 
     # Diffusion map — n_comps=0 means "use ALL eigenvectors"
     if n_comps <= 0:
         # ALL eigenvectors via dense eigendecomposition
         # ARPACK (eigsh) is designed for FEW eigenvalues — N-2 is extremely slow
-        
+
         W = adata.obsp["connectivities"].toarray().astype(np.float64)
         row_sums = W.sum(axis=1, keepdims=True)
         row_sums = np.where(row_sums == 0, 1.0, row_sums)
         T = W / row_sums
-        pi = row_sums.ravel(); pi = pi / pi.sum()
+        pi = row_sums.ravel()
+        pi = pi / pi.sum()
         sqrt_pi = np.sqrt(pi)
         inv_sqrt_pi = 1.0 / np.where(sqrt_pi == 0, 1e-12, sqrt_pi)
         T_sym = (sqrt_pi[:, None]) * T * (inv_sqrt_pi[None, :])
@@ -2295,6 +2626,7 @@ def compute_diffusion_coords(X, n_comps=15, pca_dim=50, n_neighbors=30,
     del adata
     return X_diff, evals
 
+
 # ==============================================================================
 # Main
 # ==============================================================================
@@ -2307,9 +2639,8 @@ def main():
         logger.info(f"\n  Mode: AGGREGATE — {args.summarize_dir}")
         out_dir = args.output_dir or args.summarize_dir
         aggregate_apop_std_results(
-            base_dir=args.summarize_dir,
-            out_dir=out_dir,
-            dpi=args.dpi)
+            base_dir=args.summarize_dir, out_dir=out_dir, dpi=args.dpi
+        )
         return
 
     if not args.cnn_cache and not args.sae_cache:
@@ -2328,16 +2659,24 @@ def main():
     if args.cnn_cache:
         logger.info(f"\nLoading CNN cache: {args.cnn_cache}")
         X_cnn, sc_cnn, _ = load_and_preprocess(
-            args.cnn_cache, args.dead_threshold, args.gap_l2_norm,
-            args.samples_per_class, args.seed)
+            args.cnn_cache,
+            args.dead_threshold,
+            args.gap_l2_norm,
+            args.samples_per_class,
+            args.seed,
+        )
         cnn_label = f"CNN ({args.label})" if args.label else "CNN"
         sources[cnn_label] = (X_cnn, sc_cnn)
 
     if args.sae_cache:
         logger.info(f"\nLoading SAE cache: {args.sae_cache}")
         X_sae, sc_sae, _ = load_and_preprocess(
-            args.sae_cache, args.dead_threshold, args.gap_l2_norm,
-            args.samples_per_class, args.seed)
+            args.sae_cache,
+            args.dead_threshold,
+            args.gap_l2_norm,
+            args.samples_per_class,
+            args.seed,
+        )
         sae_label = f"SAE ({args.label})" if args.label else "SAE"
         sources[sae_label] = (X_sae, sc_sae)
 
@@ -2349,11 +2688,14 @@ def main():
         for label, (X, sc_list) in sources.items():
             logger.info(f"\n  {label}:")
             correct_mask, acc, per_cls = filter_correct_by_loo_knn(
-                X, sc_list, k=args.knn_filter_k,
-                weights=args.knn_filter_weights, seed=args.seed)
+                X,
+                sc_list,
+                k=args.knn_filter_k,
+                weights=args.knn_filter_weights,
+                seed=args.seed,
+            )
             X_clean = X[correct_mask]
-            sc_clean = [sc_list[i] for i in range(len(sc_list))
-                        if correct_mask[i]]
+            sc_clean = [sc_list[i] for i in range(len(sc_list)) if correct_mask[i]]
             clean_label = f"{label} (clean)"
             sources_clean[clean_label] = (X_clean, sc_clean)
             logger.info(f"    Clean subset: {X_clean.shape}")
@@ -2370,12 +2712,14 @@ def main():
             logger.info(f"\n  {label}: {X.shape}")
             try:
                 rc = compute_rank_correlation(
-                    X, sc_list,
+                    X,
+                    sc_list,
                     n_anchors=args.n_rank_anchors,
                     pca_dim=args.rank_pca_dim,
                     n_neighbors=args.rank_n_neighbors,
                     seed=args.seed,
-                    return_full_matrices=args.save_pairwise)
+                    return_full_matrices=args.save_pairwise,
+                )
                 corr_dict[label] = rc
             except Exception as e:
                 logger.error(f"    Rank correlation failed: {e}")
@@ -2390,8 +2734,7 @@ def main():
         # Save rank correlation JSON (strip numpy arrays for serialization)
         rc_save = {}
         for k, v in corr_dict.items():
-            rc_save[k] = {kk: vv for kk, vv in v.items()
-                          if not kk.startswith("_")}
+            rc_save[k] = {kk: vv for kk, vv in v.items() if not kk.startswith("_")}
         rc_path = os.path.join(out_dir, "rank_correlation.json")
         with open(rc_path, "w") as f:
             json.dump(rc_save, f, indent=2, default=str)
@@ -2406,16 +2749,20 @@ def main():
     if args.use_diffusion:
         logger.info(f"\n  ── Applying Diffusion Map embedding ──")
         logger.info(f"  (transform to diffusion coords for Ricci/δ geometry)")
-        logger.info(f"  PCA={args.pca_dim}, n_comps={args.n_diffmap_comps}, "
-                    f"n_neighbors={args.n_neighbors_diffmap}")
+        logger.info(
+            f"  PCA={args.pca_dim}, n_comps={args.n_diffmap_comps}, "
+            f"n_neighbors={args.n_neighbors_diffmap}"
+        )
         new_sources = {}
         for label, (X, sc_list) in sources.items():
             logger.info(f"\n  {label}: {X.shape}")
             X_diff, evals = compute_diffusion_coords(
-                X, n_comps=args.n_diffmap_comps,
+                X,
+                n_comps=args.n_diffmap_comps,
                 pca_dim=args.pca_dim,
                 n_neighbors=args.n_neighbors_diffmap,
-                seed=args.seed)
+                seed=args.seed,
+            )
             logger.info(f"    → diffusion coords: {X_diff.shape}")
             new_sources[label] = (X_diff, sc_list)
         sources = new_sources
@@ -2426,10 +2773,12 @@ def main():
             for label, (X, sc_list) in sources_clean.items():
                 logger.info(f"\n  {label}: {X.shape}")
                 X_diff, evals = compute_diffusion_coords(
-                    X, n_comps=args.n_diffmap_comps,
+                    X,
+                    n_comps=args.n_diffmap_comps,
                     pca_dim=args.pca_dim,
                     n_neighbors=args.n_neighbors_diffmap,
-                    seed=args.seed)
+                    seed=args.seed,
+                )
                 logger.info(f"    → diffusion coords: {X_diff.shape}")
                 new_clean[label] = (X_diff, sc_list)
             sources_clean = new_clean
@@ -2449,20 +2798,26 @@ def main():
         logger.info(f"{'#'*60}")
 
         k_suffix = f"_k{k_val}" if len(k_values) > 1 else ""
-        k_out_dir = os.path.join(out_dir, f"k_{k_val}") if len(k_values) > 1 else out_dir
+        k_out_dir = (
+            os.path.join(out_dir, f"k_{k_val}") if len(k_values) > 1 else out_dir
+        )
         os.makedirs(k_out_dir, exist_ok=True)
 
         all_results = {}
         curvature_dict = {}  # for comparison plot
-        delta_dict = {}      # for comparison plot
+        delta_dict = {}  # for comparison plot
 
         for source_label, (X, superclasses) in sources.items():
             logger.info(f"\n{'='*60}")
             logger.info(f"  Source: {source_label} ({X.shape}), k={k_val}")
             logger.info(f"{'='*60}")
 
-            result = {"source": source_label, "n_samples": X.shape[0],
-                      "n_features": X.shape[1], "k": k_val}
+            result = {
+                "source": source_label,
+                "n_samples": X.shape[0],
+                "n_features": X.shape[1],
+                "k": k_val,
+            }
 
             if args.compute_geometry:
                 # ══════════════════════════════════════════════════════
@@ -2471,8 +2826,8 @@ def main():
                 logger.info(f"\n  ── Ollivier-Ricci Curvature (k={k_val}) ──")
                 try:
                     curvatures, ricci_stats, G_ricci = compute_ricci_curvature(
-                        X, k=k_val, alpha=args.ricci_alpha,
-                        labels=superclasses)
+                        X, k=k_val, alpha=args.ricci_alpha, labels=superclasses
+                    )
                     ricci_stats["k"] = k_val
                     result["ricci"] = ricci_stats
                     curvature_dict[source_label] = curvatures
@@ -2482,16 +2837,23 @@ def main():
                         logger.info(f"    Per-class intra-class curvatures:")
                         class_curvs = compute_ricci_per_class(G_ricci, superclasses)
                         result["ricci_per_class"] = {
-                            cls: {"mean": float(np.mean(c)), "median": float(np.median(c)),
-                                  "std": float(np.std(c)), "n_edges": len(c)}
+                            cls: {
+                                "mean": float(np.mean(c)),
+                                "median": float(np.median(c)),
+                                "std": float(np.std(c)),
+                                "n_edges": len(c),
+                            }
                             for cls, c in class_curvs.items()
                         }
-                        plot_ricci_per_class(class_curvs, source_label,
-                                            k_out_dir, args.dpi)
+                        plot_ricci_per_class(
+                            class_curvs, source_label, k_out_dir, args.dpi
+                        )
 
                 except ImportError:
-                    logger.error("GraphRicciCurvature not installed. "
-                                 "Install with: pip install GraphRicciCurvature")
+                    logger.error(
+                        "GraphRicciCurvature not installed. "
+                        "Install with: pip install GraphRicciCurvature"
+                    )
                     result["ricci"] = {"error": "GraphRicciCurvature not installed"}
                 except Exception as e:
                     logger.error(f"Ricci computation failed: {e}")
@@ -2503,9 +2865,11 @@ def main():
                 if k_val == k_values[0]:  # only compute δ on first k
                     logger.info(f"\n  ── δ-Hyperbolicity ──")
                     try:
-                        delta, delta_rel, delta_vals, delta_stats = \
+                        delta, delta_rel, delta_vals, delta_stats = (
                             compute_delta_hyperbolicity(
-                                X, n_quadruples=args.delta_n_samples, seed=args.seed)
+                                X, n_quadruples=args.delta_n_samples, seed=args.seed
+                            )
+                        )
                         result["delta"] = delta_stats
                         delta_dict[source_label] = delta_stats
                     except Exception as e:
@@ -2513,9 +2877,12 @@ def main():
                         result["delta"] = {"error": str(e)}
                 else:
                     logger.info(
-                        f"  (δ-hyperbolicity: k-independent, skipping for k={k_val})")
+                        f"  (δ-hyperbolicity: k-independent, skipping for k={k_val})"
+                    )
             else:
-                logger.info(f"  [Ricci + δ skipped — pass --compute_geometry to enable]")
+                logger.info(
+                    f"  [Ricci + δ skipped — pass --compute_geometry to enable]"
+                )
 
             all_results[source_label] = result
 
@@ -2537,8 +2904,11 @@ def main():
             jr = {}
             for k2, v2 in v.items():
                 if isinstance(v2, dict):
-                    jr[k2] = {k3: v3 for k3, v3 in v2.items()
-                              if not isinstance(v3, np.ndarray)}
+                    jr[k2] = {
+                        k3: v3
+                        for k3, v3 in v2.items()
+                        if not isinstance(v3, np.ndarray)
+                    }
                 else:
                     jr[k2] = v2
             json_results[k] = jr
@@ -2552,35 +2922,83 @@ def main():
         csv_path = os.path.join(k_out_dir, f"geometry_results{k_suffix}.csv")
         with open(csv_path, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow([
-                "source", "k", "n_samples", "n_features",
-                "ricci_mean", "ricci_median", "ricci_std",
-                "frac_positive", "frac_negative",
-                "delta", "delta_rel", "diameter",
-            ])
+            writer.writerow(
+                [
+                    "source",
+                    "k",
+                    "n_samples",
+                    "n_features",
+                    "ricci_mean",
+                    "ricci_median",
+                    "ricci_std",
+                    "frac_positive",
+                    "frac_negative",
+                    "delta",
+                    "delta_rel",
+                    "diameter",
+                ]
+            )
             for label, r in all_results.items():
                 ricci = r.get("ricci", {})
                 delta = r.get("delta", {})
-                writer.writerow([
-                    label, k_val,
-                    r.get("n_samples", ""), r.get("n_features", ""),
-                    f"{ricci.get('mean', 'nan'):.4f}" if isinstance(ricci.get('mean'), float) else "",
-                    f"{ricci.get('median', 'nan'):.4f}" if isinstance(ricci.get('median'), float) else "",
-                    f"{ricci.get('std', 'nan'):.4f}" if isinstance(ricci.get('std'), float) else "",
-                    f"{ricci.get('frac_positive', 'nan'):.4f}" if isinstance(ricci.get('frac_positive'), float) else "",
-                    f"{ricci.get('frac_negative', 'nan'):.4f}" if isinstance(ricci.get('frac_negative'), float) else "",
-                    f"{delta.get('delta', 'nan'):.4f}" if isinstance(delta.get('delta'), float) else "",
-                    f"{delta.get('delta_rel', 'nan'):.4f}" if isinstance(delta.get('delta_rel'), float) else "",
-                    f"{delta.get('diameter', 'nan'):.4f}" if isinstance(delta.get('diameter'), float) else "",
-                ])
+                writer.writerow(
+                    [
+                        label,
+                        k_val,
+                        r.get("n_samples", ""),
+                        r.get("n_features", ""),
+                        (
+                            f"{ricci.get('mean', 'nan'):.4f}"
+                            if isinstance(ricci.get("mean"), float)
+                            else ""
+                        ),
+                        (
+                            f"{ricci.get('median', 'nan'):.4f}"
+                            if isinstance(ricci.get("median"), float)
+                            else ""
+                        ),
+                        (
+                            f"{ricci.get('std', 'nan'):.4f}"
+                            if isinstance(ricci.get("std"), float)
+                            else ""
+                        ),
+                        (
+                            f"{ricci.get('frac_positive', 'nan'):.4f}"
+                            if isinstance(ricci.get("frac_positive"), float)
+                            else ""
+                        ),
+                        (
+                            f"{ricci.get('frac_negative', 'nan'):.4f}"
+                            if isinstance(ricci.get("frac_negative"), float)
+                            else ""
+                        ),
+                        (
+                            f"{delta.get('delta', 'nan'):.4f}"
+                            if isinstance(delta.get("delta"), float)
+                            else ""
+                        ),
+                        (
+                            f"{delta.get('delta_rel', 'nan'):.4f}"
+                            if isinstance(delta.get("delta_rel"), float)
+                            else ""
+                        ),
+                        (
+                            f"{delta.get('diameter', 'nan'):.4f}"
+                            if isinstance(delta.get("diameter"), float)
+                            else ""
+                        ),
+                    ]
+                )
         logger.info(f"Saved CSV: {csv_path}")
 
         # ── Summary ──
         logger.info(f"\n{'='*80}")
         logger.info(f"  SUMMARY — Intrinsic Geometry (k={k_val})")
         logger.info(f"{'='*80}")
-        logger.info(f"  {'Source':25s}  {'κ_mean':>8s}  {'κ_med':>8s}  "
-                    f"{'%pos':>6s}  {'%neg':>6s}  {'δ':>8s}  {'δ/D':>8s}")
+        logger.info(
+            f"  {'Source':25s}  {'κ_mean':>8s}  {'κ_med':>8s}  "
+            f"{'%pos':>6s}  {'%neg':>6s}  {'δ':>8s}  {'δ/D':>8s}"
+        )
         logger.info(f"  {'─'*75}")
 
         for label, r in all_results.items():
@@ -2598,7 +3016,8 @@ def main():
                     f"{ricci.get('frac_positive', 0)*100:5.1f}%  "
                     f"{ricci.get('frac_negative', 0)*100:5.1f}%  "
                     f"{d_str:>8s}  "
-                    f"{dr_str:>8s}")
+                    f"{dr_str:>8s}"
+                )
             else:
                 logger.info(f"  {label:25s}  (errors occurred)")
 
@@ -2631,7 +3050,9 @@ def main():
             if "uids" in _data:
                 _uids = _data["uids"].astype(str)
             else:
-                logger.warning(f"  No 'uids' key in {cache_path} — skipping apoptosis analysis for {src_label}")
+                logger.warning(
+                    f"  No 'uids' key in {cache_path} — skipping apoptosis analysis for {src_label}"
+                )
                 continue
 
             # Match subsampling if samples_per_class was applied
@@ -2639,11 +3060,14 @@ def main():
             # We need the uids in the same subsampled order.
             # Re-derive subsampled uids using same seed & class logic.
             rng_uid = np.random.RandomState(args.seed)
-            _sc_orig = np.array([
-                __import__('sae_project.step02_logging_utils',
-                           fromlist=['SUPERCLASS_MAP']).SUPERCLASS_MAP.get(str(ln), str(ln))
-                for ln in _data.get("lines", np.array([]))
-            ])
+            _sc_orig = np.array(
+                [
+                    __import__(
+                        "sae_project.step02_logging_utils", fromlist=["SUPERCLASS_MAP"]
+                    ).SUPERCLASS_MAP.get(str(ln), str(ln))
+                    for ln in _data.get("lines", np.array([]))
+                ]
+            )
             if args.samples_per_class > 0 and len(_sc_orig) > 0:
                 keep_uid = []
                 for cls in sorted(np.unique(_sc_orig)):
@@ -2658,12 +3082,15 @@ def main():
 
             try:
                 apop_res = compute_local_apop_std_knn_vs_dpt(
-                    X_src, _uids_sub, sc_src,
+                    X_src,
+                    _uids_sub,
+                    sc_src,
                     apoptosis_csv=args.apoptosis_csv,
                     k_list=args.apoptosis_k_neighbors,
                     pca_dim=args.rank_pca_dim,
                     n_neighbors_dpt=args.rank_n_neighbors,
-                    seed=args.seed)
+                    seed=args.seed,
+                )
                 apop_results_by_source[src_label] = apop_res
             except Exception as e:
                 logger.error(f"  Apoptosis std analysis failed for {src_label}: {e}")
@@ -2671,9 +3098,8 @@ def main():
         # Plot
         if apop_results_by_source:
             plot_apop_std_comparison(
-                apop_results_by_source,
-                args.apoptosis_k_neighbors,
-                out_dir, args.dpi)
+                apop_results_by_source, args.apoptosis_k_neighbors, out_dir, args.dpi
+            )
 
             # Save JSON
             apop_json_path = os.path.join(out_dir, "apop_std_cosine_vs_dpt.json")
@@ -2685,9 +3111,19 @@ def main():
             apop_csv_path = os.path.join(out_dir, "apop_std_cosine_vs_dpt.csv")
             with open(apop_csv_path, "w", newline="", encoding="utf-8") as f:
                 import csv as _csv
+
                 w = _csv.writer(f)
-                w.writerow(["source", "metric", "k",
-                            "mean_local_std", "std_local_std", "median_local_std", "n"])
+                w.writerow(
+                    [
+                        "source",
+                        "metric",
+                        "k",
+                        "mean_local_std",
+                        "std_local_std",
+                        "median_local_std",
+                        "n",
+                    ]
+                )
                 for src_label, res in apop_results_by_source.items():
                     for metric in ["cosine", "DPT"]:
                         if metric not in res:
@@ -2697,13 +3133,17 @@ def main():
                             if ks not in res[metric]:
                                 continue
                             row = res[metric][ks]
-                            w.writerow([
-                                src_label, metric, k,
-                                f"{row['mean_std']:.6f}",
-                                f"{row['std_std']:.6f}",
-                                f"{row['median_std']:.6f}",
-                                row['n'],
-                            ])
+                            w.writerow(
+                                [
+                                    src_label,
+                                    metric,
+                                    k,
+                                    f"{row['mean_std']:.6f}",
+                                    f"{row['std_std']:.6f}",
+                                    f"{row['median_std']:.6f}",
+                                    row["n"],
+                                ]
+                            )
             logger.info(f"  Saved: {apop_csv_path}")
 
     logger.info(f"\n  Output: {out_dir}")

@@ -16,32 +16,34 @@
 #         --experiment raw
 # ==============================================================================
 
+import argparse
+import glob
 import os
 import re
 import sys
-import argparse
-import glob
-import numpy as np
 from collections import defaultdict
 
 import matplotlib
+import numpy as np
+
 _IN_COLAB = "google.colab" in sys.modules
 if not _IN_COLAB:
     matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+import matplotlib.pyplot as plt
+import scipy.stats as stats_mod
 import seaborn as sns
 from scipy.stats import gaussian_kde
-import scipy.stats as stats_mod
 
-plt.rcParams['svg.fonttype'] = 'none'
-plt.rcParams['pdf.fonttype'] = 42
-plt.rcParams['font.family'] = 'sans-serif'
+plt.rcParams["svg.fonttype"] = "none"
+plt.rcParams["pdf.fonttype"] = 42
+plt.rcParams["font.family"] = "sans-serif"
 sns.set_style("white")
 
-CNN_COLOR = "#4C72B0"   # blue
-SAE_COLOR = "#DD8452"   # orange
+CNN_COLOR = "#4C72B0"  # blue
+SAE_COLOR = "#DD8452"  # orange
 MUTATIONS_ORDER = ["SNCA", "GBA", "LRRK2"]
+
 
 # ─────────────────────────────────────────────
 # Args
@@ -50,23 +52,52 @@ def get_args():
     p = argparse.ArgumentParser(
         description="Ridgeline KDE: local std distribution per (mutation, k), CNN vs SAE"
     )
-    p.add_argument("--base_dir", type=str, required=True,
-                   help="Directory with sweep results (e.g. .../local_linearity/raw)")
+    p.add_argument(
+        "--base_dir",
+        type=str,
+        required=True,
+        help="Directory with sweep results (e.g. .../local_linearity/raw)",
+    )
     p.add_argument("--output_dir", type=str, default="")
-    p.add_argument("--experiment", type=str, default="raw",
-                   help="Label for output file names")
-    p.add_argument("--fixed_log2fc", type=float, default=-1,
-                   help="dpt_matched: filter by log2fc value (e.g. 1.0)")
-    p.add_argument("--k_neighbors", type=int, nargs="*", default=[5, 15, 25],
-                   help="Subset of k values to plot (default: 5 15 25)")
-    p.add_argument("--bw_method", default=0.15,
-                   help="KDE bandwidth: 'scott', 'silverman', or float scalar")
-    p.add_argument("--x_max_pct", type=float, default=99.0,
-                   help="X-axis upper percentile cutoff (default 99.0)")
-    p.add_argument("--row_height", type=float, default=1.0,
-                   help="Vertical spacing between rows (default 1.0)")
-    p.add_argument("--kde_scale", type=float, default=0.75,
-                   help="KDE peak height as fraction of row_height (default 0.75)")
+    p.add_argument(
+        "--experiment", type=str, default="raw", help="Label for output file names"
+    )
+    p.add_argument(
+        "--fixed_log2fc",
+        type=float,
+        default=-1,
+        help="dpt_matched: filter by log2fc value (e.g. 1.0)",
+    )
+    p.add_argument(
+        "--k_neighbors",
+        type=int,
+        nargs="*",
+        default=[5, 15, 25],
+        help="Subset of k values to plot (default: 5 15 25)",
+    )
+    p.add_argument(
+        "--bw_method",
+        default=0.15,
+        help="KDE bandwidth: 'scott', 'silverman', or float scalar",
+    )
+    p.add_argument(
+        "--x_max_pct",
+        type=float,
+        default=99.0,
+        help="X-axis upper percentile cutoff (default 99.0)",
+    )
+    p.add_argument(
+        "--row_height",
+        type=float,
+        default=1.0,
+        help="Vertical spacing between rows (default 1.0)",
+    )
+    p.add_argument(
+        "--kde_scale",
+        type=float,
+        default=0.75,
+        help="KDE peak height as fraction of row_height (default 0.75)",
+    )
     p.add_argument("--dpi", type=int, default=200)
     p.add_argument("--seed", type=int, default=42)
     return p.parse_args()
@@ -127,8 +158,10 @@ def load_npz_pooled(base_dir, fixed_log2fc=-1):
             for k, arrays in pooled[source][mut].items():
                 result[source][mut][k] = np.concatenate(arrays)
 
-    print(f"  Loaded {n_loaded} NPZ files across "
-          f"{sum(len(v) for v in result.values())} (source×mut×k) combinations")
+    print(
+        f"  Loaded {n_loaded} NPZ files across "
+        f"{sum(len(v) for v in result.values())} (source×mut×k) combinations"
+    )
     return result
 
 
@@ -150,19 +183,28 @@ def mwu_pooled(cnn_arr, sae_arr):
 # ─────────────────────────────────────────────
 # Core plot
 # ─────────────────────────────────────────────
-def plot_ridgeline(pooled_stds, mutations, k_list, output_dir, dpi,
-                   experiment, bw_method="scott",
-                   x_max_pct=99.0, row_height=1.0, kde_scale=0.75):
+def plot_ridgeline(
+    pooled_stds,
+    mutations,
+    k_list,
+    output_dir,
+    dpi,
+    experiment,
+    bw_method="scott",
+    x_max_pct=99.0,
+    row_height=1.0,
+    kde_scale=0.75,
+):
     """
     Ridgeline KDE per mutation.
     pooled_stds : {source: {mut: {k: np.ndarray}}}
     mutations   : list of mutation names
     k_list      : sorted list of k values (small → large, plotted bottom → top)
     """
-    n_mut  = len(mutations)
+    n_mut = len(mutations)
     n_rows = len(k_list)
-    RH     = row_height    # vertical spacing
-    KS     = kde_scale     # KDE peak height fraction
+    RH = row_height  # vertical spacing
+    KS = kde_scale  # KDE peak height fraction
 
     # ── Global x-axis range (log10(10x+1) Transform) ──
     all_vals = []
@@ -170,11 +212,11 @@ def plot_ridgeline(pooled_stds, mutations, k_list, output_dir, dpi,
         for mut_d in src_d.values():
             for arr in mut_d.values():
                 all_vals.extend(arr)
-                
+
     def trans(x):
         return np.log10(100.0 * x + 1.0)
-    
-    if len(all_vals) > 0: 
+
+    if len(all_vals) > 0:
         log_vals = trans(np.array(all_vals))
         log_min = 0.0  # 음수 꼬리(0.00의 뒷부분) 차단
         log_max = np.percentile(log_vals, x_max_pct)
@@ -187,7 +229,9 @@ def plot_ridgeline(pooled_stds, mutations, k_list, output_dir, dpi,
     x_pad = (log_max - log_min) * 0.20
 
     # ── Figure layout ────────────────────────
-    fig_w = 2.5 * n_mut  # 원래 4.5 였던 가로 폭을 줄여서 그래프를 양옆으로 압축(더 뾰족해 보임)
+    fig_w = (
+        2.5 * n_mut
+    )  # 원래 4.5 였던 가로 폭을 줄여서 그래프를 양옆으로 압축(더 뾰족해 보임)
     fig_h = max(3.5, n_rows * RH * 1.3 + 1.0)
     fig, axes = plt.subplots(1, n_mut, figsize=(fig_w, fig_h))
     if n_mut == 1:
@@ -237,18 +281,29 @@ def plot_ridgeline(pooled_stds, mutations, k_list, output_dir, dpi,
                     y_kde = kde(x_range)
                     if y_kde.max() <= 0:
                         continue
-                    
+
                     # normalize: 면적 동일 유지를 위해 개별 peak 대신 모든 그래프에 동일한 global_peak 상수 사용
                     y_kde = y_kde / global_peak * KS * RH
 
                     # Fill under curve
-                    ax.fill_between(x_range, y_base, y_base + y_kde,
-                                    color=color, alpha=0.50,
-                                    zorder=zorder_base, linewidth=0)
+                    ax.fill_between(
+                        x_range,
+                        y_base,
+                        y_base + y_kde,
+                        color=color,
+                        alpha=0.50,
+                        zorder=zorder_base,
+                        linewidth=0,
+                    )
                     # Outline
-                    ax.plot(x_range, y_base + y_kde,
-                            color=color, linewidth=1.2, alpha=0.95,
-                            zorder=zorder_base + 0.5)
+                    ax.plot(
+                        x_range,
+                        y_base + y_kde,
+                        color=color,
+                        linewidth=1.2,
+                        alpha=0.95,
+                        zorder=zorder_base + 0.5,
+                    )
 
                     # Median dashed vertical line
                     median_val = np.median(arr)
@@ -256,10 +311,16 @@ def plot_ridgeline(pooled_stds, mutations, k_list, output_dir, dpi,
                     if log_min <= log_median <= log_max:
                         med_idx = np.argmin(np.abs(x_range - log_median))
                         kde_at_med = y_kde[med_idx]
-                        ax.vlines(log_median, y_base, y_base + kde_at_med,
-                                  color=color, linewidth=1.5,
-                                  linestyle="--", alpha=0.90,
-                                  zorder=zorder_base + 1)
+                        ax.vlines(
+                            log_median,
+                            y_base,
+                            y_base + kde_at_med,
+                            color=color,
+                            linewidth=1.5,
+                            linestyle="--",
+                            alpha=0.90,
+                            zorder=zorder_base + 1,
+                        )
 
                 except Exception as e:
                     print(f"  [KDE warn] {mut} k={k} {label}: {e}")
@@ -269,33 +330,40 @@ def plot_ridgeline(pooled_stds, mutations, k_list, output_dir, dpi,
 
             # ── P-value annotation ────────────
             if not np.isnan(p_val):
-                star = ("***" if p_val < 0.001 else "**" if p_val < 0.01
-                        else "*"   if p_val < 0.05 else "n.s.")
+                star = (
+                    "***"
+                    if p_val < 0.001
+                    else "**" if p_val < 0.01 else "*" if p_val < 0.05 else "n.s."
+                )
                 color_star = "black" if star != "n.s." else "#888888"
-                ax.text(log_max + x_pad * 0.05,
-                        y_base + KS * RH * 0.40,
-                        f"{star}\np={p_val:.2e}",
-                        ha="left", va="center",
-                        fontsize=7, color=color_star,
-                        fontweight="bold" if star != "n.s." else "normal")
+                ax.text(
+                    log_max + x_pad * 0.05,
+                    y_base + KS * RH * 0.40,
+                    f"{star}\np={p_val:.2e}",
+                    ha="left",
+                    va="center",
+                    fontsize=7,
+                    color=color_star,
+                    fontweight="bold" if star != "n.s." else "normal",
+                )
 
         # ── Y-axis: k labels ─────────────────
-        yticks     = [i * RH + KS * RH * 0.20 for i in range(n_rows)]
+        yticks = [i * RH + KS * RH * 0.20 for i in range(n_rows)]
         yticklabels = [f"k = {k}" for k in k_list]
         ax.set_yticks(yticks)
         ax.set_yticklabels(yticklabels, fontsize=10)
         ax.tick_params(axis="y", length=0, pad=4)
 
         ax.set_xlim(log_min, log_max + x_pad)
-        
+
         # User-friendly real-value ticks mapped to log10(10x+1)
         target_ticks = [0.0, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
         tick_pos = [trans(t) for t in target_ticks if trans(t) <= log_max]
         tick_labels = [f"{t:.2f}" for t in target_ticks if trans(t) <= log_max]
-        
+
         ax.set_xticks(tick_pos)
         ax.set_xticklabels(tick_labels)
-        
+
         ax.set_ylim(-0.08 * RH, n_rows * RH)
         ax.set_xlabel("Local Apoptosis Std (Transformed: log10(10x + 1))", fontsize=11)
         ax.set_title(mut, fontsize=14, fontweight="bold", pad=8)
@@ -306,16 +374,22 @@ def plot_ridgeline(pooled_stds, mutations, k_list, output_dir, dpi,
                 mpatches.Patch(color=CNN_COLOR, alpha=0.6, label="CNN"),
                 mpatches.Patch(color=SAE_COLOR, alpha=0.6, label="SAE"),
             ]
-            ax.legend(handles=patches, fontsize=10,
-                      loc="upper right", framealpha=0.85,
-                      edgecolor="white")
+            ax.legend(
+                handles=patches,
+                fontsize=10,
+                loc="upper right",
+                framealpha=0.85,
+                edgecolor="white",
+            )
 
         sns.despine(ax=ax, left=True)
 
     fig.suptitle(
         f"Local Apoptosis Std Distribution — CNN vs SAE  [{experiment}]\n"
         f"(lower std → tighter neighbourhood → better feature organisation)",
-        fontsize=12, fontweight="bold", y=1.03,
+        fontsize=12,
+        fontweight="bold",
+        y=1.03,
     )
     fig.tight_layout()
 
@@ -339,12 +413,11 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
 
     print(f"Loading NPZ pooled local_stds from: {args.base_dir}")
-    pooled_stds = load_npz_pooled(args.base_dir,
-                                  fixed_log2fc=args.fixed_log2fc)
+    pooled_stds = load_npz_pooled(args.base_dir, fixed_log2fc=args.fixed_log2fc)
 
     # Collect mutations and k values
     all_muts = set()
-    all_ks   = set()
+    all_ks = set()
     for src_d in pooled_stds.values():
         for mut, k_dict in src_d.items():
             all_muts.add(mut)
@@ -357,7 +430,9 @@ def main():
     if args.k_neighbors:
         k_list = sorted([k for k in args.k_neighbors if k in all_ks])
         if not k_list:
-            print("Warning: None of the requested k_neighbors were found in NPZ files. Falling back to all found k values.")
+            print(
+                "Warning: None of the requested k_neighbors were found in NPZ files. Falling back to all found k values."
+            )
             k_list = sorted(all_ks)
     else:
         k_list = sorted(all_ks)
@@ -366,8 +441,10 @@ def main():
     print(f"  K values  : {k_list}")
 
     # Summary table
-    print(f"\n{'Src':4s} {'Mut':8s} {'k':>4s} {'N':>8s} "
-          f"{'Median':>9s} {'Q25':>9s} {'Q75':>9s} {'MWU p':>12s} {'r_rb':>7s}")
+    print(
+        f"\n{'Src':4s} {'Mut':8s} {'k':>4s} {'N':>8s} "
+        f"{'Median':>9s} {'Q25':>9s} {'Q75':>9s} {'MWU p':>12s} {'r_rb':>7s}"
+    )
     print("-" * 75)
     for mut in mutations:
         for k in k_list:
@@ -376,20 +453,30 @@ def main():
             p, r_rb = mwu_pooled(cnn_arr, sae_arr)
             for src, arr in [("CNN", cnn_arr), ("SAE", sae_arr)]:
                 if len(arr) > 0:
-                    print(f"{src:4s} {mut:8s} {k:4d} {len(arr):8d} "
-                          f"{np.median(arr):9.4f} "
-                          f"{np.percentile(arr, 25):9.4f} "
-                          f"{np.percentile(arr, 75):9.4f} "
-                          f"{'':12s} {'':7s}")
+                    print(
+                        f"{src:4s} {mut:8s} {k:4d} {len(arr):8d} "
+                        f"{np.median(arr):9.4f} "
+                        f"{np.percentile(arr, 25):9.4f} "
+                        f"{np.percentile(arr, 75):9.4f} "
+                        f"{'':12s} {'':7s}"
+                    )
             # MWU per (mut, k)
-            p_str  = f"{p:.2e}" if not np.isnan(p) else "N/A"
+            p_str = f"{p:.2e}" if not np.isnan(p) else "N/A"
             rb_str = f"{r_rb:.4f}" if not np.isnan(r_rb) else "N/A"
-            star   = ("***" if (not np.isnan(p) and p < 0.001) else
-                      "**"  if (not np.isnan(p) and p < 0.01)  else
-                      "*"   if (not np.isnan(p) and p < 0.05)  else "n.s.")
-            print(f"{'MWU':4s} {mut:8s} {k:4d} {'':8s} "
-                  f"{'':9s} {'':9s} {'':9s} "
-                  f"{p_str + ' ' + star:>12s} {rb_str:>7s}")
+            star = (
+                "***"
+                if (not np.isnan(p) and p < 0.001)
+                else (
+                    "**"
+                    if (not np.isnan(p) and p < 0.01)
+                    else "*" if (not np.isnan(p) and p < 0.05) else "n.s."
+                )
+            )
+            print(
+                f"{'MWU':4s} {mut:8s} {k:4d} {'':8s} "
+                f"{'':9s} {'':9s} {'':9s} "
+                f"{p_str + ' ' + star:>12s} {rb_str:>7s}"
+            )
             print()
 
     # ── Ridgeline plot ──
@@ -398,14 +485,16 @@ def main():
         exp_label = f"{args.experiment}_log2fc{args.fixed_log2fc}"
 
     plot_ridgeline(
-        pooled_stds, mutations, k_list,
-        output_dir  = out_dir,
-        dpi         = args.dpi,
-        experiment  = exp_label,
-        bw_method   = args.bw_method,
-        x_max_pct   = args.x_max_pct,
-        row_height  = args.row_height,
-        kde_scale   = args.kde_scale,
+        pooled_stds,
+        mutations,
+        k_list,
+        output_dir=out_dir,
+        dpi=args.dpi,
+        experiment=exp_label,
+        bw_method=args.bw_method,
+        x_max_pct=args.x_max_pct,
+        row_height=args.row_height,
+        kde_scale=args.kde_scale,
     )
 
     print(f"\n  Output: {out_dir}")

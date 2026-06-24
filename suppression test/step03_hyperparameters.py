@@ -22,9 +22,9 @@ SCALE_RATIO = IMAGE_SIZE / ORIGINAL_IMAGE_SIZE  # ≈ 0.571
 # 스케일링: 11 * 0.571 ≈ 6
 
 METRIC_PARAMS = {
-    "window_size": 5,    # LV: Local Variance window size (논문 w=11)
-    "freq_radius": 5,    # HFE: High Frequency Energy radius (논문 r=11)
-    "sobel_ksize": 5,    # ESSIM: Sobel kernel size (논문 k=11, OpenCV 제한으로 5 사용)
+    "window_size": 5,  # LV: Local Variance window size (논문 w=11)
+    "freq_radius": 5,  # HFE: High Frequency Energy radius (논문 r=11)
+    "sobel_ksize": 5,  # ESSIM: Sobel kernel size (논문 k=11, OpenCV 제한으로 5 사용)
 }
 
 # ==============================================================================
@@ -73,10 +73,9 @@ GAUSSIAN_PARAMS = {
         {"sigma": 2.33, "k": 7},
         {"sigma": 2.0, "k": 9},
         {"sigma": 2.33, "k": 9},
-
         {"sigma": 1.66, "k": 3},
         {"sigma": 1.66, "k": 5},
-        {"sigma": 1.66, "k": 7},    
+        {"sigma": 1.66, "k": 7},
         {"sigma": 1.66, "k": 9},
     ],
 }
@@ -119,9 +118,10 @@ PATCH_SHUFFLE_PARAMS = {
 # Evaluation Settings
 # ==============================================================================
 EVAL_SETTINGS = {
-    "n_per_class": 500,      # 클래스당 샘플 수
-    "seed": 42,              # 랜덤 시드
+    "n_per_class": 500,  # 클래스당 샘플 수
+    "seed": 42,  # 랜덤 시드
 }
+
 
 # ==============================================================================
 # Quick Access Function
@@ -144,6 +144,7 @@ def get_all_params():
 
 if __name__ == "__main__":
     import json
+
     print("=" * 60)
     print("Hyperparameters for 128x128 Image Evaluation")
     print("=" * 60)

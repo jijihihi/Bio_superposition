@@ -13,29 +13,36 @@
 #   <key>.json ({"class","plate",...})
 # ==============================================================================
 
-import os, re, io, json, math, time, glob, random, argparse, logging, sys, pickle
-from dataclasses import dataclass
-from typing import Dict, List, Tuple, Optional
-from collections import defaultdict, deque
+import argparse
 import csv
+import glob
+import io
+import json
+import logging
+import math
+import os
+import pickle
+import random
+import re
+import sys
+import time
+from collections import defaultdict, deque
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
-
+# tif decoder
+import tifffile
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader, Sampler
+from sklearn.model_selection import train_test_split
+from torch.utils.checkpoint import checkpoint_sequential
+from torch.utils.data import DataLoader, Dataset, Sampler
 from torch.utils.data.dataloader import default_collate
 from torchvision import transforms
 from tqdm.auto import tqdm
-
-# tif decoder
-import tifffile
-
-from sklearn.model_selection import train_test_split
-from torch.utils.checkpoint import checkpoint_sequential
-import json
 
 # ==============================================================================
 # Logging
@@ -54,24 +61,22 @@ logger = logging.getLogger("MoCoXBM_Plate")
 DEFAULT_SHARD_ROOT = "/home/ubuntu/model-east3/wds_shards_tar"
 
 # LINE folders you have
-LINE_FOLDERS = [
-    "Control_C4", "Control_C18", "Control_C19",
-    "SNCA", "GBA", "LRRK2"
-]
+LINE_FOLDERS = ["Control_C4", "Control_C18", "Control_C19", "SNCA", "GBA", "LRRK2"]
 
-#zip 풀때 Control_GBA_C19, Control_SNCA_C19 이거 두개 C19로 묶으면서 풀어야 뒤에 코드 작동한다. 뒤에 코드는 C19를 하나로 받는다.
+# zip 풀때 Control_GBA_C19, Control_SNCA_C19 이거 두개 C19로 묶으면서 풀어야 뒤에 코드 작동한다. 뒤에 코드는 C19를 하나로 받는다.
 # Map line -> superclass (4-class)
 SUPERCLASS_MAP = {
-    "Control_C4":  "Control",
+    "Control_C4": "Control",
     "Control_C18": "Control",
     "Control_C19": "Control",
-    "SNCA":        "SNCA",
-    "GBA":         "GBA",
-    "LRRK2":       "LRRK2",
+    "SNCA": "SNCA",
+    "GBA": "GBA",
+    "LRRK2": "LRRK2",
 }
 CLASS_TO_LABEL = {"Control": 0, "SNCA": 1, "GBA": 2, "LRRK2": 3}
 
 PLATE_DIR_RE = re.compile(r"plate=(\d{6})")
+
 
 # ==============================================================================
 # 1) Reproducibility & speed
@@ -92,10 +97,12 @@ def set_seed(seed: int):
     except Exception:
         pass
 
+
 def seed_worker(worker_id: int):
     worker_seed = torch.initial_seed() % 2**32
     np.random.seed(worker_seed)
     random.seed(worker_seed)
+
 
 def collate_skip_none(batch):
     batch = [b for b in batch if b is not None]
@@ -120,12 +127,14 @@ class SampleRef:
     label: int
     plate: str
 
+
 def _infer_line_and_plate_from_tarpath(tar_path: str) -> Tuple[str, str]:
     parts = tar_path.replace("\\", "/").split("/")
     line = parts[-3]
     m = PLATE_DIR_RE.search(parts[-2])
     plate = m.group(1) if m else "UNKNOWN"
     return line, plate
+
 
 def build_tar_index_if_needed(tar_path: str):
     idx_path = tar_path + ".pkl"
@@ -136,6 +145,7 @@ def build_tar_index_if_needed(tar_path: str):
     items = {}
 
     import tarfile
+
     with tarfile.open(tar_path, "r") as tf:
         for m in tf.getmembers():
             if not m.isreg():
@@ -157,12 +167,17 @@ def build_tar_index_if_needed(tar_path: str):
     pairs = []
     for pref, it in items.items():
         if "tif_off" in it and "js_off" in it:
-            pairs.append((pref, it["tif_off"], it["tif_size"], it["js_off"], it["js_size"]))
+            pairs.append(
+                (pref, it["tif_off"], it["tif_size"], it["js_off"], it["js_size"])
+            )
 
     with open(idx_path, "wb") as f:
         pickle.dump(pairs, f, protocol=pickle.HIGHEST_PROTOCOL)
 
-    logger.info(f"[tar-index] built {len(pairs)} pairs: {os.path.basename(tar_path)} ({time.time()-t0:.1f}s)")
+    logger.info(
+        f"[tar-index] built {len(pairs)} pairs: {os.path.basename(tar_path)} ({time.time()-t0:.1f}s)"
+    )
+
 
 def load_all_sample_refs(shard_root: str) -> List[SampleRef]:
     tar_paths = sorted(glob.glob(os.path.join(shard_root, "*", "plate=*", "*.tar")))
@@ -182,18 +197,20 @@ def load_all_sample_refs(shard_root: str) -> List[SampleRef]:
             pairs = pickle.load(f)
 
         for pref, tif_off, tif_size, js_off, js_size in pairs:
-            refs.append(SampleRef(
-                tar_path=tp,
-                prefix=pref,
-                tif_off=int(tif_off),
-                tif_size=int(tif_size),
-                js_off=int(js_off),
-                js_size=int(js_size),
-                line=line,
-                superclass=superclass,
-                label=label,
-                plate=plate
-            ))
+            refs.append(
+                SampleRef(
+                    tar_path=tp,
+                    prefix=pref,
+                    tif_off=int(tif_off),
+                    tif_size=int(tif_size),
+                    js_off=int(js_off),
+                    js_size=int(js_size),
+                    line=line,
+                    superclass=superclass,
+                    label=label,
+                    plate=plate,
+                )
+            )
 
     logger.info(f"Loaded sample refs: {len(refs)}")
     return refs
@@ -203,7 +220,9 @@ def load_all_sample_refs(shard_root: str) -> List[SampleRef]:
 # 3) Balanced subset selection (line & plate aware)
 # ==============================================================================
 # 배치안에 클래스별로 이미지 분배하기. plate artifiact 보지 않도록 유도.
-def select_balanced_subset(refs: List[SampleRef], max_samples_total: int, seed: int) -> List[int]:
+def select_balanced_subset(
+    refs: List[SampleRef], max_samples_total: int, seed: int
+) -> List[int]:
     """
     목표:
     - 4-class 균등하게 max_samples_total 분배
@@ -217,11 +236,17 @@ def select_balanced_subset(refs: List[SampleRef], max_samples_total: int, seed: 
         by_super[r.superclass].append(i)
 
     per_class = max_samples_total // 4
-    targets = {"Control": per_class, "SNCA": per_class, "GBA": per_class, "LRRK2": per_class}
-    #max_samples_total이 4의 배수가 아닐때 분배하는 코드.
+    targets = {
+        "Control": per_class,
+        "SNCA": per_class,
+        "GBA": per_class,
+        "LRRK2": per_class,
+    }
+    # max_samples_total이 4의 배수가 아닐때 분배하는 코드.
     rem = max_samples_total - per_class * 4
     for k in ["Control", "SNCA", "GBA", "LRRK2"]:
-        if rem <= 0: break
+        if rem <= 0:
+            break
         targets[k] += 1
         rem -= 1
 
@@ -291,6 +316,7 @@ class StrictPlateBalancedBatchSamplerOnBank(Sampler[List[int]]):
     """
     bank/dataset 인덱스(0..N-1)를 반환하는 strict plate-uniform sampler
     """
+
     def __init__(self, bank, batch_size: int, seed: int):
         self.bank = bank
         self.batch_size = int(batch_size)
@@ -308,7 +334,7 @@ class StrictPlateBalancedBatchSamplerOnBank(Sampler[List[int]]):
             self.orig[(sup, line, plate)].append(j)
 
         self.line_plates = defaultdict(list)
-        for (sup, line, plate) in self.orig.keys():
+        for sup, line, plate in self.orig.keys():
             self.line_plates[(sup, line)].append(plate)
         for k in self.line_plates:
             self.line_plates[k] = sorted(set(self.line_plates[k]))
@@ -352,7 +378,8 @@ class StrictPlateBalancedBatchSamplerOnBank(Sampler[List[int]]):
             rem = bs - per * 4
             targets = {"Control": per, "SNCA": per, "GBA": per, "LRRK2": per}
             for k in ["Control", "SNCA", "GBA", "LRRK2"]:
-                if rem <= 0: break
+                if rem <= 0:
+                    break
                 targets[k] += 1
                 rem -= 1
 
@@ -403,8 +430,7 @@ class StrictPlateBalancedBatchSamplerOnBank(Sampler[List[int]]):
             if len(batch) < self.batch_size:
                 break
 
-            yield batch[:self.batch_size]
-
+            yield batch[: self.batch_size]
 
 
 # ==============================================================================
@@ -427,15 +453,18 @@ def validate_uint16_rgb_128(img: np.ndarray, img_size: int):
 class SafeInstanceNormalize:
     def __init__(self, threshold: float = 0.01):
         self.threshold = float(threshold)
+
     def __call__(self, tensor: torch.Tensor) -> torch.Tensor:
-        mean = tensor.mean(dim=[1,2], keepdim=True)
-        std = tensor.std(dim=[1,2], keepdim=True).clamp_min(self.threshold)
+        mean = tensor.mean(dim=[1, 2], keepdim=True)
+        std = tensor.std(dim=[1, 2], keepdim=True).clamp_min(self.threshold)
         return (tensor - mean) / std
+
 
 class InMemoryTarBank:
     """
     shared RAM bank so train_ds and probe_ds reuse same images without re-reading tar
     """
+
     def __init__(self, refs: List[SampleRef], ref_indices: List[int], img_size: int):
         self.refs = refs
         self.ref_indices = ref_indices
@@ -447,9 +476,12 @@ class InMemoryTarBank:
         self.lines: List[str] = [""] * len(ref_indices)
         self.uids: List[str] = [""] * len(ref_indices)
 
-        logger.info(f"⚡ Preloading {len(ref_indices)} images into RAM from tar shards...")
+        logger.info(
+            f"⚡ Preloading {len(ref_indices)} images into RAM from tar shards..."
+        )
 
         tar_to_fh = {}
+
         def read_bytes(tp: str, off: int, size: int) -> bytes:
             fh = tar_to_fh.get(tp, None)
             if fh is None:
@@ -477,32 +509,47 @@ class InMemoryTarBank:
                 self.images[j] = None
 
         for fh in tar_to_fh.values():
-            try: fh.close()
-            except: pass
+            try:
+                fh.close()
+            except:
+                pass
 
-        logger.info(f"Preload done. bad={bad}/{len(ref_indices)} elapsed={(time.time()-t0)/60:.1f} min")
+        logger.info(
+            f"Preload done. bad={bad}/{len(ref_indices)} elapsed={(time.time()-t0)/60:.1f} min"
+        )
+
 
 class InMemorySixteenBitDataset(Dataset):
-    def __init__(self, bank: InMemoryTarBank, indices_in_bank: List[int], img_size: int, two_crops: bool, augment: bool):
+    def __init__(
+        self,
+        bank: InMemoryTarBank,
+        indices_in_bank: List[int],
+        img_size: int,
+        two_crops: bool,
+        augment: bool,
+    ):
         self.bank = bank
         self.ib = indices_in_bank
         self.img_size = int(img_size)
         self.two_crops = bool(two_crops)
         self.augment = bool(augment)
 
-
         #### 이미지에 blur 처리 등 하면 원본 이미지에 차이가 생긴다. -> 질감등이 중요한 정보일 수 있는데 손상 가능성. 따라서 90도만씩 회전시키고. 훼손 없애려고 troch.rot90 사용
         if self.augment:
-            aug = transforms.RandomChoice([
-                transforms.Lambda(lambda x: x),
-                transforms.Lambda(lambda x: torch.rot90(x, 1, [1,2])),
-                transforms.Lambda(lambda x: torch.rot90(x, 2, [1,2])),
-                transforms.Lambda(lambda x: torch.rot90(x, 3, [1,2])),
-            ])
+            aug = transforms.RandomChoice(
+                [
+                    transforms.Lambda(lambda x: x),
+                    transforms.Lambda(lambda x: torch.rot90(x, 1, [1, 2])),
+                    transforms.Lambda(lambda x: torch.rot90(x, 2, [1, 2])),
+                    transforms.Lambda(lambda x: torch.rot90(x, 3, [1, 2])),
+                ]
+            )
         else:
             aug = transforms.Lambda(lambda x: x)
 
-        self.transform = transforms.Compose([aug, SafeInstanceNormalize(threshold=0.01)])
+        self.transform = transforms.Compose(
+            [aug, SafeInstanceNormalize(threshold=0.01)]
+        )
 
     def __len__(self):
         return len(self.ib)
@@ -518,8 +565,8 @@ class InMemorySixteenBitDataset(Dataset):
         line = self.bank.lines[j]
         uid = self.bank.uids[j]
         ## 16 비트이기때문에 65535로 나눠서 넣어줘서 학습 안정성 확보. normalize to [0, 1].
-        x = (img.astype(np.float32) / 65535.0)
-        x = torch.from_numpy(x).permute(2,0,1)
+        x = img.astype(np.float32) / 65535.0
+        x = torch.from_numpy(x).permute(2, 0, 1)
 
         # 이미지 두개 augmentation 해서 같은 배치에 넣어줌
         if self.two_crops:
@@ -529,21 +576,35 @@ class InMemorySixteenBitDataset(Dataset):
         else:
             x = self.transform(x)
             return x, y, plate, line, uid
+
+
 ##### ===================================
 # train valid test split csv 저장
 ##### ===================================
 
-def save_split_csv(uids: List[str], labels: List[int], refs_by_uid: Dict[str, SampleRef], save_dir: str, filename: str):
+
+def save_split_csv(
+    uids: List[str],
+    labels: List[int],
+    refs_by_uid: Dict[str, SampleRef],
+    save_dir: str,
+    filename: str,
+):
     os.makedirs(save_dir, exist_ok=True)
     path = os.path.join(save_dir, filename)
     with open(path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         # 원하는 컬럼들 (필요하면 더 추가 가능)
-        w.writerow(["uid", "label", "superclass", "line", "plate", "tar_path", "prefix"])
+        w.writerow(
+            ["uid", "label", "superclass", "line", "plate", "tar_path", "prefix"]
+        )
         for uid, lb in zip(uids, labels):
             r = refs_by_uid[uid]
-            w.writerow([uid, int(lb), r.superclass, r.line, r.plate, r.tar_path, r.prefix])
+            w.writerow(
+                [uid, int(lb), r.superclass, r.line, r.plate, r.tar_path, r.prefix]
+            )
     logger.info(f"Saved split CSV -> {path}")
+
 
 def load_split_csv(csv_path: str) -> List[str]:
     df = np.genfromtxt(csv_path, delimiter=",", dtype=str, skip_header=1)
@@ -551,6 +612,7 @@ def load_split_csv(csv_path: str) -> List[str]:
         # single row
         return [df[0]]
     return df[:, 0].tolist()  # uid column
+
 
 # ==============================================================================
 # 6) Model (your encoder)
@@ -562,6 +624,7 @@ def parse_int_list(s: str, n: int) -> Tuple[int, ...]:
         raise ValueError(f"Expected {n} ints, got {len(vals)} from '{s}'")
     return tuple(vals)
 
+
 # 매 epoch마다 각 가중치들 총합 1로 만드는 정규화해서 GAP값이 우연한 가중치 할당에 의해서 튀지 않도록 조정했다. 나중에 GAP_i = f_i(amount, state) 라는 것의 함수의 신뢰성
 @torch.no_grad()
 def renorm_unit_per_out_channel_(model: nn.Module, eps: float = 1e-12):
@@ -569,27 +632,42 @@ def renorm_unit_per_out_channel_(model: nn.Module, eps: float = 1e-12):
         if isinstance(m, nn.Conv2d):
             w = m.weight.data
             n = w.flatten(1).norm(dim=1, keepdim=True).clamp_min(eps)
-            w.div_(n.view(-1,1,1,1))
+            w.div_(n.view(-1, 1, 1, 1))
         elif isinstance(m, nn.Linear):
             w = m.weight.data
             n = w.norm(dim=1, keepdim=True).clamp_min(eps)
             w.div_(n)
 
+
 OUT_DIM = 512
 
+
 def conv2d(in_ch, out_ch, k=3, stride=1, padding=1, dilation=1, bias=True):
-    return nn.Conv2d(in_ch, out_ch, kernel_size=k, stride=stride, padding=padding, dilation=dilation, bias=bias)
+    return nn.Conv2d(
+        in_ch,
+        out_ch,
+        kernel_size=k,
+        stride=stride,
+        padding=padding,
+        dilation=dilation,
+        bias=bias,
+    )
+
 
 class ResBlock(nn.Module):
     def __init__(self, in_ch, out_ch, dilation=1):
         super().__init__()
-        self.c1 = conv2d(in_ch, out_ch, 3, 1, padding=dilation, dilation=dilation, bias=True)
-        self.c2 = conv2d(out_ch, out_ch, 3, 1, padding=dilation, dilation=dilation, bias=True)
+        self.c1 = conv2d(
+            in_ch, out_ch, 3, 1, padding=dilation, dilation=dilation, bias=True
+        )
+        self.c2 = conv2d(
+            out_ch, out_ch, 3, 1, padding=dilation, dilation=dilation, bias=True
+        )
         self.proj = None
         if in_ch != out_ch:
             self.proj = conv2d(in_ch, out_ch, 1, 1, padding=0, bias=False)
 
-    #skip connection
+    # skip connection
     def forward(self, x):
         identity = x
         x = F.relu(x, inplace=True)
@@ -600,9 +678,12 @@ class ResBlock(nn.Module):
             identity = self.proj(identity)
         return x + identity
 
-#chpt로 VRAM 확보.
+
+# chpt로 VRAM 확보.
 class Stage(nn.Module):
-    def __init__(self, in_ch, out_ch, n_blocks, dilation, use_ckpt: bool, ckpt_segments: int):
+    def __init__(
+        self, in_ch, out_ch, n_blocks, dilation, use_ckpt: bool, ckpt_segments: int
+    ):
         super().__init__()
         self.use_ckpt = bool(use_ckpt)
         self.ckpt_segments = int(ckpt_segments)
@@ -612,34 +693,68 @@ class Stage(nn.Module):
         self.blocks = nn.Sequential(*blocks)
 
     def forward(self, x):
-        if self.use_ckpt and self.training and self.ckpt_segments > 1 and len(self.blocks) > 1:
+        if (
+            self.use_ckpt
+            and self.training
+            and self.ckpt_segments > 1
+            and len(self.blocks) > 1
+        ):
             seg = min(self.ckpt_segments, len(self.blocks))
             return checkpoint_sequential(self.blocks, seg, x, use_reentrant=False)
         return self.blocks(x)
 
-class Encoder(nn.Module):
-    def __init__(self, blocks=(2,2,4,4), dilations=(1,1,1,1), refine_blocks=1, ckpt_segments=2):
-        super().__init__()
-        b2,b3,b4,b5 = blocks
-        d2,d3,d4,d5 = dilations
 
-        self.stem = nn.Sequential(conv2d(3, 64, k=3, stride=2, padding=1, bias=True))  # 128->64
+class Encoder(nn.Module):
+    def __init__(
+        self,
+        blocks=(2, 2, 4, 4),
+        dilations=(1, 1, 1, 1),
+        refine_blocks=1,
+        ckpt_segments=2,
+    ):
+        super().__init__()
+        b2, b3, b4, b5 = blocks
+        d2, d3, d4, d5 = dilations
+
+        self.stem = nn.Sequential(
+            conv2d(3, 64, k=3, stride=2, padding=1, bias=True)
+        )  # 128->64
         self.stage2 = Stage(64, 128, b2, d2, use_ckpt=False, ckpt_segments=1)
         self.stage3 = Stage(128, 256, b3, d3, use_ckpt=False, ckpt_segments=1)
-        self.stage4 = Stage(256, 512, b4, d4, use_ckpt=True, ckpt_segments=ckpt_segments)
-        self.stage5 = Stage(512, OUT_DIM, b5, d5, use_ckpt=True, ckpt_segments=ckpt_segments)
-        self.refine = Stage(OUT_DIM, OUT_DIM, int(refine_blocks), 1, use_ckpt=True, ckpt_segments=ckpt_segments)
+        self.stage4 = Stage(
+            256, 512, b4, d4, use_ckpt=True, ckpt_segments=ckpt_segments
+        )
+        self.stage5 = Stage(
+            512, OUT_DIM, b5, d5, use_ckpt=True, ckpt_segments=ckpt_segments
+        )
+        self.refine = Stage(
+            OUT_DIM,
+            OUT_DIM,
+            int(refine_blocks),
+            1,
+            use_ckpt=True,
+            ckpt_segments=ckpt_segments,
+        )
 
-        self.trunk = nn.Sequential(self.stem, self.stage2, self.stage3, self.stage4, self.stage5, self.refine)
-        self.gap = nn.AdaptiveAvgPool2d((1,1))
+        self.trunk = nn.Sequential(
+            self.stem, self.stage2, self.stage3, self.stage4, self.stage5, self.refine
+        )
+        self.gap = nn.AdaptiveAvgPool2d((1, 1))
 
     def forward(self, x):
         x = self.trunk(x)
         x = self.gap(x).flatten(1)
         return x
 
-def build_projector(in_dim: int, embed_dim: int, proj_layers: int, proj_hidden: int,
-                    use_bn: bool, dropout: float) -> nn.Module:
+
+def build_projector(
+    in_dim: int,
+    embed_dim: int,
+    proj_layers: int,
+    proj_hidden: int,
+    use_bn: bool,
+    dropout: float,
+) -> nn.Module:
     """
     Projector MLP for contrastive learning.
     - bias=False 유지 (너 설계 유지)
@@ -686,12 +801,13 @@ def build_projector(in_dim: int, embed_dim: int, proj_layers: int, proj_hidden: 
 
     raise ValueError(f"Unsupported proj_layers={proj_layers}")
 
+
 class SupConMoCoModel(nn.Module):
     def __init__(
         self,
         embed_dim=512,
-        blocks=(2,2,4,4),
-        dilations=(1,1,1,1),
+        blocks=(2, 2, 4, 4),
+        dilations=(1, 1, 1, 1),
         refine_blocks=1,
         ckpt_segments=2,
         proj_layers: int = 2,
@@ -704,7 +820,7 @@ class SupConMoCoModel(nn.Module):
             blocks=blocks,
             dilations=dilations,
             refine_blocks=refine_blocks,
-            ckpt_segments=ckpt_segments
+            ckpt_segments=ckpt_segments,
         )
 
         self.projector = build_projector(
@@ -717,11 +833,11 @@ class SupConMoCoModel(nn.Module):
         )
 
     def forward(self, x, return_gap_for_cov: bool = False):
-        pooled = self.encoder(x)                 # (B, OUT_DIM)
-        pooled_norm = F.normalize(pooled, dim=1) # amount normalization
-        z = self.projector(pooled_norm)          # (B, embed_dim)
-        z_norm = F.normalize(z, dim=1)           # contrastive normalize
-        
+        pooled = self.encoder(x)  # (B, OUT_DIM)
+        pooled_norm = F.normalize(pooled, dim=1)  # amount normalization
+        z = self.projector(pooled_norm)  # (B, embed_dim)
+        z_norm = F.normalize(z, dim=1)  # contrastive normalize
+
         if return_gap_for_cov:
             # Return both: projector output for SupCon, GAP L2-norm for covariance loss
             return z_norm, pooled_norm
@@ -736,8 +852,11 @@ def momentum_update_(model_q: nn.Module, model_k: nn.Module, m: float):
     for p_q, p_k in zip(model_q.parameters(), model_k.parameters()):
         p_k.data.mul_(m).add_(p_q.data, alpha=(1.0 - m))
 
+
 class SupervisedXBM:
-    def __init__(self, dim: int, capacity: int, device: torch.device, dtype=torch.float16):
+    def __init__(
+        self, dim: int, capacity: int, device: torch.device, dtype=torch.float16
+    ):
         self.dim = int(dim)
         self.capacity = int(capacity)
         self.device = device
@@ -747,7 +866,9 @@ class SupervisedXBM:
     def reset(self):
         self.ptr = 0
         self.full = False
-        self.feats = torch.zeros(self.capacity, self.dim, device=self.device, dtype=self.dtype)
+        self.feats = torch.zeros(
+            self.capacity, self.dim, device=self.device, dtype=self.dtype
+        )
         self.labels = torch.zeros(self.capacity, device=self.device, dtype=torch.long)
 
     @torch.no_grad()
@@ -758,19 +879,19 @@ class SupervisedXBM:
         if b <= 0:
             return
         if b > self.capacity:
-            feats = feats[-self.capacity:]
-            labels = labels[-self.capacity:]
+            feats = feats[-self.capacity :]
+            labels = labels[-self.capacity :]
             b = self.capacity
 
         end = self.ptr + b
         if end <= self.capacity:
-            self.feats[self.ptr:end].copy_(feats.to(self.dtype))
-            self.labels[self.ptr:end].copy_(labels)
+            self.feats[self.ptr : end].copy_(feats.to(self.dtype))
+            self.labels[self.ptr : end].copy_(labels)
         else:
             first = self.capacity - self.ptr
             second = end - self.capacity
-            self.feats[self.ptr:].copy_(feats[:first].to(self.dtype))
-            self.labels[self.ptr:].copy_(labels[:first])
+            self.feats[self.ptr :].copy_(feats[:first].to(self.dtype))
+            self.labels[self.ptr :].copy_(labels[:first])
             self.feats[:second].copy_(feats[first:].to(self.dtype))
             self.labels[:second].copy_(labels[first:])
 
@@ -782,16 +903,23 @@ class SupervisedXBM:
         if self.full:
             return self.feats, self.labels
         else:
-            return self.feats[:self.ptr], self.labels[:self.ptr]
+            return self.feats[: self.ptr], self.labels[: self.ptr]
 
-def supervised_contrastive_q_vs_k(q: torch.Tensor, y_q: torch.Tensor, k: torch.Tensor, y_k: torch.Tensor, temperature: float) -> torch.Tensor:
+
+def supervised_contrastive_q_vs_k(
+    q: torch.Tensor,
+    y_q: torch.Tensor,
+    k: torch.Tensor,
+    y_k: torch.Tensor,
+    temperature: float,
+) -> torch.Tensor:
     q = q.float()
     k = k.float()
     logits = (q @ k.t()) / float(temperature)
     logits = logits - logits.max(dim=1, keepdim=True).values
 
     with torch.no_grad():
-        pos = (y_q.view(-1,1) == y_k.view(1,-1))
+        pos = y_q.view(-1, 1) == y_k.view(1, -1)
         pos_cnt = pos.sum(dim=1).clamp_min(1)
 
     exp = torch.exp(logits)
@@ -817,40 +945,40 @@ def covariance_loss(z: torch.Tensor) -> torch.Tensor:
     # 하지만 나중에 꺼내 쓸 때 "내적(Linear Probe)"으로 꺼내 써야 하니까, 모델은 겹치더라도 "선형적으로 간섭(Interference)하는 방식"으로 특징을 중첩시킨 것이 아닐까
     # toy models of superposition의 linear representation 이 잘 적용되도록 강제된 것 같다.
     # 이런 선형적 관계 속에서 SAE가 잘 작동할까?
-    # 목표는 cnn이 본질적 이해를 해서 seed와 상관없이 CKA가 높고 SAE가 깔끔하게 되고 인간의 해석 가능성이 급증하면서 성능도 올라가는 것이다. 
-    
-    
+    # 목표는 cnn이 본질적 이해를 해서 seed와 상관없이 CKA가 높고 SAE가 깔끔하게 되고 인간의 해석 가능성이 급증하면서 성능도 올라가는 것이다.
+
     """
     Pearson correlation-based decorrelation loss.
     Uses z-score normalization to compute correlation matrix (scale-invariant).
     Off-diagonal elements of correlation matrix are penalized.
-    
+
     Args:
         z: Feature vectors (B, D) - can be raw or L2-normalized
-    
+
     Returns:
         Scalar correlation loss (bounded, meaningful in high dimensions)
     """
     B, D = z.shape
     if B < 2:
         return torch.tensor(0.0, device=z.device, dtype=z.dtype)
-    
+
     # Z-score normalization per feature (= Pearson correlation computation)
     mean = z.mean(dim=0, keepdim=True)
     std = z.std(dim=0, keepdim=True).clamp(min=1e-6)  # prevent division by zero
     z_norm = (z - mean) / std
-    
+
     # Correlation matrix (= covariance of z-scored data)
     corr_matrix = (z_norm.T @ z_norm) / (B - 1)
-    
+
     # Off-diagonal penalty (correlation coefficients are in [-1, 1])
     identity = torch.eye(D, device=z.device, dtype=z.dtype)
     off_diag = ((corr_matrix * (1 - identity)) ** 2).sum()
-    
+
     # Normalize by number of features
     return off_diag / D
 
-#==========================================
+
+# ==========================================
 # save chkpt
 # ============================================
 def _get_rng_state():
@@ -863,6 +991,7 @@ def _get_rng_state():
         st["cuda"] = torch.cuda.get_rng_state_all()
     return st
 
+
 def _set_rng_state(st: dict):
     try:
         random.setstate(st["python"])
@@ -873,19 +1002,28 @@ def _set_rng_state(st: dict):
     except Exception as e:
         logger.info(f"[resume] RNG restore skipped: {e}")
 
-def save_ckpt(path, epoch, global_step, model_q, model_k, opt, scaler, xbm,
-              best_acc, patience_counter, args):
+
+def save_ckpt(
+    path,
+    epoch,
+    global_step,
+    model_q,
+    model_k,
+    opt,
+    scaler,
+    xbm,
+    best_acc,
+    patience_counter,
+    args,
+):
     ckpt = {
         "epoch": int(epoch),
         "global_step": int(global_step),
-
         "model_q": model_q.state_dict(),
         "model_k": model_k.state_dict(),
         "opt": opt.state_dict(),
-
         # scaler는 enabled=False여도 state_dict() 가능
         "scaler": (scaler.state_dict() if scaler is not None else None),
-
         # XBM 저장 (CPU로 내림)
         "xbm": {
             "feats": xbm.feats.detach().cpu(),
@@ -893,17 +1031,15 @@ def save_ckpt(path, epoch, global_step, model_q, model_k, opt, scaler, xbm,
             "ptr": int(xbm.ptr),
             "full": bool(xbm.full),
         },
-
         "best_acc": float(best_acc),
         "patience_counter": int(patience_counter),
-
         # 실험 설정 기록
         "args": vars(args),
-
         # 재현성용(선택이지만 끊김 재개에 매우 도움)
         "rng": _get_rng_state(),
     }
     torch.save(ckpt, path)
+
 
 def load_ckpt(path, model_q, model_k, opt, scaler, xbm, device, strict=False):
     # PyTorch 2.6+: weights_only=False 필요 (numpy RNG state 등 포함)
@@ -938,11 +1074,9 @@ def load_ckpt(path, model_q, model_k, opt, scaler, xbm, device, strict=False):
     for state in opt.state.values():
         for k, v in state.items():
             if torch.is_tensor(v):
-               state[k] = v.to(device)
+                state[k] = v.to(device)
 
     return epoch, global_step, best_acc, patience_counter
-
-
 
 
 # ==============================================================================
@@ -963,12 +1097,20 @@ def bake_unitnorm_encoder(model_q: SupConMoCoModel, args, device):
     renorm_unit_per_out_channel_(baked)
     return baked
 
-def linear_probe_val_acc(args, device, baked_encoder: nn.Module, train_lp_loader, val_lp_loader) -> float:
+
+def linear_probe_val_acc(
+    args, device, baked_encoder: nn.Module, train_lp_loader, val_lp_loader
+) -> float:
     probe = nn.Linear(OUT_DIM, args.num_classes, bias=False).to(device)
-    #linear probe loss function
+    # linear probe loss function
     ce = nn.CrossEntropyLoss()
-    #linear probe optimizer SGD
-    opt = optim.SGD(probe.parameters(), lr=args.lp_lr, momentum=args.lp_momentum, weight_decay=args.lp_wd)
+    # linear probe optimizer SGD
+    opt = optim.SGD(
+        probe.parameters(),
+        lr=args.lp_lr,
+        momentum=args.lp_momentum,
+        weight_decay=args.lp_wd,
+    )
 
     enc_bs = int(args.lp_enc_bs)
     use_bf16 = bool(args.use_bf16) and (device.type == "cuda")
@@ -981,7 +1123,9 @@ def linear_probe_val_acc(args, device, baked_encoder: nn.Module, train_lp_loader
     # Train probe (lp_epochs)
     probe.train()
     for ep in range(1, args.lp_epochs + 1):
-        pbar = tqdm(train_lp_loader, desc=f"LP Train ep{ep}/{args.lp_epochs}", leave=False)
+        pbar = tqdm(
+            train_lp_loader, desc=f"LP Train ep{ep}/{args.lp_epochs}", leave=False
+        )
         for batch in pbar:
             if batch is None:
                 continue
@@ -990,8 +1134,12 @@ def linear_probe_val_acc(args, device, baked_encoder: nn.Module, train_lp_loader
                 continue
 
             for i in range(0, x_cpu.size(0), enc_bs):
-                xb = x_cpu[i:i+enc_bs].to(device, non_blocking=True).contiguous(memory_format=torch.channels_last)
-                yb = y_cpu[i:i+enc_bs].to(device, non_blocking=True)
+                xb = (
+                    x_cpu[i : i + enc_bs]
+                    .to(device, non_blocking=True)
+                    .contiguous(memory_format=torch.channels_last)
+                )
+                yb = y_cpu[i : i + enc_bs].to(device, non_blocking=True)
 
                 # Encoder forward (no gradient for encoder, but keep tensor for probe)
                 with torch.no_grad():
@@ -1022,8 +1170,12 @@ def linear_probe_val_acc(args, device, baked_encoder: nn.Module, train_lp_loader
                 continue
 
             for i in range(0, x_cpu.size(0), enc_bs):
-                xb = x_cpu[i:i+enc_bs].to(device, non_blocking=True).contiguous(memory_format=torch.channels_last)
-                yb = y_cpu[i:i+enc_bs].to(device, non_blocking=True)
+                xb = (
+                    x_cpu[i : i + enc_bs]
+                    .to(device, non_blocking=True)
+                    .contiguous(memory_format=torch.channels_last)
+                )
+                yb = y_cpu[i : i + enc_bs].to(device, non_blocking=True)
 
                 with torch.amp.autocast(**autocast_kwargs):
                     feat = baked_encoder(xb)
@@ -1041,7 +1193,9 @@ def linear_probe_val_acc(args, device, baked_encoder: nn.Module, train_lp_loader
 # ==============================================================================
 # 9) Warmup + Cosine scheduler helper
 # ==============================================================================
-def lr_at_step(global_step: int, base_lr: float, min_lr: float, warmup_steps: int, total_steps: int) -> float:
+def lr_at_step(
+    global_step: int, base_lr: float, min_lr: float, warmup_steps: int, total_steps: int
+) -> float:
     if global_step < warmup_steps:
         return base_lr * (global_step + 1) / warmup_steps
     t = (global_step - warmup_steps) / max(1, (total_steps - warmup_steps))
@@ -1053,7 +1207,17 @@ def lr_at_step(global_step: int, base_lr: float, min_lr: float, warmup_steps: in
 # 10) Trainer
 # ==============================================================================
 class Trainer:
-    def __init__(self, args, model_q, model_k, xbm, train_loader, val_loader, train_lp_loader, val_lp_loader):
+    def __init__(
+        self,
+        args,
+        model_q,
+        model_k,
+        xbm,
+        train_loader,
+        val_loader,
+        train_lp_loader,
+        val_lp_loader,
+    ):
         self.args = args
         self.model_q = model_q
         self.model_k = model_k
@@ -1071,14 +1235,18 @@ class Trainer:
         for p in self.model_k.parameters():
             p.requires_grad = False
 
-        self.opt = optim.AdamW(self.model_q.parameters(), lr=args.lr, weight_decay=args.wd)
+        self.opt = optim.AdamW(
+            self.model_q.parameters(), lr=args.lr, weight_decay=args.wd
+        )
 
         self.steps_per_epoch = max(1, len(self.train_loader))
         self.total_steps = max(1, args.epochs * self.steps_per_epoch)
         self.warmup_steps = max(1, args.warmup_epochs * self.steps_per_epoch)
 
         self.use_bf16 = bool(args.use_bf16) and (self.device.type == "cuda")
-        self.scaler = torch.amp.GradScaler("cuda", enabled=(torch.cuda.is_available() and not self.use_bf16))
+        self.scaler = torch.amp.GradScaler(
+            "cuda", enabled=(torch.cuda.is_available() and not self.use_bf16)
+        )
 
         os.makedirs(args.save_dir, exist_ok=True)
         self.best_path = os.path.join(args.save_dir, "best_model.pt")
@@ -1098,7 +1266,9 @@ class Trainer:
 
         # ---- Auto resume or explicit resume ----
         resume_path = ""
-        if getattr(args, "auto_resume", False) and os.path.exists(self.resume_ckpt_path):
+        if getattr(args, "auto_resume", False) and os.path.exists(
+            self.resume_ckpt_path
+        ):
             resume_path = self.resume_ckpt_path
         elif getattr(args, "resume_path", ""):
             resume_path = args.resume_path
@@ -1107,20 +1277,23 @@ class Trainer:
             logger.info(f"[resume] Loading checkpoint: {resume_path}")
             ep, gs, best_acc, pat = load_ckpt(
                 resume_path,
-                self.model_q, self.model_k,
-                self.opt, self.scaler,
-                self.xbm, self.device,
-                strict=bool(getattr(args, "resume_strict", False))
+                self.model_q,
+                self.model_k,
+                self.opt,
+                self.scaler,
+                self.xbm,
+                self.device,
+                strict=bool(getattr(args, "resume_strict", False)),
             )
             # 저장된 epoch = "마지막으로 끝낸 epoch"
             self.start_epoch = ep + 1
             self.global_step = gs
             self.best_acc = best_acc
             self.patience_counter = pat
-            logger.info(f"[resume] start_epoch={self.start_epoch}, global_step={self.global_step}, "
-                        f"best_acc={self.best_acc*100:.2f}%, patience={self.patience_counter}")
-
-
+            logger.info(
+                f"[resume] start_epoch={self.start_epoch}, global_step={self.global_step}, "
+                f"best_acc={self.best_acc*100:.2f}%, patience={self.patience_counter}"
+            )
 
     @torch.no_grad()
     def _maybe_xbm_reset(self, epoch: int):
@@ -1134,7 +1307,7 @@ class Trainer:
 
         self._maybe_xbm_reset(epoch)
         fill_xbm = epoch >= int(self.args.xbm_start_fill_epoch)
-        use_xbm  = epoch >= int(self.args.xbm_start_use_epoch)
+        use_xbm = epoch >= int(self.args.xbm_start_use_epoch)
 
         total_loss = 0.0
         steps = 0
@@ -1143,7 +1316,9 @@ class Trainer:
         if self.use_bf16:
             autocast_kwargs["dtype"] = torch.bfloat16
 
-        pbar = tqdm(self.train_loader, desc=f"Train E{epoch}/{self.args.epochs}", leave=True)
+        pbar = tqdm(
+            self.train_loader, desc=f"Train E{epoch}/{self.args.epochs}", leave=True
+        )
         for batch in pbar:
             if batch is None:
                 continue
@@ -1152,17 +1327,29 @@ class Trainer:
             if y.numel() < 2:
                 continue
 
-            v1 = v1.to(self.device, non_blocking=True).contiguous(memory_format=torch.channels_last)
-            v2 = v2.to(self.device, non_blocking=True).contiguous(memory_format=torch.channels_last)
-            y  = y.to(self.device, non_blocking=True)
+            v1 = v1.to(self.device, non_blocking=True).contiguous(
+                memory_format=torch.channels_last
+            )
+            v2 = v2.to(self.device, non_blocking=True).contiguous(
+                memory_format=torch.channels_last
+            )
+            y = y.to(self.device, non_blocking=True)
 
             # momentum update (only if MoCo enabled)
             if self.args.use_moco:
                 with torch.no_grad():
-                    momentum_update_(self.model_q, self.model_k, float(self.args.moco_m))
+                    momentum_update_(
+                        self.model_q, self.model_k, float(self.args.moco_m)
+                    )
 
             # ✅ self.global_step 기반 스케줄
-            lr = lr_at_step(self.global_step, self.args.lr, self.args.min_lr, self.warmup_steps, self.total_steps)
+            lr = lr_at_step(
+                self.global_step,
+                self.args.lr,
+                self.args.min_lr,
+                self.warmup_steps,
+                self.total_steps,
+            )
             for pg in self.opt.param_groups:
                 pg["lr"] = lr
 
@@ -1171,7 +1358,7 @@ class Trainer:
             with torch.amp.autocast(**autocast_kwargs):
                 # Get projector output AND GAP L2-norm for covariance loss
                 q, gap_v1 = self.model_q(v1, return_gap_for_cov=True)
-                
+
                 # k: MoCo uses momentum encoder, otherwise use same as q
                 if self.args.use_moco:
                     with torch.no_grad():
@@ -1195,14 +1382,16 @@ class Trainer:
                 K = torch.cat(k_list, dim=0)
                 YK = torch.cat(y_list, dim=0)
 
-                loss_supcon = supervised_contrastive_q_vs_k(q, y, K, YK, temperature=float(self.args.temp))
+                loss_supcon = supervised_contrastive_q_vs_k(
+                    q, y, K, YK, temperature=float(self.args.temp)
+                )
 
                 # Covariance loss on actual batch GAP vectors only (not XBM)
                 loss_cov = covariance_loss(gap_v1)
 
                 if self.args.symmetric_loss:
                     q2, gap_v2 = self.model_q(v2, return_gap_for_cov=True)
-                    
+
                     if self.args.use_moco:
                         with torch.no_grad():
                             k2 = self.model_k(v1)
@@ -1222,7 +1411,11 @@ class Trainer:
                             y_list2.append(ybm)
 
                     loss2 = supervised_contrastive_q_vs_k(
-                        q2, y, torch.cat(k_list2,0), torch.cat(y_list2,0), float(self.args.temp)
+                        q2,
+                        y,
+                        torch.cat(k_list2, 0),
+                        torch.cat(y_list2, 0),
+                        float(self.args.temp),
                     )
                     loss_supcon = 0.5 * (loss_supcon + loss2)
                     # Average covariance loss from both views
@@ -1237,13 +1430,17 @@ class Trainer:
             if self.use_bf16:
                 loss.backward()
                 if self.args.grad_clip > 0:
-                    torch.nn.utils.clip_grad_norm_(self.model_q.parameters(), float(self.args.grad_clip))
+                    torch.nn.utils.clip_grad_norm_(
+                        self.model_q.parameters(), float(self.args.grad_clip)
+                    )
                 self.opt.step()
             else:
                 self.scaler.scale(loss).backward()
                 if self.args.grad_clip > 0:
                     self.scaler.unscale_(self.opt)
-                    torch.nn.utils.clip_grad_norm_(self.model_q.parameters(), float(self.args.grad_clip))
+                    torch.nn.utils.clip_grad_norm_(
+                        self.model_q.parameters(), float(self.args.grad_clip)
+                    )
                 self.scaler.step(self.opt)
                 self.scaler.update()
 
@@ -1263,14 +1460,25 @@ class Trainer:
             self.global_step += 1
 
             if self.args.use_cov_loss:
-                pbar.set_postfix({"lr": f"{lr:.2e}", "loss": f"{cur:.4f}", "cov": f"{cur_cov:.4f}", "xbm": int(use_xbm)})
+                pbar.set_postfix(
+                    {
+                        "lr": f"{lr:.2e}",
+                        "loss": f"{cur:.4f}",
+                        "cov": f"{cur_cov:.4f}",
+                        "xbm": int(use_xbm),
+                    }
+                )
             else:
-                pbar.set_postfix({"lr": f"{lr:.2e}", "loss": f"{cur:.4f}", "xbm": int(use_xbm)})
+                pbar.set_postfix(
+                    {"lr": f"{lr:.2e}", "loss": f"{cur:.4f}", "xbm": int(use_xbm)}
+                )
 
         return 0.0 if steps == 0 else total_loss / steps
 
     def run(self):
-        logger.info(f"Device: {self.device}, bf16={self.use_bf16}, TF32={torch.backends.cuda.matmul.allow_tf32}")
+        logger.info(
+            f"Device: {self.device}, bf16={self.use_bf16}, TF32={torch.backends.cuda.matmul.allow_tf32}"
+        )
 
         for epoch in range(self.start_epoch, self.args.epochs + 1):
             tqdm.write(f"\n===== Epoch {epoch}/{self.args.epochs} =====")
@@ -1278,17 +1486,31 @@ class Trainer:
             train_loss = self.train_epoch(epoch)
 
             # --- Linear probe early-stopping metric (every lp_eval_interval epochs) ---
-            is_eval_epoch = (epoch % int(self.args.lp_eval_interval) == 0) or (epoch == self.args.epochs)
-            
+            is_eval_epoch = (epoch % int(self.args.lp_eval_interval) == 0) or (
+                epoch == self.args.epochs
+            )
+
             if is_eval_epoch:
-                baked_encoder = bake_unitnorm_encoder(self.model_q, self.args, self.device)
-                val_acc = linear_probe_val_acc(self.args, self.device, baked_encoder, self.train_lp_loader, self.val_lp_loader)
+                baked_encoder = bake_unitnorm_encoder(
+                    self.model_q, self.args, self.device
+                )
+                val_acc = linear_probe_val_acc(
+                    self.args,
+                    self.device,
+                    baked_encoder,
+                    self.train_lp_loader,
+                    self.val_lp_loader,
+                )
                 del baked_encoder
                 torch.cuda.empty_cache()
-                tqdm.write(f"Epoch {epoch:03d} | TrainLoss: {train_loss:.4f} | LP ValAcc: {val_acc*100:.2f}%")
+                tqdm.write(
+                    f"Epoch {epoch:03d} | TrainLoss: {train_loss:.4f} | LP ValAcc: {val_acc*100:.2f}%"
+                )
             else:
                 val_acc = self.best_acc  # keep previous best for non-eval epochs
-                tqdm.write(f"Epoch {epoch:03d} | TrainLoss: {train_loss:.4f} | (LP skip)")
+                tqdm.write(
+                    f"Epoch {epoch:03d} | TrainLoss: {train_loss:.4f} | (LP skip)"
+                )
 
             # ✅ last weights (기존 유지)
             torch.save(self.model_q.state_dict(), self.last_path)
@@ -1305,7 +1527,7 @@ class Trainer:
                 xbm=self.xbm,
                 best_acc=self.best_acc,
                 patience_counter=self.patience_counter,
-                args=self.args
+                args=self.args,
             )
 
             # early stopping based on LP accuracy (only on eval epochs)
@@ -1313,10 +1535,14 @@ class Trainer:
                 self.best_acc = val_acc
                 self.patience_counter = 0
                 torch.save(self.model_q.state_dict(), self.best_path)
-                tqdm.write(f"  -> Saved Best (LP ValAcc={val_acc*100:.2f}%) to {self.best_path}")
+                tqdm.write(
+                    f"  -> Saved Best (LP ValAcc={val_acc*100:.2f}%) to {self.best_path}"
+                )
             elif is_eval_epoch:
                 self.patience_counter += 1
-                tqdm.write(f"  -> No improve (best={self.best_acc*100:.2f}%) [{self.patience_counter}/{self.args.patience}]")
+                tqdm.write(
+                    f"  -> No improve (best={self.best_acc*100:.2f}%) [{self.patience_counter}/{self.args.patience}]"
+                )
                 if self.patience_counter >= self.args.patience:
                     tqdm.write("Early Stopping Triggered")
                     break
@@ -1330,12 +1556,16 @@ def get_args():
 
     # Experiment
     p.add_argument("--seed", type=int, default=45)
-    p.add_argument("--save_dir", type=str, default="/home/ubuntu/model-east3/outputs/Model_MoCoXBM_no_cov_loss_no_moco_seed45")
+    p.add_argument(
+        "--save_dir",
+        type=str,
+        default="/home/ubuntu/model-east3/outputs/Model_MoCoXBM_no_cov_loss_no_moco_seed45",
+    )
     p.add_argument("--shard_root", type=str, default=DEFAULT_SHARD_ROOT)
 
     # Data
     p.add_argument("--max_samples", type=int, default=108000)
-    p.add_argument("--test_ratio", type=float, default=1/3)
+    p.add_argument("--test_ratio", type=float, default=1 / 3)
     p.add_argument("--val_ratio", type=float, default=0.25)
     p.add_argument("--img_size", type=int, default=128)
     p.add_argument("--batch_size", type=int, default=256)
@@ -1359,31 +1589,59 @@ def get_args():
     p.add_argument("--use_bf16", action="store_true")
     p.add_argument("--renorm_every", type=int, default=1)
     p.add_argument("--symmetric_loss", action="store_true")  # optional
-    
+
     # Covariance loss (prevent neural collapse)
-    p.add_argument("--use_cov_loss", action="store_true",
-                   help="Enable covariance loss (VICReg-style). Off by default.")
-    p.add_argument("--cov_coeff", type=float, default=0.04,
-                   help="weight for covariance loss when enabled.")
+    p.add_argument(
+        "--use_cov_loss",
+        action="store_true",
+        help="Enable covariance loss (VICReg-style). Off by default.",
+    )
+    p.add_argument(
+        "--cov_coeff",
+        type=float,
+        default=0.04,
+        help="weight for covariance loss when enabled.",
+    )
 
     # MoCo & XBM
-    p.add_argument("--use_moco", action="store_true",
-                   help="Enable MoCo momentum encoder. Off by default (XBM only).")
+    p.add_argument(
+        "--use_moco",
+        action="store_true",
+        help="Enable MoCo momentum encoder. Off by default (XBM only).",
+    )
     p.add_argument("--moco_m", type=float, default=0.995)
     p.add_argument("--xbm_size", type=int, default=16384)
-    p.add_argument("--xbm_start_fill_epoch", type=int, default=3)  # epoch3: reset+fill only
-    p.add_argument("--xbm_start_use_epoch", type=int, default=4)   # epoch4: use
+    p.add_argument(
+        "--xbm_start_fill_epoch", type=int, default=3
+    )  # epoch3: reset+fill only
+    p.add_argument("--xbm_start_use_epoch", type=int, default=4)  # epoch4: use
 
     # projector
-    p.add_argument("--proj_layers", type=int, default=2, choices=[1,2,3],
-              help="projector MLP depth. 1: linear, 2: 2-layer MLP, 3: 3-layer MLP")
+    p.add_argument(
+        "--proj_layers",
+        type=int,
+        default=2,
+        choices=[1, 2, 3],
+        help="projector MLP depth. 1: linear, 2: 2-layer MLP, 3: 3-layer MLP",
+    )
     # hidden layer 이용하면 성능 더 좋아질 것 기대.
-    p.add_argument("--proj_hidden", type=int, default=2048,
-                  help="hidden dim for projector when proj_layers>=2")
-    p.add_argument("--proj_bn", action="store_true",
-                  help="use BatchNorm1d in projector (SimCLR-style). off by default")
-    p.add_argument("--proj_dropout", type=float, default=0.0,
-                  help="dropout in projector (usually 0.0 for contrastive)")
+    p.add_argument(
+        "--proj_hidden",
+        type=int,
+        default=2048,
+        help="hidden dim for projector when proj_layers>=2",
+    )
+    p.add_argument(
+        "--proj_bn",
+        action="store_true",
+        help="use BatchNorm1d in projector (SimCLR-style). off by default",
+    )
+    p.add_argument(
+        "--proj_dropout",
+        type=float,
+        default=0.0,
+        help="dropout in projector (usually 0.0 for contrastive)",
+    )
 
     # Linear Probe (for early stopping)
     p.add_argument("--num_classes", type=int, default=4)
@@ -1394,16 +1652,30 @@ def get_args():
     p.add_argument("--lp_wd", type=float, default=0.0)
     p.add_argument("--lp_momentum", type=float, default=0.9)
     p.add_argument("--lp_enc_bs", type=int, default=128)
-    p.add_argument("--lp_eval_interval", type=int, default=1,
-                   help="Evaluate linear probe every N epochs (for faster training)")
+    p.add_argument(
+        "--lp_eval_interval",
+        type=int,
+        default=1,
+        help="Evaluate linear probe every N epochs (for faster training)",
+    )
 
     # resume
-    p.add_argument("--resume_path", type=str, default="",
-               help="Path to resume checkpoint (.pt). If empty, start fresh.")
-    p.add_argument("--auto_resume", action="store_true",
-                  help="If set, auto resume from <save_dir>/resume_ckpt.pt when exists.")
-    p.add_argument("--resume_strict", action="store_true",
-                  help="strict load for state_dict. default False recommended.")
+    p.add_argument(
+        "--resume_path",
+        type=str,
+        default="",
+        help="Path to resume checkpoint (.pt). If empty, start fresh.",
+    )
+    p.add_argument(
+        "--auto_resume",
+        action="store_true",
+        help="If set, auto resume from <save_dir>/resume_ckpt.pt when exists.",
+    )
+    p.add_argument(
+        "--resume_strict",
+        action="store_true",
+        help="strict load for state_dict. default False recommended.",
+    )
 
     # experiment yml
     p.add_argument("--save_config", action="store_true")
@@ -1418,13 +1690,15 @@ def main():
     args = get_args()
     args.save_config = True
     args.use_bf16 = True  # Colab/A100 권장
-    args.symmetric_loss = True # 기본값 False 유지 (argparse로 선택)
-    args.auto_resume = True   #나중에 다시 하기 위해 저장.
+    args.symmetric_loss = True  # 기본값 False 유지 (argparse로 선택)
+    args.auto_resume = True  # 나중에 다시 하기 위해 저장.
 
     os.makedirs(args.save_dir, exist_ok=True)
 
     resume_ckpt_path = os.path.join(args.save_dir, "resume_ckpt.pt")
-    will_resume = (args.auto_resume and os.path.exists(resume_ckpt_path)) or (args.resume_path != "")
+    will_resume = (args.auto_resume and os.path.exists(resume_ckpt_path)) or (
+        args.resume_path != ""
+    )
 
     with open(os.path.join(args.save_dir, "args.json"), "w", encoding="utf-8") as f:
         json.dump(vars(args), f, indent=2, ensure_ascii=False)
@@ -1439,14 +1713,19 @@ def main():
     refs = load_all_sample_refs(args.shard_root)
 
     train_csv = os.path.join(args.save_dir, "train_split.csv")
-    val_csv   = os.path.join(args.save_dir, "val_split.csv")
-    test_csv  = os.path.join(args.save_dir, "test_split.csv")
+    val_csv = os.path.join(args.save_dir, "val_split.csv")
+    test_csv = os.path.join(args.save_dir, "test_split.csv")
 
-    if will_resume and os.path.exists(train_csv) and os.path.exists(val_csv) and os.path.exists(test_csv):
+    if (
+        will_resume
+        and os.path.exists(train_csv)
+        and os.path.exists(val_csv)
+        and os.path.exists(test_csv)
+    ):
         logger.info("[resume] Using existing split CSVs (no re-splitting).")
 
         X_train = load_split_csv(train_csv)
-        X_val   = load_split_csv(val_csv)
+        X_val = load_split_csv(val_csv)
         # X_test = load_split_csv(test_csv)  # 필요하면
 
         # 전체 refs에서 uid->refidx 맵 만들기
@@ -1454,94 +1733,132 @@ def main():
 
         missing = [u for u in (X_train + X_val) if u not in uid_to_refidx_all]
         if len(missing) > 0:
-            raise RuntimeError(f"[resume] Some uids from split CSV are missing in current shard_root. 예: {missing[:5]}")
+            raise RuntimeError(
+                f"[resume] Some uids from split CSV are missing in current shard_root. 예: {missing[:5]}"
+            )
 
         train_refidx = [uid_to_refidx_all[u] for u in X_train]
-        val_refidx   = [uid_to_refidx_all[u] for u in X_val]
+        val_refidx = [uid_to_refidx_all[u] for u in X_val]
 
     else:
         # ====== fresh run: subset + split + csv 저장 ======
         subset_refidx = select_balanced_subset(refs, args.max_samples, args.seed)
         logger.info(f"Subset size: {len(subset_refidx)}")
 
-        uids  = [f"{refs[i].tar_path}:{refs[i].prefix}" for i in subset_refidx]
+        uids = [f"{refs[i].tar_path}:{refs[i].prefix}" for i in subset_refidx]
         labels = [refs[i].label for i in subset_refidx]
-        lines  = [refs[i].line  for i in subset_refidx]
+        lines = [refs[i].line for i in subset_refidx]
 
-        line_to_id = {ln:i for i, ln in enumerate(sorted(set(lines)))}
+        line_to_id = {ln: i for i, ln in enumerate(sorted(set(lines)))}
         strat = [line_to_id[ln] for ln in lines]
 
         X_temp, X_test, y_temp, y_test, strat_temp, strat_test = train_test_split(
-            uids, labels, strat, test_size=args.test_ratio, random_state=args.seed, stratify=strat
+            uids,
+            labels,
+            strat,
+            test_size=args.test_ratio,
+            random_state=args.seed,
+            stratify=strat,
         )
         X_train, X_val, y_train, y_val, strat_train, strat_val = train_test_split(
-            X_temp, y_temp, strat_temp, test_size=args.val_ratio, random_state=args.seed, stratify=strat_temp
+            X_temp,
+            y_temp,
+            strat_temp,
+            test_size=args.val_ratio,
+            random_state=args.seed,
+            stratify=strat_temp,
         )
-        logger.info(f"Split -> Train {len(X_train)}, Val {len(X_val)}, Test {len(X_test)}")
+        logger.info(
+            f"Split -> Train {len(X_train)}, Val {len(X_val)}, Test {len(X_test)}"
+        )
 
-        refs_by_uid = {f"{refs[i].tar_path}:{refs[i].prefix}": refs[i] for i in subset_refidx}
+        refs_by_uid = {
+            f"{refs[i].tar_path}:{refs[i].prefix}": refs[i] for i in subset_refidx
+        }
         save_split_csv(X_train, y_train, refs_by_uid, args.save_dir, "train_split.csv")
-        save_split_csv(X_val,   y_val,   refs_by_uid, args.save_dir, "val_split.csv")
-        save_split_csv(X_test,  y_test,  refs_by_uid, args.save_dir, "test_split.csv")
+        save_split_csv(X_val, y_val, refs_by_uid, args.save_dir, "val_split.csv")
+        save_split_csv(X_test, y_test, refs_by_uid, args.save_dir, "test_split.csv")
 
-        uid_to_refidx = {f"{refs[i].tar_path}:{refs[i].prefix}": i for i in subset_refidx}
+        uid_to_refidx = {
+            f"{refs[i].tar_path}:{refs[i].prefix}": i for i in subset_refidx
+        }
         train_refidx = [uid_to_refidx[u] for u in X_train]
-        val_refidx   = [uid_to_refidx[u] for u in X_val]
-
+        val_refidx = [uid_to_refidx[u] for u in X_val]
 
     # build bank separately for train and val (RAM 절약을 위해 분리)
     # (train/val 합쳐서 한 bank로 만들고 인덱스만 나눠도 되는데, 여기선 깔끔하게 분리)
     train_bank = InMemoryTarBank(refs, train_refidx, args.img_size)
-    val_bank   = InMemoryTarBank(refs, val_refidx, args.img_size)
+    val_bank = InMemoryTarBank(refs, val_refidx, args.img_size)
 
     # bank 내부 인덱스는 0..len(bank)-1
     train_ib = list(range(len(train_refidx)))
-    val_ib   = list(range(len(val_refidx)))
+    val_ib = list(range(len(val_refidx)))
 
     # datasets
-    train_ds = InMemorySixteenBitDataset(train_bank, train_ib, args.img_size, two_crops=True,  augment=True)
-    val_ds   = InMemorySixteenBitDataset(val_bank,   val_ib,   args.img_size, two_crops=True,  augment=False)
+    train_ds = InMemorySixteenBitDataset(
+        train_bank, train_ib, args.img_size, two_crops=True, augment=True
+    )
+    val_ds = InMemorySixteenBitDataset(
+        val_bank, val_ib, args.img_size, two_crops=True, augment=False
+    )
 
     # linear probe datasets (single crop, no augment)
-    train_lp_ds = InMemorySixteenBitDataset(train_bank, train_ib, args.img_size, two_crops=False, augment=False)
-    val_lp_ds   = InMemorySixteenBitDataset(val_bank,   val_ib,   args.img_size, two_crops=False, augment=False)
+    train_lp_ds = InMemorySixteenBitDataset(
+        train_bank, train_ib, args.img_size, two_crops=False, augment=False
+    )
+    val_lp_ds = InMemorySixteenBitDataset(
+        val_bank, val_ib, args.img_size, two_crops=False, augment=False
+    )
 
     # samplers (strict plate-balanced)
-    train_sampler = StrictPlateBalancedBatchSamplerOnBank(train_bank, batch_size=args.batch_size, seed=args.seed)
-    val_sampler   = StrictPlateBalancedBatchSamplerOnBank(val_bank,   batch_size=args.batch_size, seed=args.seed+1)
-
+    train_sampler = StrictPlateBalancedBatchSamplerOnBank(
+        train_bank, batch_size=args.batch_size, seed=args.seed
+    )
+    val_sampler = StrictPlateBalancedBatchSamplerOnBank(
+        val_bank, batch_size=args.batch_size, seed=args.seed + 1
+    )
 
     pin = torch.cuda.is_available()
     NUM_WORKERS = 0  # in-RAM이라 보통 0이 안정적
 
     train_loader = DataLoader(
-        train_ds, batch_sampler=train_sampler,
-        num_workers=0, pin_memory=pin,
+        train_ds,
+        batch_sampler=train_sampler,
+        num_workers=0,
+        pin_memory=pin,
         worker_init_fn=seed_worker,
         collate_fn=collate_skip_none,
     )
 
     val_loader = DataLoader(
-        val_ds, batch_sampler=val_sampler,
-        num_workers=0, pin_memory=pin,
+        val_ds,
+        batch_sampler=val_sampler,
+        num_workers=0,
+        pin_memory=pin,
         worker_init_fn=seed_worker,
         collate_fn=collate_skip_none,
     )
 
     # linear probe loaders (그냥 shuffle=True)
     train_lp_loader = DataLoader(
-        train_lp_ds, batch_size=args.lp_batch_size, shuffle=True,
-        num_workers=0, pin_memory=pin,
+        train_lp_ds,
+        batch_size=args.lp_batch_size,
+        shuffle=True,
+        num_workers=0,
+        pin_memory=pin,
         worker_init_fn=seed_worker,
         collate_fn=collate_skip_none,
-        drop_last=False
+        drop_last=False,
     )
     val_lp_loader = DataLoader(
-        val_lp_ds, batch_size=args.lp_batch_size, shuffle=False,
-        num_workers=0, pin_memory=pin,
+        val_lp_ds,
+        batch_size=args.lp_batch_size,
+        shuffle=False,
+        num_workers=0,
+        pin_memory=pin,
         worker_init_fn=seed_worker,
         collate_fn=collate_skip_none,
-        drop_last=False
+        drop_last=False,
     )
 
     # model q/k
@@ -1572,7 +1889,6 @@ def main():
     )
     model_k.load_state_dict(model_q.state_dict(), strict=True)
 
-
     # torch.compile - Lambda Labs에서 첫 실행 시 오래 걸림, 필요 시 주석 해제
     # try:
     #     model_q = torch.compile(model_q, mode="max-autotune")
@@ -1581,13 +1897,24 @@ def main():
     #     logger.info(f"[compile] torch.compile not available: {e}")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    xbm = SupervisedXBM(dim=args.embed_dim, capacity=args.xbm_size, device=device, dtype=torch.float16)
+    xbm = SupervisedXBM(
+        dim=args.embed_dim, capacity=args.xbm_size, device=device, dtype=torch.float16
+    )
 
-    trainer = Trainer(args, model_q, model_k, xbm, train_loader, val_loader, train_lp_loader, val_lp_loader)
+    trainer = Trainer(
+        args,
+        model_q,
+        model_k,
+        xbm,
+        train_loader,
+        val_loader,
+        train_lp_loader,
+        val_lp_loader,
+    )
     trainer.run()
+
 
 if __name__ == "__main__":
     main()
-
 
     ### XBM만 사용함. moco 사용 안함. contrastive loss 사용 안함.

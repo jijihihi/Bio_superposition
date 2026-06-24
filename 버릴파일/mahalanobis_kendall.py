@@ -27,21 +27,21 @@
 #   main()
 # ==============================================================================
 
-import os
 import argparse
+import os
+import sys
+
+import matplotlib
 import numpy as np
 from scipy.stats import kendalltau
 
-import matplotlib
-import sys
 _IN_COLAB = "google.colab" in sys.modules
 if not _IN_COLAB:
     matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-
 from sklearn.decomposition import PCA
 
-from sae_project.step02_logging_utils import get_logger, SUPERCLASS_MAP
+from sae_project.step02_logging_utils import SUPERCLASS_MAP, get_logger
 
 logger = get_logger("mahalanobis")
 
@@ -55,36 +55,66 @@ def get_args():
     )
 
     # Data
-    p.add_argument("--features_cache", type=str, required=True,
-                   help="Path to features_cache.npz from extract_features.py")
-    p.add_argument("--apoptosis_csv", type=str, required=True,
-                   help="Path to apoptosis CSV (columns: uid, intensity_rate)")
+    p.add_argument(
+        "--features_cache",
+        type=str,
+        required=True,
+        help="Path to features_cache.npz from extract_features.py",
+    )
+    p.add_argument(
+        "--apoptosis_csv",
+        type=str,
+        required=True,
+        help="Path to apoptosis CSV (columns: uid, intensity_rate)",
+    )
 
     # Dead neuron
     p.add_argument("--dead_threshold", type=float, default=1e-5)
 
     # Neuron filtering
-    p.add_argument("--filter_mode", type=str, nargs="+", default=["none"],
-                   help="Sequential filtering. e.g. '--filter_mode cv de' "
-                        "applies CV globally first, then DE per-mutation")
+    p.add_argument(
+        "--filter_mode",
+        type=str,
+        nargs="+",
+        default=["none"],
+        help="Sequential filtering. e.g. '--filter_mode cv de' "
+        "applies CV globally first, then DE per-mutation",
+    )
     p.add_argument("--max_gini", type=float, default=0.75)
     p.add_argument("--min_cv", type=float, default=0.0)
     p.add_argument("--de_adj_p", type=float, default=0.05)
     p.add_argument("--de_min_log2fc", type=float, default=0.0)
 
     # Normalization
-    p.add_argument("--norm", type=str, default="none",
-                   choices=["none", "log", "median", "std",
-                            "log_median", "log_std", "log_IQR", "IQR"],
-                   help="Feature normalization before PCA")
+    p.add_argument(
+        "--norm",
+        type=str,
+        default="none",
+        choices=[
+            "none",
+            "log",
+            "median",
+            "std",
+            "log_median",
+            "log_std",
+            "log_IQR",
+            "IQR",
+        ],
+        help="Feature normalization before PCA",
+    )
 
     # PCA
-    p.add_argument("--pca_dim", type=int, default=50,
-                   help="PCA dimensions before Mahalanobis")
+    p.add_argument(
+        "--pca_dim", type=int, default=50, help="PCA dimensions before Mahalanobis"
+    )
 
     # Mahalanobis
-    p.add_argument("--regularize", type=float, default=1e-6,
-                   help="Regularization added to covariance diagonal")
+    p.add_argument(
+        "--regularize",
+        type=float,
+        default=1e-6,
+        help="Regularization added to covariance diagonal",
+    )
 
     # Misc
     p.add_argument("--seed", type=int, default=42)
@@ -166,8 +196,9 @@ def plot_mahal_vs_apoptosis(
         if len(d) > 2:
             z = np.polyfit(d, a, 1)
             x_line = np.linspace(d.min(), d.max(), 100)
-            ax.plot(x_line, np.polyval(z, x_line), "--", color=color,
-                    linewidth=2, alpha=0.8)
+            ax.plot(
+                x_line, np.polyval(z, x_line), "--", color=color, linewidth=2, alpha=0.8
+            )
 
         ax.set_xlabel("Mahalanobis distance from Control", fontsize=11)
         ax.set_ylabel("Apoptosis rate", fontsize=11)
@@ -175,9 +206,16 @@ def plot_mahal_vs_apoptosis(
         ax.grid(True, alpha=0.2)
 
         # Info box
-        ax.text(0.95, 0.05, f"n = {len(d)}\nτ = {tau:.4f}",
-                transform=ax.transAxes, fontsize=9, ha="right", va="bottom",
-                bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8))
+        ax.text(
+            0.95,
+            0.05,
+            f"n = {len(d)}\nτ = {tau:.4f}",
+            transform=ax.transAxes,
+            fontsize=9,
+            ha="right",
+            va="bottom",
+            bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8),
+        )
 
     fig.suptitle(title, fontsize=14, fontweight="bold", y=1.02)
     fig.tight_layout()
@@ -209,7 +247,9 @@ def plot_summary_bar(
         ax.bar(x + i * width, taus, width, label=mut, color=colors[i], alpha=0.85)
 
     ax.set_xticks(x + width)
-    ax.set_xticklabels([r["label"] for r in results], rotation=30, ha="right", fontsize=9)
+    ax.set_xticklabels(
+        [r["label"] for r in results], rotation=30, ha="right", fontsize=9
+    )
     ax.set_ylabel("Kendall τ (Mahalanobis ↔ Apoptosis)", fontsize=11)
     ax.set_title("Mahalanobis–Apoptosis Correlation", fontsize=13, fontweight="bold")
     ax.legend(fontsize=10)
@@ -231,10 +271,8 @@ def main():
 
     # ── 1. Load features ─────────────────────────────────────────────────
     from kendall_correlation_coefficient.dpt_kendall import (
-        load_features_cache, load_and_match_apoptosis,
-        apply_normalization,
-        compute_gini_impurity, compute_cv_per_neuron, compute_de_neurons,
-    )
+        apply_normalization, compute_cv_per_neuron, compute_de_neurons,
+        compute_gini_impurity, load_and_match_apoptosis, load_features_cache)
 
     logger.info(f"\n{'='*60}")
     logger.info("Loading features cache")
@@ -299,14 +337,17 @@ def main():
     if args.output_dir:
         out_dir = args.output_dir
     else:
-        out_dir = os.path.join(os.path.dirname(args.features_cache),
-                               "mahalanobis_kendall")
+        out_dir = os.path.join(
+            os.path.dirname(args.features_cache), "mahalanobis_kendall"
+        )
     os.makedirs(out_dir, exist_ok=True)
 
     # ── 5. Per-mutation Mahalanobis analysis ──────────────────────────────
     logger.info(f"\n{'='*60}")
-    logger.info(f"Mahalanobis analysis (norm={args.norm}, pca={args.pca_dim}, "
-                 f"filter={filter_label})")
+    logger.info(
+        f"Mahalanobis analysis (norm={args.norm}, pca={args.pca_dim}, "
+        f"filter={filter_label})"
+    )
     logger.info("=" * 60)
 
     ctrl_mask_global = superclasses_arr == "Control"
@@ -324,13 +365,17 @@ def main():
         # --- DE filter: per-mutation neuron selection ---
         if has_de:
             de_result = compute_de_neurons(
-                X, superclasses, mut,
+                X,
+                superclasses,
+                mut,
                 adj_p_threshold=args.de_adj_p,
                 min_log2fc=args.de_min_log2fc,
             )
 
             if de_result["n_selected"] < 3:
-                logger.warning(f"    Only {de_result['n_selected']} DE neurons — skipping")
+                logger.warning(
+                    f"    Only {de_result['n_selected']} DE neurons — skipping"
+                )
                 all_taus[mut] = 0.0
                 continue
 
@@ -340,8 +385,10 @@ def main():
             superclasses_sub = superclasses_arr[keep_samples]
             apoptosis_sub = apoptosis[keep_samples]
 
-            logger.info(f"    DE subset: {X_sub.shape[0]} samples × "
-                         f"{X_sub.shape[1]} neurons")
+            logger.info(
+                f"    DE subset: {X_sub.shape[0]} samples × "
+                f"{X_sub.shape[1]} neurons"
+            )
         else:
             # Global filter already applied, use all
             keep_samples = ctrl_mask_global | mut_mask_global
@@ -362,8 +409,9 @@ def main():
             pca = PCA(n_components=pca_dim, random_state=args.seed)
             X_pca = pca.fit_transform(X_sub_norm)
             var_exp = np.sum(pca.explained_variance_ratio_)
-            logger.info(f"    PCA: {current_dim} → {pca_dim}, "
-                         f"var explained: {var_exp:.1%}")
+            logger.info(
+                f"    PCA: {current_dim} → {pca_dim}, " f"var explained: {var_exp:.1%}"
+            )
         else:
             X_pca = X_sub_norm
             var_exp = 1.0
@@ -378,9 +426,11 @@ def main():
         d_mahal = mahalanobis_from_control(
             X_ctrl_pca, X_mut_pca, regularize=args.regularize
         )
-        logger.info(f"    Mahalanobis: min={d_mahal.min():.2f}, "
-                     f"median={np.median(d_mahal):.2f}, "
-                     f"max={d_mahal.max():.2f}")
+        logger.info(
+            f"    Mahalanobis: min={d_mahal.min():.2f}, "
+            f"median={np.median(d_mahal):.2f}, "
+            f"max={d_mahal.max():.2f}"
+        )
 
         # --- Kendall tau ---
         apop_mut = apoptosis_sub[mut_in_sub]
@@ -395,8 +445,9 @@ def main():
         tau = tau if not np.isnan(tau) else 0.0
         all_taus[mut] = tau
 
-        logger.info(f"    Kendall τ = {tau:.4f} (p = {pval:.2e}, "
-                     f"n = {valid.sum()})")
+        logger.info(
+            f"    Kendall τ = {tau:.4f} (p = {pval:.2e}, " f"n = {valid.sum()})"
+        )
 
         all_distances[mut] = d_mahal[valid]
         all_apoptosis[mut] = apop_mut[valid]
@@ -409,8 +460,9 @@ def main():
         valid_ctrl = ~np.isnan(apop_ctrl)
         if valid_ctrl.sum() >= 10:
             tau_ctrl, p_ctrl = kendalltau(d_ctrl[valid_ctrl], apop_ctrl[valid_ctrl])
-            logger.info(f"    Control self τ = {tau_ctrl:.4f} (sanity check, "
-                         f"should be ~0)")
+            logger.info(
+                f"    Control self τ = {tau_ctrl:.4f} (sanity check, " f"should be ~0)"
+            )
 
     # Summary result
     result_entry = {
@@ -430,12 +482,15 @@ def main():
     )
     fm_str = "_".join(args.filter_mode)
     plot_path = os.path.join(
-        out_dir,
-        f"mahal_{fm_str}_norm{args.norm}_pca{args.pca_dim}.png"
+        out_dir, f"mahal_{fm_str}_norm{args.norm}_pca{args.pca_dim}.png"
     )
     plot_mahal_vs_apoptosis(
-        all_distances, all_apoptosis, all_taus,
-        title=plot_title, output_path=plot_path, dpi=args.dpi,
+        all_distances,
+        all_apoptosis,
+        all_taus,
+        title=plot_title,
+        output_path=plot_path,
+        dpi=args.dpi,
     )
 
     # ── 7. Summary ───────────────────────────────────────────────────────
@@ -451,6 +506,7 @@ def main():
     # CSV
     csv_path = os.path.join(out_dir, f"mahalanobis_summary_{which_layer}.csv")
     import csv
+
     write_header = not os.path.exists(csv_path)
     with open(csv_path, "a", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)

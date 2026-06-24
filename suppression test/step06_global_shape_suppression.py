@@ -28,20 +28,20 @@
 # ==============================================================================
 
 
-
 ## GAP값 높은 이미지만 선택. 그 뉴런이 보는 이미지를 선택해야 좋다.abs
 ## lr swap과 patch shuffling할때. 그 edge에서 가까이 있는 픽셀들 제외할수록 코사인 유사도가 증가한다 -> global shape 본다.
 
 
-import os
-import sys
+import argparse
 import csv
 import json
+import os
 import random
-import argparse
-from typing import List, Tuple, Dict
+import sys
 from collections import defaultdict
+from typing import Dict, List, Tuple
 
+import matplotlib
 import numpy as np
 import torch
 import torch.nn as nn
@@ -49,22 +49,21 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
-import matplotlib
 _IN_COLAB = "google.colab" in sys.modules
 if not _IN_COLAB:
     matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from sae_project.step02_logging_utils import get_logger, OUT_DIM
-from sae_project.step03_data_shards import load_all_sample_refs, build_uid_to_refidx
-from sae_project.step04_data_bank import (
-    InMemoryTarBank, InMemorySixteenBitDataset,
-    seed_worker, collate_skip_none,
-)
-from sae_project.step05_model_encoder import (
-    Encoder, SupMoCoModel, parse_int_list,
-    renorm_unit_per_out_channel_, robust_load_state_dict,
-)
+from sae_project.step02_logging_utils import OUT_DIM, get_logger
+from sae_project.step03_data_shards import (build_uid_to_refidx,
+                                            load_all_sample_refs)
+from sae_project.step04_data_bank import (InMemorySixteenBitDataset,
+                                          InMemoryTarBank, collate_skip_none,
+                                          seed_worker)
+from sae_project.step05_model_encoder import (Encoder, SupMoCoModel,
+                                              parse_int_list,
+                                              renorm_unit_per_out_channel_,
+                                              robust_load_state_dict)
 from sae_project.step06_gated_sae import GatedSAE
 
 logger = get_logger("global_shape_suppression")
@@ -111,7 +110,7 @@ def patch_shuffle_4x4(x: torch.Tensor, seed: int = None) -> Tuple[torch.Tensor, 
     patches = []
     for i in range(4):
         for j in range(4):
-            patches.append(x[:, :, i*ph:(i+1)*ph, j*pw:(j+1)*pw])
+            patches.append(x[:, :, i * ph : (i + 1) * ph, j * pw : (j + 1) * pw])
 
     rng = random.Random(seed)
     perm = list(range(16))
@@ -119,7 +118,7 @@ def patch_shuffle_4x4(x: torch.Tensor, seed: int = None) -> Tuple[torch.Tensor, 
 
     rows = []
     for i in range(4):
-        row_patches = [patches[perm[i*4 + j]] for j in range(4)]
+        row_patches = [patches[perm[i * 4 + j]] for j in range(4)]
         rows.append(torch.cat(row_patches, dim=3))
     out = torch.cat(rows, dim=2)
 
@@ -148,9 +147,7 @@ PERTURBATION_FNS = {
 # ==============================================================================
 # Unshuffle activation map back to original spatial layout
 # ==============================================================================
-def unshuffle_activation_map(
-    act_map: torch.Tensor, perm_info: Dict
-) -> torch.Tensor:
+def unshuffle_activation_map(act_map: torch.Tensor, perm_info: Dict) -> torch.Tensor:
     """
     Reverse the spatial perturbation on an activation map.
     act_map: (B, d_sae, H, W)
@@ -180,12 +177,14 @@ def unshuffle_activation_map(
         pert_patches = []
         for i in range(g):
             for j in range(g):
-                pert_patches.append(act_map[:, :, i*ph:(i+1)*ph, j*pw:(j+1)*pw])
+                pert_patches.append(
+                    act_map[:, :, i * ph : (i + 1) * ph, j * pw : (j + 1) * pw]
+                )
 
         # Reassemble in original order
         rows = []
         for i in range(g):
-            row_patches = [pert_patches[inv_perm[i*g + j]] for j in range(g)]
+            row_patches = [pert_patches[inv_perm[i * g + j]] for j in range(g)]
             rows.append(torch.cat(row_patches, dim=3))
         return torch.cat(rows, dim=2)
 
@@ -197,8 +196,10 @@ def unshuffle_activation_map(
 # ==============================================================================
 @torch.no_grad()
 def get_sae_activation_maps(
-    encoder: Encoder, sae: GatedSAE,
-    x: torch.Tensor, which_layer: str,
+    encoder: Encoder,
+    sae: GatedSAE,
+    x: torch.Tensor,
+    which_layer: str,
     pool_size: int = 16,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
@@ -314,7 +315,7 @@ def remap_uid(uid: str, new_shard_root: str) -> str:
     """Replace old shard_root prefix in UID with the current one."""
     for old_root in KNOWN_SHARD_ROOTS:
         if uid.startswith(old_root):
-            return new_shard_root + uid[len(old_root):]
+            return new_shard_root + uid[len(old_root) :]
     return uid
 
 
@@ -333,26 +334,44 @@ def load_split_csv(csv_path: str, shard_root: str = None) -> List[str]:
 # ==============================================================================
 # Plot results
 # ==============================================================================
-def plot_histogram(values: np.ndarray, title: str, xlabel: str,
-                   output_path: str, alive_mask: np.ndarray = None,
-                   vline: float = None, dpi: int = 200):
+def plot_histogram(
+    values: np.ndarray,
+    title: str,
+    xlabel: str,
+    output_path: str,
+    alive_mask: np.ndarray = None,
+    vline: float = None,
+    dpi: int = 200,
+):
     """Plot histogram of per-neuron values."""
     if alive_mask is not None:
         values = values[alive_mask]
 
     fig, ax = plt.subplots(figsize=(10, 5))
-    ax.hist(values, bins=100, alpha=0.7, color="#4C72B0", edgecolor="black",
-            linewidth=0.3)
+    ax.hist(
+        values, bins=100, alpha=0.7, color="#4C72B0", edgecolor="black", linewidth=0.3
+    )
     if vline is not None:
-        ax.axvline(vline, color="red", linestyle="--", linewidth=1.5,
-                   label=f"threshold={vline}")
+        ax.axvline(
+            vline,
+            color="red",
+            linestyle="--",
+            linewidth=1.5,
+            label=f"threshold={vline}",
+        )
     ax.set_xlabel(xlabel, fontsize=12)
     ax.set_ylabel("Count (neurons)", fontsize=12)
     ax.set_title(title, fontsize=13, fontweight="bold")
-    ax.text(0.98, 0.95,
-            f"n={len(values)}\nmean={values.mean():.4f}\nstd={values.std():.4f}",
-            transform=ax.transAxes, fontsize=9, va="top", ha="right",
-            bbox=dict(boxstyle="round", facecolor="white", alpha=0.8))
+    ax.text(
+        0.98,
+        0.95,
+        f"n={len(values)}\nmean={values.mean():.4f}\nstd={values.std():.4f}",
+        transform=ax.transAxes,
+        fontsize=9,
+        va="top",
+        ha="right",
+        bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
+    )
     if vline is not None:
         ax.legend()
     ax.grid(True, alpha=0.2)
@@ -364,9 +383,14 @@ def plot_histogram(values: np.ndarray, title: str, xlabel: str,
     logger.info(f"Saved: {output_path}")
 
 
-def plot_scatter_cos_vs_gap(cos_sim: np.ndarray, gap_change: np.ndarray,
-                            perturb_name: str, output_path: str,
-                            alive_mask: np.ndarray = None, dpi: int = 200):
+def plot_scatter_cos_vs_gap(
+    cos_sim: np.ndarray,
+    gap_change: np.ndarray,
+    perturb_name: str,
+    output_path: str,
+    alive_mask: np.ndarray = None,
+    dpi: int = 200,
+):
     """Scatter: cosine similarity vs GAP change ratio."""
     if alive_mask is not None:
         cos_sim = cos_sim[alive_mask]
@@ -376,9 +400,12 @@ def plot_scatter_cos_vs_gap(cos_sim: np.ndarray, gap_change: np.ndarray,
     ax.scatter(cos_sim, gap_change, s=5, alpha=0.4, c="#4C72B0", edgecolors="none")
     ax.set_xlabel("Cosine Similarity (spatial pattern)", fontsize=12)
     ax.set_ylabel("GAP Difference (pert − orig)", fontsize=12)
-    ax.set_title(f"Global Shape Sensitivity – {perturb_name}\n"
-                 f"(n={len(cos_sim)} alive neurons)",
-                 fontsize=13, fontweight="bold")
+    ax.set_title(
+        f"Global Shape Sensitivity – {perturb_name}\n"
+        f"(n={len(cos_sim)} alive neurons)",
+        fontsize=13,
+        fontweight="bold",
+    )
     ax.axhline(0, color="gray", linestyle="--", alpha=0.5)
     ax.axvline(1.0, color="gray", linestyle="--", alpha=0.5)
     ax.grid(True, alpha=0.2)
@@ -397,16 +424,19 @@ def get_args():
     p = argparse.ArgumentParser("Global Shape Suppression Test")
 
     # Model
-    p.add_argument("--model_state_path", type=str, required=True,
-                   help="CNN encoder checkpoint (best_model.pt)")
-    p.add_argument("--sae_ckpt", type=str, required=True,
-                   help="SAE checkpoint (.pt)")
+    p.add_argument(
+        "--model_state_path",
+        type=str,
+        required=True,
+        help="CNN encoder checkpoint (best_model.pt)",
+    )
+    p.add_argument("--sae_ckpt", type=str, required=True, help="SAE checkpoint (.pt)")
 
     # Data
-    p.add_argument("--save_dir", type=str, default="",
-                   help="Dir with val/test_split.csv")
-    p.add_argument("--shard_root", type=str,
-                   default="/content/wds_shards")
+    p.add_argument(
+        "--save_dir", type=str, default="", help="Dir with val/test_split.csv"
+    )
+    p.add_argument("--shard_root", type=str, default="/content/wds_shards")
     p.add_argument("--samples_per_class", type=int, default=500)
     p.add_argument("--img_size", type=int, default=128)
     p.add_argument("--batch_size", type=int, default=32)
@@ -419,16 +449,32 @@ def get_args():
     p.add_argument("--ckpt_segments", type=int, default=0)
 
     # Analysis
-    p.add_argument("--pool_size", type=int, default=64,
-                   help="Adaptive pool size for activation maps (default: 16)")
+    p.add_argument(
+        "--pool_size",
+        type=int,
+        default=64,
+        help="Adaptive pool size for activation maps (default: 16)",
+    )
     p.add_argument("--dead_threshold", type=float, default=5e-5)
-    p.add_argument("--top_k_per_neuron", type=int, default=100,
-                   help="Per neuron, use only top-K most-activated images (default: 100)")
-    p.add_argument("--seam_margin", type=int, default=3,
-                   help="Pixels to mask on each side of patch seams (default: 3)")
-    p.add_argument("--perturbations", type=str, nargs="+",
-                   default=["patch_2x2", "lr_swap"],
-                   choices=["patch_2x2", "patch_4x4", "lr_swap"])
+    p.add_argument(
+        "--top_k_per_neuron",
+        type=int,
+        default=100,
+        help="Per neuron, use only top-K most-activated images (default: 100)",
+    )
+    p.add_argument(
+        "--seam_margin",
+        type=int,
+        default=3,
+        help="Pixels to mask on each side of patch seams (default: 3)",
+    )
+    p.add_argument(
+        "--perturbations",
+        type=str,
+        nargs="+",
+        default=["patch_2x2", "lr_swap"],
+        choices=["patch_2x2", "patch_4x4", "lr_swap"],
+    )
 
     # Output
     p.add_argument("--output_dir", type=str, default="")
@@ -472,10 +518,13 @@ def main():
     blocks = parse_int_list(args.blocks, 4)
     dilations = parse_int_list(args.dilations, 4)
     model = SupMoCoModel(
-        embed_dim=512, blocks=blocks, dilations=dilations,
+        embed_dim=512,
+        blocks=blocks,
+        dilations=dilations,
         refine_blocks=args.refine_blocks,
         ckpt_segments=args.ckpt_segments,
-        proj_layers=2, proj_hidden=2048,
+        proj_layers=2,
+        proj_hidden=2048,
     )
     ckpt = torch.load(args.model_state_path, map_location="cpu", weights_only=False)
     robust_load_state_dict(model, ckpt, strict=False)
@@ -503,7 +552,8 @@ def main():
     if len(ref_indices) == 0:
         raise RuntimeError(
             f"No UIDs matched! CSV UID example: {eval_uids[0] if eval_uids else 'N/A'}, "
-            f"ref UID example: {list(uid_to_refidx.keys())[0] if uid_to_refidx else 'N/A'}")
+            f"ref UID example: {list(uid_to_refidx.keys())[0] if uid_to_refidx else 'N/A'}"
+        )
 
     # Balanced subsample
     spc = args.samples_per_class
@@ -526,9 +576,14 @@ def main():
     ib = list(range(len(ref_indices)))
     ds = InMemorySixteenBitDataset(bank, ib, args.img_size, augment=False)
     loader = DataLoader(
-        ds, batch_size=args.batch_size, shuffle=False,
-        num_workers=args.num_workers, pin_memory=True,
-        worker_init_fn=seed_worker, collate_fn=collate_skip_none)
+        ds,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=True,
+        worker_init_fn=seed_worker,
+        collate_fn=collate_skip_none,
+    )
 
     # ── Output dir ──
     if args.output_dir:
@@ -553,9 +608,9 @@ def main():
         perturb_fn = PERTURBATION_FNS[perturb_name]
 
         # Collect per-image per-neuron values: lists of (N_images, d_sae)
-        all_gap_orig = []   # GAP of original (for top-K selection)
-        all_cos = []        # cosine similarity per image per neuron
-        all_gap_change = [] # GAP change per image per neuron
+        all_gap_orig = []  # GAP of original (for top-K selection)
+        all_cos = []  # cosine similarity per image per neuron
+        all_gap_change = []  # GAP change per image per neuron
 
         for batch in tqdm(loader, desc=f"{perturb_name}", leave=True):
             if batch is None:
@@ -565,16 +620,19 @@ def main():
                 continue
 
             x_orig = x.to(device, non_blocking=True).contiguous(
-                memory_format=torch.channels_last)
+                memory_format=torch.channels_last
+            )
 
             x_pert, perm_info = perturb_fn(x_orig, seed=args.seed)
             x_pert = x_pert.contiguous(memory_format=torch.channels_last)
 
             with torch.amp.autocast(**autocast_kwargs):
                 act_orig, gap_orig = get_sae_activation_maps(
-                    encoder, sae, x_orig, which_layer, args.pool_size)
+                    encoder, sae, x_orig, which_layer, args.pool_size
+                )
                 act_pert, gap_pert = get_sae_activation_maps(
-                    encoder, sae, x_pert, which_layer, args.pool_size)
+                    encoder, sae, x_pert, which_layer, args.pool_size
+                )
 
             # Unshuffle perturbed activation maps
             if perm_info is not None:
@@ -599,19 +657,19 @@ def main():
                     for k in range(g + 1):
                         # Vertical boundaries (along W)
                         cx = k * (W // g)
-                        mask_w[max(0, cx - margin):min(W, cx + margin)] = 0
+                        mask_w[max(0, cx - margin) : min(W, cx + margin)] = 0
                         # Horizontal boundaries (along H)
                         cy = k * (H // g)
-                        mask_h[max(0, cy - margin):min(H, cy + margin)] = 0
+                        mask_h[max(0, cy - margin) : min(H, cy + margin)] = 0
 
                 elif perm_info["type"] == "lr_swap":
                     center = W // 2
-                    mask_w[max(0, center - margin):min(W, center + margin)] = 0
+                    mask_w[max(0, center - margin) : min(W, center + margin)] = 0
                     mask_w[:margin] = 0
-                    mask_w[W - margin:] = 0
+                    mask_w[W - margin :] = 0
 
                 # 2D mask: (1, 1, H, W)
-                spatial_mask = (mask_h.view(1, 1, H, 1) * mask_w.view(1, 1, 1, W))
+                spatial_mask = mask_h.view(1, 1, H, 1) * mask_w.view(1, 1, 1, W)
                 act_o = act_o * spatial_mask
                 act_p = act_p * spatial_mask
 
@@ -624,18 +682,20 @@ def main():
                 # Masked GAP: average only over non-seam pixels
                 n_valid = spatial_mask.sum()
                 gap_orig_masked = (act_orig * spatial_mask).sum(dim=(2, 3)) / n_valid
-                gap_pert_masked = (act_pert_unshuf * spatial_mask).sum(dim=(2, 3)) / n_valid
+                gap_pert_masked = (act_pert_unshuf * spatial_mask).sum(
+                    dim=(2, 3)
+                ) / n_valid
                 gap_ch = gap_pert_masked - gap_orig_masked
             else:
                 gap_ch = gap_pert - gap_orig
 
-            all_gap_orig.append(gap_orig.cpu().float().numpy())   # (B, d_sae)
-            all_cos.append(cos.cpu().float().numpy())             # (B, d_sae)
-            all_gap_change.append(gap_ch.cpu().float().numpy())   # (B, d_sae)
+            all_gap_orig.append(gap_orig.cpu().float().numpy())  # (B, d_sae)
+            all_cos.append(cos.cpu().float().numpy())  # (B, d_sae)
+            all_gap_change.append(gap_ch.cpu().float().numpy())  # (B, d_sae)
 
         # Stack across all batches: (N_total, d_sae)
-        gap_orig_all = np.concatenate(all_gap_orig, axis=0)   # (N, d_sae)
-        cos_all = np.concatenate(all_cos, axis=0)             # (N, d_sae)
+        gap_orig_all = np.concatenate(all_gap_orig, axis=0)  # (N, d_sae)
+        cos_all = np.concatenate(all_cos, axis=0)  # (N, d_sae)
         gap_change_all = np.concatenate(all_gap_change, axis=0)  # (N, d_sae)
         N_total = gap_orig_all.shape[0]
 
@@ -659,24 +719,36 @@ def main():
         # ── Log summary ──
         cos_alive = cos_topk[alive_mask]
         gap_alive = gap_change_topk[alive_mask]
-        logger.info(f"\nResults ({perturb_name}, {n_alive} alive neurons, top-{k_actual} images):")
-        logger.info(f"  Cosine sim: mean={cos_alive.mean():.4f}, "
-                    f"std={cos_alive.std():.4f}, "
-                    f"min={cos_alive.min():.4f}, max={cos_alive.max():.4f}")
-        logger.info(f"  GAP diff (pert-orig): mean={gap_alive.mean():.8f}, "
-                    f"std={gap_alive.std():.8f}")
+        logger.info(
+            f"\nResults ({perturb_name}, {n_alive} alive neurons, top-{k_actual} images):"
+        )
+        logger.info(
+            f"  Cosine sim: mean={cos_alive.mean():.4f}, "
+            f"std={cos_alive.std():.4f}, "
+            f"min={cos_alive.min():.4f}, max={cos_alive.max():.4f}"
+        )
+        logger.info(
+            f"  GAP diff (pert-orig): mean={gap_alive.mean():.8f}, "
+            f"std={gap_alive.std():.8f}"
+        )
 
         n_shape_dep = (cos_alive < 0.8).sum()
-        logger.info(f"  Shape-dependent (cos<0.8): {n_shape_dep}/{n_alive} "
-                    f"({n_shape_dep/n_alive*100:.1f}%)")
+        logger.info(
+            f"  Shape-dependent (cos<0.8): {n_shape_dep}/{n_alive} "
+            f"({n_shape_dep/n_alive*100:.1f}%)"
+        )
 
         # ── Save results ──
         npz_path = os.path.join(out_dir, f"results_{perturb_name}.npz")
-        np.savez_compressed(npz_path,
-                            cos_sim=cos_topk, gap_change=gap_change_topk,
-                            alive_mask=alive_mask, usage_ema=usage_ema,
-                            perturbation=perturb_name,
-                            top_k=k_actual)
+        np.savez_compressed(
+            npz_path,
+            cos_sim=cos_topk,
+            gap_change=gap_change_topk,
+            alive_mask=alive_mask,
+            usage_ema=usage_ema,
+            perturbation=perturb_name,
+            top_k=k_actual,
+        )
         logger.info(f"Saved: {npz_path}")
 
         # ── Plots ──
@@ -685,19 +757,28 @@ def main():
             f"Cosine Similarity (top-{k_actual} images) – {perturb_name}",
             "Cosine Similarity (1.0 = no change)",
             os.path.join(out_dir, f"hist_cos_{perturb_name}.png"),
-            alive_mask=alive_mask, vline=0.8, dpi=args.dpi)
+            alive_mask=alive_mask,
+            vline=0.8,
+            dpi=args.dpi,
+        )
 
         plot_histogram(
             np.abs(gap_change_topk),
             f"|GAP Difference| (top-{k_actual} images) – {perturb_name}",
             "|GAP_pert − GAP_orig| (0 = no change)",
             os.path.join(out_dir, f"hist_gap_{perturb_name}.png"),
-            alive_mask=alive_mask, dpi=args.dpi)
+            alive_mask=alive_mask,
+            dpi=args.dpi,
+        )
 
         plot_scatter_cos_vs_gap(
-            cos_topk, gap_change_topk, perturb_name,
+            cos_topk,
+            gap_change_topk,
+            perturb_name,
             os.path.join(out_dir, f"scatter_{perturb_name}.png"),
-            alive_mask=alive_mask, dpi=args.dpi)
+            alive_mask=alive_mask,
+            dpi=args.dpi,
+        )
 
     logger.info(f"\n{'='*60}")
     logger.info("Global shape suppression test complete!")

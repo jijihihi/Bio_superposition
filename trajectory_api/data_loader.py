@@ -1,14 +1,16 @@
+import logging
 import os
+
 import numpy as np
 import pandas as pd
 import scanpy as sc
 from scipy.stats import mannwhitneyu
 from statsmodels.stats.multitest import multipletests
-import logging
 
-from sae_project.step02_logging_utils import get_logger, SUPERCLASS_MAP
+from sae_project.step02_logging_utils import SUPERCLASS_MAP, get_logger
 
 logger = get_logger("trajectory_api_data")
+
 
 # ==============================================================================
 # 1. Base Cache Loader
@@ -24,11 +26,15 @@ def load_features_cache(cache_path: str, dead_threshold: float = 1e-5):
     elif "X_gap" in data:
         X_all = data["X_gap"]
     else:
-        raise KeyError(f"Cache has neither 'X_all' nor 'X_gap'. Keys: {list(data.keys())}")
+        raise KeyError(
+            f"Cache has neither 'X_all' nor 'X_gap'. Keys: {list(data.keys())}"
+        )
 
     y = data["y"]
-    lines = data["lines"].astype(str) if data["lines"].dtype.kind != 'U' else data["lines"]
-    uids = data["uids"].astype(str) if data["uids"].dtype.kind != 'U' else data["uids"]
+    lines = (
+        data["lines"].astype(str) if data["lines"].dtype.kind != "U" else data["lines"]
+    )
+    uids = data["uids"].astype(str) if data["uids"].dtype.kind != "U" else data["uids"]
     which_layer = str(data["which_layer"])
 
     if "usage_ema" in data:
@@ -48,8 +54,9 @@ def load_features_cache(cache_path: str, dead_threshold: float = 1e-5):
 
     logger.info(f"Loaded cache: {cache_path}")
     logger.info(f"Shape: {X_all.shape} → {X.shape} ({alive_info})")
-    
+
     return X, y, lines, uids, which_layer, alive_info, alive_indices
+
 
 # ==============================================================================
 # 2. Filtering Utilities
@@ -66,8 +73,14 @@ def compute_cv_per_neuron(X: np.ndarray, labels: list):
     means_safe = np.where(np.abs(means) < 1e-12, 1e-12, np.abs(means))
     return stds / means_safe
 
-def compute_de_neurons(X: np.ndarray, superclasses: list, mutation: str, 
-                       adj_p_threshold: float = 0.05, min_log2fc: float = 0.0):
+
+def compute_de_neurons(
+    X: np.ndarray,
+    superclasses: list,
+    mutation: str,
+    adj_p_threshold: float = 0.05,
+    min_log2fc: float = 0.0,
+):
     superclasses_arr = np.array(superclasses)
     ctrl_mask = superclasses_arr == "Control"
     mut_mask = superclasses_arr == mutation
@@ -101,12 +114,15 @@ def compute_de_neurons(X: np.ndarray, superclasses: list, mutation: str,
             pass
 
     reject, adj_p, _, _ = multipletests(pvals, method="fdr_bh")
-    mask = (adj_p < adj_p_threshold)
+    mask = adj_p < adj_p_threshold
     if min_log2fc > 0:
-        mask &= (np.abs(log2fc) >= min_log2fc)
+        mask &= np.abs(log2fc) >= min_log2fc
 
-    logger.info(f"DE ({mutation} vs Control): {int(mask.sum())}/{d} neurons (adj_p<{adj_p_threshold})")
+    logger.info(
+        f"DE ({mutation} vs Control): {int(mask.sum())}/{d} neurons (adj_p<{adj_p_threshold})"
+    )
     return {"mask": mask, "adj_pvalues": adj_p, "log2fc": log2fc}
+
 
 # ==============================================================================
 # 3. Normalization and Metadata
@@ -115,7 +131,11 @@ def apply_normalization(X: np.ndarray, norm_method: str):
     X_out = X.copy()
     if "log" in norm_method:
         X_out = np.log1p(np.maximum(X_out, 0))
-    if "median" in norm_method and "log_median" in norm_method or norm_method == "median":
+    if (
+        "median" in norm_method
+        and "log_median" in norm_method
+        or norm_method == "median"
+    ):
         medians = np.median(X_out, axis=0)
         medians = np.where(medians == 0, 1e-12, medians)
         X_out = X_out / medians
@@ -124,6 +144,7 @@ def apply_normalization(X: np.ndarray, norm_method: str):
         std = np.where(std == 0, 1e-12, std)
         X_out = (X_out - X_out.mean(axis=0)) / std
     return X_out
+
 
 def load_and_match_apoptosis(apoptosis_csv: str, uids: list, rate_col=None):
     df = pd.read_csv(apoptosis_csv)
@@ -152,7 +173,8 @@ def load_and_match_apoptosis(apoptosis_csv: str, uids: list, rate_col=None):
         uid_to_rate[key] = float(row[use_col])
 
     def _normalize_cache_uid(uid_str):
-        if ":" in uid_str: uid_str = uid_str.split(":")[-1]
+        if ":" in uid_str:
+            uid_str = uid_str.split(":")[-1]
         return os.path.splitext(uid_str.replace("_mask", ""))[0]
 
     cache_uids_norm = [_normalize_cache_uid(str(u)) for u in uids]
@@ -160,9 +182,10 @@ def load_and_match_apoptosis(apoptosis_csv: str, uids: list, rate_col=None):
     for i, norm_uid in enumerate(cache_uids_norm):
         if norm_uid in uid_to_rate:
             apoptosis[i] = uid_to_rate[norm_uid]
-            
+
     logger.info(f"Apoptosis matched: {np.sum(~np.isnan(apoptosis))}/{len(uids)}")
     return apoptosis
+
 
 # ==============================================================================
 # 4. Main API Wrapper
@@ -180,22 +203,24 @@ def load_and_preprocess(
     de_adj_p: float = 0.05,
     de_min_log2fc: float = 0.0,
     n_subsample: int = 0,
-    seed: int = 42
+    seed: int = 42,
 ) -> sc.AnnData:
     """
     Load data, apply filtering/normalization, and return a scanpy AnnData object.
     """
     np.random.seed(seed)
-    
+
     # 1. Load Data
-    X, y, lines, uids, which_layer, _, original_indices = load_features_cache(cache_path, dead_threshold)
+    X, y, lines, uids, which_layer, _, original_indices = load_features_cache(
+        cache_path, dead_threshold
+    )
     superclasses = np.array([SUPERCLASS_MAP.get(ln, "Control") for ln in lines])
-    
+
     # 2. Apoptosis Match
     apoptosis = None
     if apoptosis_csv and os.path.exists(apoptosis_csv):
         apoptosis = load_and_match_apoptosis(apoptosis_csv, uids, apoptosis_rate_col)
-    
+
     # 3. L2 Norm (Optional)
     if gap_l2_norm:
         norms = np.linalg.norm(X, axis=1, keepdims=True)
@@ -210,19 +235,21 @@ def load_and_preprocess(
         cv_mask = cv_vals >= min_cv
         mask &= cv_mask
         logger.info(f"CV filter (>= {min_cv}): kept {cv_mask.sum()} neurons")
-        
+
     if "de" in filter_modes:
-        de_res = compute_de_neurons(X, superclasses.tolist(), de_mutation, de_adj_p, de_min_log2fc)
+        de_res = compute_de_neurons(
+            X, superclasses.tolist(), de_mutation, de_adj_p, de_min_log2fc
+        )
         mask &= de_res["mask"]
 
     X = X[:, mask]
     final_indices = original_indices[mask]
-    
+
     # 5. Normalization
     if norm_method and norm_method != "none":
         X = apply_normalization(X, norm_method)
         logger.info(f"Applied normalization: {norm_method}")
-        
+
     # 6. Subsampling (Balanced across superclasses)
     if n_subsample > 0:
         unique_sc = np.unique(superclasses)
@@ -244,17 +271,14 @@ def load_and_preprocess(
             logger.info(f"Subsampled to {len(subset)} cells")
 
     # 7. Create AnnData
-    obs_dict = {
-        "mutation": superclasses,
-        "uid": uids
-    }
+    obs_dict = {"mutation": superclasses, "uid": uids}
     if apoptosis is not None:
         obs_dict["apoptosis"] = apoptosis
-        
+
     adata = sc.AnnData(X=X.astype(np.float32), obs=pd.DataFrame(obs_dict))
     adata.uns["which_layer"] = which_layer
     adata.uns["norm_method"] = norm_method
     adata.var["original_index"] = final_indices
-    
+
     logger.info(f"Successfully created AnnData: {adata}")
     return adata

@@ -28,28 +28,27 @@
 #       --output_path /path/to/output.npz
 # ==============================================================================
 
-import os
 import argparse
+import gc
+import os
 import random
-import numpy as np
 from collections import defaultdict
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
-import gc
 
-from sae_project.step02_logging_utils import get_logger, SUPERCLASS_MAP
-from sae_project.step03_data_shards import load_all_sample_refs, build_uid_to_refidx
-from sae_project.step04_data_bank import (
-    InMemoryTarBank, InMemorySixteenBitDataset, load_split_csv,
-    seed_worker, collate_skip_none,
-)
-from sae_project.step05_model_encoder import (
-    SupMoCoModel, parse_int_list, renorm_unit_per_out_channel_,
-    robust_load_state_dict,
-)
+from sae_project.step02_logging_utils import SUPERCLASS_MAP, get_logger
+from sae_project.step03_data_shards import (build_uid_to_refidx,
+                                            load_all_sample_refs)
+from sae_project.step04_data_bank import (InMemorySixteenBitDataset,
+                                          InMemoryTarBank, collate_skip_none,
+                                          load_split_csv, seed_worker)
+from sae_project.step05_model_encoder import (SupMoCoModel, parse_int_list,
+                                              renorm_unit_per_out_channel_,
+                                              robust_load_state_dict)
 from sae_project.step06_gated_sae import GatedSAE
 
 logger = get_logger("extract_features_legacy")
@@ -65,25 +64,43 @@ def get_args():
 
     # SAE / Model
     p.add_argument("--sae_ckpt", type=str, required=True)
-    p.add_argument("--save_dir", type=str, required=True,
-                   help="Model output dir (contains train/val/test_split.csv)")
+    p.add_argument(
+        "--save_dir",
+        type=str,
+        required=True,
+        help="Model output dir (contains train/val/test_split.csv)",
+    )
     p.add_argument("--model_state_path", type=str, required=True)
     p.add_argument("--shard_root", type=str, required=True)
 
     # Output
-    p.add_argument("--output_path", type=str, default="",
-                   help="Path for .npz cache file (default: next to SAE ckpt)")
+    p.add_argument(
+        "--output_path",
+        type=str,
+        default="",
+        help="Path for .npz cache file (default: next to SAE ckpt)",
+    )
 
     # Feature extraction
-    p.add_argument("--which_layer", type=str, default="",
-                   help="Encoder layer to extract (default: from SAE ckpt)")
-    p.add_argument("--restore_token_norm", action="store_true",
-                   help="Multiply SAE activations by original per-token L2 norms "
-                        "before pooling")
+    p.add_argument(
+        "--which_layer",
+        type=str,
+        default="",
+        help="Encoder layer to extract (default: from SAE ckpt)",
+    )
+    p.add_argument(
+        "--restore_token_norm",
+        action="store_true",
+        help="Multiply SAE activations by original per-token L2 norms "
+        "before pooling",
+    )
 
     # Sampling
-    p.add_argument("--use_all_data", action="store_true",
-                   help="Load train+val+test (default: val+test only)")
+    p.add_argument(
+        "--use_all_data",
+        action="store_true",
+        help="Load train+val+test (default: val+test only)",
+    )
     p.add_argument("--seed", type=int, default=42)
 
     # Encoder architecture
@@ -144,7 +161,9 @@ def extract_all_sae_features(
 
     X_list, y_list, line_list, uid_list = [], [], [], []
 
-    for batch in tqdm(loader, desc="Extracting (batch centering + MEAN + L2norm)", leave=True):
+    for batch in tqdm(
+        loader, desc="Extracting (batch centering + MEAN + L2norm)", leave=True
+    ):
         if batch is None:
             continue
 
@@ -166,19 +185,15 @@ def extract_all_sae_features(
 
         # ── GAP-scalar normalization (same as step09 training) ──
         gap = fmap.mean(dim=(2, 3))
-        gap_norm = (
-            gap.norm(dim=1, keepdim=True)
-            .view(curr_bs, 1, 1, 1)
-            .clamp_min(1e-12)
-        )
+        gap_norm = gap.norm(dim=1, keepdim=True).view(curr_bs, 1, 1, 1).clamp_min(1e-12)
         fmap = fmap / gap_norm
 
-        fmap = fmap.permute(0, 2, 3, 1).contiguous()     # (B, H, W, C)
+        fmap = fmap.permute(0, 2, 3, 1).contiguous()  # (B, H, W, C)
         C = fmap.shape[-1]
         H_W = fmap.shape[1] * fmap.shape[2]
 
         # ── Batch centering (all B*H*W tokens, same as SAE training) ──
-        flat_tokens = fmap.view(-1, C)                     # (B*H*W, C)
+        flat_tokens = fmap.view(-1, C)  # (B*H*W, C)
         flat_tokens = flat_tokens - flat_tokens.mean(dim=0, keepdim=True)
 
         # ── Per-token L2 norms (before unit normalization) ──
@@ -205,12 +220,12 @@ def extract_all_sae_features(
             acts_list.append(chunk_acts)
             del chunk
 
-        acts = torch.cat(acts_list, dim=0)                 # (B*H*W, d_sae)
+        acts = torch.cat(acts_list, dim=0)  # (B*H*W, d_sae)
         del acts_list
 
         # ── Pool: image-level MEAN (GAP) ──
         acts = acts.view(curr_bs, H_W, sae.d_sae)
-        pooled = acts.mean(dim=1)                          # (B, d_sae)
+        pooled = acts.mean(dim=1)  # (B, d_sae)
 
         # ── Image-level L2 normalization ──
         pooled = F.normalize(pooled, dim=1)
@@ -275,9 +290,16 @@ def make_simple_loader(args, refs, uid_to_refidx, include_train=False):
     def uid_to_relative(uid: str) -> str:
         for root in KNOWN_ROOTS:
             if uid.startswith(root):
-                return uid[len(root):]
-        for cls_prefix in ["Control/", "SNCA/", "GBA/", "LRRK2/",
-                           "Control_C4/", "Control_C18/", "Control_C19/"]:
+                return uid[len(root) :]
+        for cls_prefix in [
+            "Control/",
+            "SNCA/",
+            "GBA/",
+            "LRRK2/",
+            "Control_C4/",
+            "Control_C18/",
+            "Control_C19/",
+        ]:
             idx = uid.find(cls_prefix)
             if idx >= 0:
                 return uid[idx:]
@@ -359,7 +381,9 @@ def main():
     usage_ema = sae.usage_ema.cpu().numpy()
 
     if args.which_layer and args.which_layer != which_layer_ckpt:
-        logger.warning(f"Overriding SAE ckpt layer '{which_layer_ckpt}' → '{which_layer}'")
+        logger.warning(
+            f"Overriding SAE ckpt layer '{which_layer_ckpt}' → '{which_layer}'"
+        )
     logger.info(f"SAE: d_sae={d_sae}, layer={which_layer}")
 
     # ── 2. Load encoder ──────────────────────────────────────────────────
@@ -370,10 +394,15 @@ def main():
     dilations = parse_int_list(args.dilations, 4)
 
     model = SupMoCoModel(
-        embed_dim=args.embed_dim, blocks=blocks, dilations=dilations,
-        refine_blocks=args.refine_blocks, ckpt_segments=args.ckpt_segments,
-        proj_layers=args.proj_layers, proj_hidden=args.proj_hidden,
-        proj_bn=args.proj_bn, proj_dropout=args.proj_dropout,
+        embed_dim=args.embed_dim,
+        blocks=blocks,
+        dilations=dilations,
+        refine_blocks=args.refine_blocks,
+        ckpt_segments=args.ckpt_segments,
+        proj_layers=args.proj_layers,
+        proj_hidden=args.proj_hidden,
+        proj_bn=args.proj_bn,
+        proj_dropout=args.proj_dropout,
     )
     sd = torch.load(args.model_state_path, map_location="cpu", weights_only=False)
     robust_load_state_dict(model, sd, strict=True)
@@ -397,17 +426,25 @@ def main():
     uid_to_refidx = build_uid_to_refidx(refs)
 
     loader = make_simple_loader(
-        args, refs, uid_to_refidx,
+        args,
+        refs,
+        uid_to_refidx,
         include_train=use_all,
     )
 
     # ── 4. Extract features ──────────────────────────────────────────────
     logger.info(f"\n{'='*60}")
-    logger.info(f"Extracting SAE features — batch centering + MEAN + F.normalize (legacy)")
+    logger.info(
+        f"Extracting SAE features — batch centering + MEAN + F.normalize (legacy)"
+    )
     logger.info(f"  ALL {d_sae} neurons, restore_token_norm={args.restore_token_norm}")
 
     X_all, y, lines, uids = extract_all_sae_features(
-        encoder, sae, loader, device, which_layer,
+        encoder,
+        sae,
+        loader,
+        device,
+        which_layer,
         restore_token_norm=args.restore_token_norm,
     )
     logger.info(f"Features: {X_all.shape}")
@@ -420,7 +457,7 @@ def main():
         all_tag = "_all" if use_all else ""
         out_path = os.path.join(
             os.path.dirname(args.sae_ckpt),
-            f"features_cache_{which_layer}{suffix}{all_tag}_legacy.npz"
+            f"features_cache_{which_layer}{suffix}{all_tag}_legacy.npz",
         )
 
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
@@ -453,7 +490,9 @@ def main():
         logger.info(f"  dead_threshold={thr:.0e}: {n_alive}/{d_sae} alive")
 
     logger.info(f"\n{'='*60}")
-    logger.info("Feature extraction complete! (legacy: batch centering + MEAN + F.normalize)")
+    logger.info(
+        "Feature extraction complete! (legacy: batch centering + MEAN + F.normalize)"
+    )
     logger.info(f"{'='*60}")
 
 

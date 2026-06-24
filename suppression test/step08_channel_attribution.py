@@ -40,14 +40,15 @@
 #     --seam_margin 4 \
 #     --dead_threshold 1e-5
 
-import os
-import sys
-import csv
-import random
 import argparse
-from typing import List, Dict
+import csv
+import os
+import random
+import sys
 from collections import defaultdict
+from typing import Dict, List
 
+import matplotlib
 import numpy as np
 import torch
 import torch.nn as nn
@@ -55,22 +56,21 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
-import matplotlib
 _IN_COLAB = "google.colab" in sys.modules
 if not _IN_COLAB:
     matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from sae_project.step02_logging_utils import get_logger, OUT_DIM
-from sae_project.step03_data_shards import load_all_sample_refs, build_uid_to_refidx
-from sae_project.step04_data_bank import (
-    InMemoryTarBank, InMemorySixteenBitDataset,
-    seed_worker, collate_skip_none,
-)
-from sae_project.step05_model_encoder import (
-    Encoder, SupMoCoModel, parse_int_list,
-    renorm_unit_per_out_channel_, robust_load_state_dict,
-)
+from sae_project.step02_logging_utils import OUT_DIM, get_logger
+from sae_project.step03_data_shards import (build_uid_to_refidx,
+                                            load_all_sample_refs)
+from sae_project.step04_data_bank import (InMemorySixteenBitDataset,
+                                          InMemoryTarBank, collate_skip_none,
+                                          seed_worker)
+from sae_project.step05_model_encoder import (Encoder, SupMoCoModel,
+                                              parse_int_list,
+                                              renorm_unit_per_out_channel_,
+                                              robust_load_state_dict)
 from sae_project.step06_gated_sae import GatedSAE
 
 logger = get_logger("channel_attribution")
@@ -105,27 +105,33 @@ def ud_swap_channels(x: torch.Tensor, channels: List[int]) -> torch.Tensor:
 # ==============================================================================
 # Seam masks — exclude swap-boundary artifacts from L2² computation
 # ==============================================================================
-def build_lr_seam_mask(H: int, W: int, margin: int, device: torch.device) -> torch.Tensor:
+def build_lr_seam_mask(
+    H: int, W: int, margin: int, device: torch.device
+) -> torch.Tensor:
     """Mask center ±margin and edges ±margin (width axis). Returns (1,1,H,W)."""
     mask = torch.ones(H, W, device=device)
     center = W // 2
-    mask[:, max(0, center - margin):min(W, center + margin)] = 0
+    mask[:, max(0, center - margin) : min(W, center + margin)] = 0
     mask[:, :margin] = 0
-    mask[:, W - margin:] = 0
+    mask[:, W - margin :] = 0
     return mask.view(1, 1, H, W)
 
 
-def build_ud_seam_mask(H: int, W: int, margin: int, device: torch.device) -> torch.Tensor:
+def build_ud_seam_mask(
+    H: int, W: int, margin: int, device: torch.device
+) -> torch.Tensor:
     """Mask center ±margin and edges ±margin (height axis). Returns (1,1,H,W)."""
     mask = torch.ones(H, W, device=device)
     center = H // 2
-    mask[max(0, center - margin):min(H, center + margin), :] = 0
+    mask[max(0, center - margin) : min(H, center + margin), :] = 0
     mask[:margin, :] = 0
-    mask[H - margin:, :] = 0
+    mask[H - margin :, :] = 0
     return mask.view(1, 1, H, W)
 
 
-def build_combined_seam_mask(H: int, W: int, margin: int, device: torch.device) -> torch.Tensor:
+def build_combined_seam_mask(
+    H: int, W: int, margin: int, device: torch.device
+) -> torch.Tensor:
     """Mask both lr and ud seams. Returns (1,1,H,W)."""
     lr = build_lr_seam_mask(H, W, margin, device).squeeze()
     ud = build_ud_seam_mask(H, W, margin, device).squeeze()
@@ -137,8 +143,10 @@ def build_combined_seam_mask(H: int, W: int, margin: int, device: torch.device) 
 # ==============================================================================
 @torch.no_grad()
 def get_sae_activation_maps(
-    encoder: Encoder, sae: GatedSAE,
-    x: torch.Tensor, which_layer: str,
+    encoder: Encoder,
+    sae: GatedSAE,
+    x: torch.Tensor,
+    which_layer: str,
 ) -> torch.Tensor:
     """Returns act_maps: (B, d_sae, H, W) — full spatial, token-norm restored.
     Uses per-image centering (matches step14_visualize_concept_activations)."""
@@ -176,8 +184,6 @@ def get_sae_activation_maps(
     return all_acts.view(B, H, W, d_sae).permute(0, 3, 1, 2)  # (B, d_sae, H, W)
 
 
-
-
 # ==============================================================================
 # Split CSV (reuse)
 # ==============================================================================
@@ -188,11 +194,13 @@ KNOWN_SHARD_ROOTS = [
     "/content/wds_shards",
 ]
 
+
 def remap_uid(uid, new_root):
     for old in KNOWN_SHARD_ROOTS:
         if uid.startswith(old):
-            return new_root + uid[len(old):]
+            return new_root + uid[len(old) :]
     return uid
+
 
 def load_split_csv(csv_path, shard_root=None):
     uids = []
@@ -212,17 +220,29 @@ def plot_histogram(values, title, xlabel, path, alive_mask=None, vline=None, dpi
     if alive_mask is not None:
         values = values[alive_mask]
     fig, ax = plt.subplots(figsize=(10, 5))
-    ax.hist(values[np.isfinite(values)], bins=100, alpha=0.7,
-            color="#4C72B0", edgecolor="black", linewidth=0.3)
+    ax.hist(
+        values[np.isfinite(values)],
+        bins=100,
+        alpha=0.7,
+        color="#4C72B0",
+        edgecolor="black",
+        linewidth=0.3,
+    )
     if vline is not None:
         ax.axvline(vline, color="red", linestyle="--", linewidth=1.5)
     ax.set_xlabel(xlabel, fontsize=12)
     ax.set_ylabel("Count", fontsize=12)
     ax.set_title(title, fontsize=13, fontweight="bold")
-    ax.text(0.98, 0.95,
-            f"n={len(values)}\nmean={np.nanmean(values):.6f}\nstd={np.nanstd(values):.6f}",
-            transform=ax.transAxes, fontsize=9, va="top", ha="right",
-            bbox=dict(boxstyle="round", facecolor="white", alpha=0.8))
+    ax.text(
+        0.98,
+        0.95,
+        f"n={len(values)}\nmean={np.nanmean(values):.6f}\nstd={np.nanstd(values):.6f}",
+        transform=ax.transAxes,
+        fontsize=9,
+        va="top",
+        ha="right",
+        bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
+    )
     ax.grid(True, alpha=0.2)
     fig.tight_layout()
     fig.savefig(path, dpi=dpi, bbox_inches="tight")
@@ -259,8 +279,12 @@ def get_args():
     # DEG-based neuron filtering
     p.add_argument("--de_adj_p", type=float, default=0.05)
     p.add_argument("--de_min_log2fc", type=float, default=1.5)
-    p.add_argument("--de_top_k", type=int, default=0,
-                   help="If >0, keep only top-K DE neurons by |log2fc|")
+    p.add_argument(
+        "--de_top_k",
+        type=int,
+        default=0,
+        help="If >0, keep only top-K DE neurons by |log2fc|",
+    )
 
     p.add_argument("--output_dir", type=str, default="")
     p.add_argument("--seed", type=int, default=42)
@@ -306,10 +330,13 @@ def main():
     blocks = parse_int_list(args.blocks, 4)
     dilations = parse_int_list(args.dilations, 4)
     model = SupMoCoModel(
-        embed_dim=512, blocks=blocks, dilations=dilations,
+        embed_dim=512,
+        blocks=blocks,
+        dilations=dilations,
         refine_blocks=args.refine_blocks,
         ckpt_segments=args.ckpt_segments,
-        proj_layers=2, proj_hidden=2048,
+        proj_layers=2,
+        proj_hidden=2048,
     )
     ckpt = torch.load(args.model_state_path, map_location="cpu", weights_only=False)
     robust_load_state_dict(model, ckpt, strict=False)
@@ -347,7 +374,7 @@ def main():
         for cls in sorted(class_to_idx.keys()):
             idxs = class_to_idx[cls]
             rng.shuffle(idxs)
-            sampled.extend(idxs[:min(spc, len(idxs))])
+            sampled.extend(idxs[: min(spc, len(idxs))])
         ref_indices = sampled
 
     logger.info(f"Samples: {len(ref_indices)}")
@@ -359,9 +386,14 @@ def main():
     ib = list(range(len(ref_indices)))
     ds = InMemorySixteenBitDataset(bank, ib, args.img_size, augment=False)
     loader = DataLoader(
-        ds, batch_size=args.batch_size, shuffle=False,
-        num_workers=args.num_workers, pin_memory=True,
-        worker_init_fn=seed_worker, collate_fn=collate_skip_none)
+        ds,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=True,
+        worker_init_fn=seed_worker,
+        collate_fn=collate_skip_none,
+    )
 
     if args.output_dir:
         out_dir = args.output_dir
@@ -393,7 +425,8 @@ def main():
         if x.numel() < 1:
             continue
         x_orig = x.to(device, non_blocking=True).contiguous(
-            memory_format=torch.channels_last)
+            memory_format=torch.channels_last
+        )
         with torch.amp.autocast(**autocast_kwargs):
             act_maps = get_sae_activation_maps(encoder, sae, x_orig, which_layer)
         # Build seam mask from activation map resolution (once)
@@ -401,13 +434,15 @@ def main():
             _, _, H_act, W_act = act_maps.shape
             seam_mask = build_combined_seam_mask(H_act, W_act, margin, device)
             n_valid = int(seam_mask.sum().item())
-            logger.info(f"  Act map: {H_act}x{W_act}, seam margin={margin}, "
-                        f"valid pixels: {n_valid}/{H_act*W_act}")
+            logger.info(
+                f"  Act map: {H_act}x{W_act}, seam margin={margin}, "
+                f"valid pixels: {n_valid}/{H_act*W_act}"
+            )
         gap_vals = act_maps.mean(dim=(2, 3))  # (B, d_sae)
         gap_vals = F.normalize(gap_vals, dim=1)  # L2 normalize (match extract_features)
         gap_all_list.append(gap_vals.cpu().float().numpy())
 
-    gap_all = np.concatenate(gap_all_list, axis=0)   # (N, d_sae)
+    gap_all = np.concatenate(gap_all_list, axis=0)  # (N, d_sae)
     N_total = gap_all.shape[0]
     k_actual = min(top_k, N_total)
     logger.info(f"  Total images: {N_total}, top-K: {k_actual}")
@@ -417,8 +452,7 @@ def main():
     for n_i in range(d_sae):
         if not alive_mask[n_i]:
             continue
-        topk_indices[n_i] = np.argpartition(
-            gap_all[:, n_i], -k_actual)[-k_actual:]
+        topk_indices[n_i] = np.argpartition(gap_all[:, n_i], -k_actual)[-k_actual:]
 
     del gap_all_list
     logger.info("  Top-K indices ready.")
@@ -435,20 +469,22 @@ def main():
 
     sc_arr = np.array(superclasses)
     alive_indices = np.where(alive_mask)[0]
-    gap_alive = gap_all[:, alive_mask]   # (N, n_alive) — BH on alive only
+    gap_alive = gap_all[:, alive_mask]  # (N, n_alive) — BH on alive only
 
-    logger.info(f"  Control: {(sc_arr == 'Control').sum()}, "
-                f"alive neurons for DE: {gap_alive.shape[1]}")
+    logger.info(
+        f"  Control: {(sc_arr == 'Control').sum()}, "
+        f"alive neurons for DE: {gap_alive.shape[1]}"
+    )
 
     # Run 4 comparisons and union (mask over alive neurons)
     de_mask_full = np.zeros(d_sae, dtype=bool)
     de_log2fc_full = np.zeros(d_sae)
 
     comparisons = [
-        ("AllMut",  [("AllMut" if s != "Control" else "Control") for s in superclasses]),
-        ("SNCA",    superclasses),
-        ("GBA",     superclasses),
-        ("LRRK2",   superclasses),
+        ("AllMut", [("AllMut" if s != "Control" else "Control") for s in superclasses]),
+        ("SNCA", superclasses),
+        ("GBA", superclasses),
+        ("LRRK2", superclasses),
     ]
 
     for target_name, sc_list in comparisons:
@@ -463,12 +499,14 @@ def main():
             continue
 
         de_result = compute_de_neurons(
-            gap_alive, sc_list, target_name,
+            gap_alive,
+            sc_list,
+            target_name,
             adj_p_threshold=args.de_adj_p,
             min_log2fc=args.de_min_log2fc,
         )
         # Map alive-space mask back to full d_sae
-        mask_alive = de_result["mask"]   # (n_alive,)
+        mask_alive = de_result["mask"]  # (n_alive,)
         mask_full = np.zeros(d_sae, dtype=bool)
         mask_full[alive_indices[mask_alive]] = True
         de_mask_full |= mask_full
@@ -482,7 +520,7 @@ def main():
     if args.de_top_k > 0 and de_mask.sum() > args.de_top_k:
         sig_idx = np.where(de_mask)[0]
         abs_fc = np.abs(de_log2fc_full[sig_idx])
-        top_k_idx = sig_idx[np.argsort(abs_fc)[::-1][:args.de_top_k]]
+        top_k_idx = sig_idx[np.argsort(abs_fc)[::-1][: args.de_top_k]]
         de_mask = np.zeros_like(de_mask)
         de_mask[top_k_idx] = True
 
@@ -490,7 +528,9 @@ def main():
     n_ctrl_high = int((de_mask & (de_log2fc_full < 0)).sum())
     n_mut_high = int((de_mask & (de_log2fc_full > 0)).sum())
     logger.info(f"\n  Union DE significant: {n_de} neurons")
-    logger.info(f"    (AllMut log2fc ref) Control-high: {n_ctrl_high}, Mut-high: {n_mut_high}")
+    logger.info(
+        f"    (AllMut log2fc ref) Control-high: {n_ctrl_high}, Mut-high: {n_mut_high}"
+    )
 
     # Combine: must be alive AND DE-significant
     alive_mask = alive_mask & de_mask
@@ -498,7 +538,9 @@ def main():
     logger.info(f"  Final analysis neurons: {n_alive} (alive & DE-significant)")
 
     if n_alive < 2:
-        logger.warning("Too few neurons after DE filtering! Falling back to alive-only.")
+        logger.warning(
+            "Too few neurons after DE filtering! Falling back to alive-only."
+        )
         alive_mask = usage_ema >= args.dead_threshold
         n_alive = int(alive_mask.sum())
 
@@ -511,23 +553,23 @@ def main():
     # Each shifts 2 channels in different directions, 1 unchanged.
     # All 3 pairwise interactions are broken in every case.
     inv_conditions = {
-        "Rlr_Gud":  lambda x: ud_swap_channels(lr_swap_channels(x, [0]), [1]),
-        "Rud_Glr":  lambda x: lr_swap_channels(ud_swap_channels(x, [0]), [1]),
-        "Rlr_Bud":  lambda x: ud_swap_channels(lr_swap_channels(x, [0]), [2]),
-        "Rud_Blr":  lambda x: lr_swap_channels(ud_swap_channels(x, [0]), [2]),
-        "Glr_Bud":  lambda x: ud_swap_channels(lr_swap_channels(x, [1]), [2]),
-        "Gud_Blr":  lambda x: lr_swap_channels(ud_swap_channels(x, [1]), [2]),
+        "Rlr_Gud": lambda x: ud_swap_channels(lr_swap_channels(x, [0]), [1]),
+        "Rud_Glr": lambda x: lr_swap_channels(ud_swap_channels(x, [0]), [1]),
+        "Rlr_Bud": lambda x: ud_swap_channels(lr_swap_channels(x, [0]), [2]),
+        "Rud_Blr": lambda x: lr_swap_channels(ud_swap_channels(x, [0]), [2]),
+        "Glr_Bud": lambda x: ud_swap_channels(lr_swap_channels(x, [1]), [2]),
+        "Gud_Blr": lambda x: lr_swap_channels(ud_swap_channels(x, [1]), [2]),
     }
 
     # --- Phase B: Attribution conditions ---
     # all_broken reuses first invariance condition
     attribution_conditions = {
-        "R_only_lr":   lambda x: lr_swap_channels(x, [0]),             # GB preserved
-        "R_only_ud":   lambda x: ud_swap_channels(x, [0]),             # GB preserved
-        "G_only_lr":   lambda x: lr_swap_channels(x, [1]),             # RB preserved
-        "G_only_ud":   lambda x: ud_swap_channels(x, [1]),             # RB preserved
-        "B_only_lr":   lambda x: lr_swap_channels(x, [2]),             # RG preserved
-        "B_only_ud":   lambda x: ud_swap_channels(x, [2]),             # RG preserved
+        "R_only_lr": lambda x: lr_swap_channels(x, [0]),  # GB preserved
+        "R_only_ud": lambda x: ud_swap_channels(x, [0]),  # GB preserved
+        "G_only_lr": lambda x: lr_swap_channels(x, [1]),  # RB preserved
+        "G_only_ud": lambda x: ud_swap_channels(x, [1]),  # RB preserved
+        "B_only_lr": lambda x: lr_swap_channels(x, [2]),  # RG preserved
+        "B_only_ud": lambda x: ud_swap_channels(x, [2]),  # RG preserved
     }
 
     # ══════════════════════════════════════════════════════════════
@@ -549,21 +591,22 @@ def main():
             if x.numel() < 1:
                 continue
             x_dev = x.to(device, non_blocking=True).contiguous(
-                memory_format=torch.channels_last)
+                memory_format=torch.channels_last
+            )
             if perturb_fn is not None:
-                x_dev = perturb_fn(x_dev).contiguous(
-                    memory_format=torch.channels_last)
+                x_dev = perturb_fn(x_dev).contiguous(memory_format=torch.channels_last)
             with torch.amp.autocast(**autocast_kwargs):
                 act_maps = get_sae_activation_maps(
-                    encoder, sae, x_dev, which_layer)  # (B, d_sae, H, W)
-            masked = act_maps * seam_mask             # broadcast (1,1,H,W)
-            l2sq = (masked ** 2).sum(dim=(2, 3))      # (B, d_sae)
+                    encoder, sae, x_dev, which_layer
+                )  # (B, d_sae, H, W)
+            masked = act_maps * seam_mask  # broadcast (1,1,H,W)
+            l2sq = (masked**2).sum(dim=(2, 3))  # (B, d_sae)
             gap = masked.sum(dim=(2, 3)) / n_active_pixels  # (B, d_sae)
             l2sq_list.append(l2sq.cpu().float().numpy())
             gap_list.append(gap.cpu().float().numpy())
         return {
             "l2sq": np.concatenate(l2sq_list, axis=0),
-            "gap":  np.concatenate(gap_list, axis=0),
+            "gap": np.concatenate(gap_list, axis=0),
         }
 
     # ══════════════════════════════════════════════════════════════
@@ -574,7 +617,7 @@ def main():
     logger.info(f"{'='*60}")
     orig_data = collect_spatial(None, desc="original")
     l2sq_orig = orig_data["l2sq"]  # (N, d_sae)
-    gap_orig = orig_data["gap"]    # (N, d_sae)
+    gap_orig = orig_data["gap"]  # (N, d_sae)
 
     # ══════════════════════════════════════════════════════════════
     # PHASE A: Direction Invariance (all 6 conditions, pairwise)
@@ -584,8 +627,8 @@ def main():
     logger.info(f"{'='*60}")
 
     # Collect L2² + GAP for all 6 conditions
-    inv_l2sq = {}    # name → (N, d_sae)
-    inv_gap = {}     # name → (N, d_sae)
+    inv_l2sq = {}  # name → (N, d_sae)
+    inv_gap = {}  # name → (N, d_sae)
     inv_names = list(inv_conditions.keys())
     for cond_name, perturb_fn in inv_conditions.items():
         logger.info(f"\n  Collecting: {cond_name}")
@@ -614,7 +657,9 @@ def main():
         return per_neuron, flat
 
     # Pairwise comparison — all 15 pairs
-    logger.info(f"\n  {'Pair':<20s}  {'median_ratio':>12s}  {'mean±std':>16s}  {'[0.8-1.2]':>10s}")
+    logger.info(
+        f"\n  {'Pair':<20s}  {'median_ratio':>12s}  {'mean±std':>16s}  {'[0.8-1.2]':>10s}"
+    )
     logger.info(f"  {'-'*20}  {'-'*12}  {'-'*16}  {'-'*10}")
 
     first_pair_flat = None
@@ -622,17 +667,18 @@ def main():
     for i in range(len(inv_names)):
         for j in range(i + 1, len(inv_names)):
             na, nb = inv_names[i], inv_names[j]
-            pn_ratio, flat_ratio = compute_pairwise_ratio(
-                inv_l2sq[na], inv_l2sq[nb])
+            pn_ratio, flat_ratio = compute_pairwise_ratio(inv_l2sq[na], inv_l2sq[nb])
             if len(flat_ratio) == 0:
                 continue
             valid_pn = pn_ratio[alive_mask & np.isfinite(pn_ratio)]
             in_band = ((flat_ratio > 0.8) & (flat_ratio < 1.2)).sum()
             pct = in_band / len(flat_ratio) * 100
-            logger.info(f"  {na} vs {nb:<10s}  "
-                        f"{np.median(flat_ratio):12.4f}  "
-                        f"{flat_ratio.mean():.4f}±{flat_ratio.std():.4f}  "
-                        f"{pct:8.1f}%")
+            logger.info(
+                f"  {na} vs {nb:<10s}  "
+                f"{np.median(flat_ratio):12.4f}  "
+                f"{flat_ratio.mean():.4f}±{flat_ratio.std():.4f}  "
+                f"{pct:8.1f}%"
+            )
             if first_pair_flat is None:
                 first_pair_flat = flat_ratio
                 first_pair_name = f"{na} vs {nb}"
@@ -641,25 +687,34 @@ def main():
     if first_pair_flat is not None:
         logger.info(f"\n  Detailed: {first_pair_name}")
         logger.info(f"    N ratios: {len(first_pair_flat)}")
-        logger.info(f"    5th/95th pctl: [{np.percentile(first_pair_flat, 5):.4f}, "
-                    f"{np.percentile(first_pair_flat, 95):.4f}]")
+        logger.info(
+            f"    5th/95th pctl: [{np.percentile(first_pair_flat, 5):.4f}, "
+            f"{np.percentile(first_pair_flat, 95):.4f}]"
+        )
 
         plot_histogram(
             first_pair_flat,
             f"Direction Invariance – {first_pair_name}",
             "L2²(A) / L2²(B)",
             os.path.join(out_dir, "invariance_ratio_per_image.png"),
-            alive_mask=None, vline=1.0, dpi=args.dpi)
+            alive_mask=None,
+            vline=1.0,
+            dpi=args.dpi,
+        )
 
     # Per-neuron median ratio (first pair for histogram)
     pn_median_first, _ = compute_pairwise_ratio(
-        inv_l2sq[inv_names[0]], inv_l2sq[inv_names[1]])
+        inv_l2sq[inv_names[0]], inv_l2sq[inv_names[1]]
+    )
     plot_histogram(
         pn_median_first,
         "Direction Invariance – per-neuron median ratio",
         "median(L2²(A) / L2²(B))",
         os.path.join(out_dir, "invariance_ratio_per_neuron.png"),
-        alive_mask=alive_mask, vline=1.0, dpi=args.dpi)
+        alive_mask=alive_mask,
+        vline=1.0,
+        dpi=args.dpi,
+    )
 
     # ══════════════════════════════════════════════════════════════
     # PHASE B: Attribution (averaged over all direction variants)
@@ -677,9 +732,9 @@ def main():
     l2sq_conds = {"all_broken": l2sq_all}
     gap_conds = {"all_broken": gap_all_broken}
     single_shift_pairs = [
-        ("R_only", ["R_only_lr", "R_only_ud"]),   # GB preserved
-        ("G_only", ["G_only_lr", "G_only_ud"]),   # RB preserved
-        ("B_only", ["B_only_lr", "B_only_ud"]),   # RG preserved
+        ("R_only", ["R_only_lr", "R_only_ud"]),  # GB preserved
+        ("G_only", ["G_only_lr", "G_only_ud"]),  # RB preserved
+        ("B_only", ["B_only_lr", "B_only_ud"]),  # RG preserved
     ]
 
     for avg_name, cond_names in single_shift_pairs:
@@ -704,10 +759,10 @@ def main():
             continue
         idx = topk_indices[n_i]
         topk_orig[n_i] = l2sq_orig[idx, n_i].mean()
-        topk_all[n_i]  = l2sq_all[idx, n_i].mean()
-        topk_R[n_i]    = l2sq_conds["R_only"][idx, n_i].mean()
-        topk_G[n_i]    = l2sq_conds["G_only"][idx, n_i].mean()
-        topk_B[n_i]    = l2sq_conds["B_only"][idx, n_i].mean()
+        topk_all[n_i] = l2sq_all[idx, n_i].mean()
+        topk_R[n_i] = l2sq_conds["R_only"][idx, n_i].mean()
+        topk_G[n_i] = l2sq_conds["G_only"][idx, n_i].mean()
+        topk_B[n_i] = l2sq_conds["B_only"][idx, n_i].mean()
 
     # ── Compute contributions ──
     # GB_contrib = L2²(R_only) - L2²(all_broken)  (GB preserved when only R shifts)
@@ -730,13 +785,20 @@ def main():
     for pair, contrib in [("RG", contrib_RG), ("RB", contrib_RB), ("GB", contrib_GB)]:
         vals = contrib[alive_mask]
         n_neg = int((vals < 0).sum())
-        logger.info(f"  {pair}_contrib: mean={vals.mean():.6f}, "
-                    f"median={np.median(vals):.6f}, std={vals.std():.6f}, "
-                    f"negative={n_neg}/{len(vals)} ({n_neg/len(vals)*100:.1f}%)")
+        logger.info(
+            f"  {pair}_contrib: mean={vals.mean():.6f}, "
+            f"median={np.median(vals):.6f}, std={vals.std():.6f}, "
+            f"negative={n_neg}/{len(vals)} ({n_neg/len(vals)*100:.1f}%)"
+        )
 
     # L2² sanity check: should always be ≥ 0 (sum of squares)
-    for name, arr in [("orig", topk_orig), ("all_broken", topk_all),
-                      ("R_only", topk_R), ("G_only", topk_G), ("B_only", topk_B)]:
+    for name, arr in [
+        ("orig", topk_orig),
+        ("all_broken", topk_all),
+        ("R_only", topk_R),
+        ("G_only", topk_G),
+        ("B_only", topk_B),
+    ]:
         neg_count = int((arr[alive_mask] < 0).sum())
         if neg_count > 0:
             logger.warning(f"  ⚠️ L2²({name}) has {neg_count} negative values!")
@@ -756,12 +818,16 @@ def main():
     logger.info(f"\n  ── Standard additivity (raw contributions) ──")
     agg_sum = sum_contribs[alive_mask].sum()
     agg_total = total_spatial[alive_mask].sum()
-    logger.info(f"  Aggregate ratio: sum_contribs/total_spatial = "
-                f"{agg_sum:.4f} / {agg_total:.4f} = {agg_sum / (agg_total + 1e-12):.4f}")
+    logger.info(
+        f"  Aggregate ratio: sum_contribs/total_spatial = "
+        f"{agg_sum:.4f} / {agg_total:.4f} = {agg_sum / (agg_total + 1e-12):.4f}"
+    )
 
     # Per-neuron ratio (exclude neurons with negligible total_spatial)
     additivity_ratio = np.full(d_sae, np.nan)
-    spatial_threshold = np.percentile(total_spatial[alive_mask], 10)  # exclude bottom 10%
+    spatial_threshold = np.percentile(
+        total_spatial[alive_mask], 10
+    )  # exclude bottom 10%
     spatial_threshold = max(spatial_threshold, 1e-6)
     for n_i in range(d_sae):
         if not alive_mask[n_i]:
@@ -774,11 +840,15 @@ def main():
     logger.info(f"\n  Per-neuron ratio (total_spatial > {spatial_threshold:.6f}):")
     logger.info(f"    N neurons: {len(valid_add)}")
     logger.info(f"    mean={valid_add.mean():.4f}, median={np.median(valid_add):.4f}")
-    logger.info(f"    5th/95th pctl: [{np.percentile(valid_add, 5):.4f}, "
-                f"{np.percentile(valid_add, 95):.4f}]")
+    logger.info(
+        f"    5th/95th pctl: [{np.percentile(valid_add, 5):.4f}, "
+        f"{np.percentile(valid_add, 95):.4f}]"
+    )
     in_band = ((valid_add > 0.8) & (valid_add < 1.2)).sum()
-    logger.info(f"    [0.8-1.2]: {in_band}/{len(valid_add)} "
-                f"({in_band/len(valid_add)*100:.1f}%)")
+    logger.info(
+        f"    [0.8-1.2]: {in_band}/{len(valid_add)} "
+        f"({in_band/len(valid_add)*100:.1f}%)"
+    )
 
     # --- Absolute-value additivity ---
     # If a pair interaction suppresses activation (negative contrib),
@@ -787,8 +857,10 @@ def main():
     abs_sum_contribs = np.abs(contrib_RG) + np.abs(contrib_RB) + np.abs(contrib_GB)
 
     abs_agg_sum = abs_sum_contribs[alive_mask].sum()
-    logger.info(f"  Aggregate |ratio|: sum(|contribs|)/total_spatial = "
-                f"{abs_agg_sum:.4f} / {agg_total:.4f} = {abs_agg_sum / (agg_total + 1e-12):.4f}")
+    logger.info(
+        f"  Aggregate |ratio|: sum(|contribs|)/total_spatial = "
+        f"{abs_agg_sum:.4f} / {agg_total:.4f} = {abs_agg_sum / (agg_total + 1e-12):.4f}"
+    )
 
     abs_additivity_ratio = np.full(d_sae, np.nan)
     for n_i in range(d_sae):
@@ -802,11 +874,15 @@ def main():
     logger.info(f"  Per-neuron |ratio| (total_spatial > {spatial_threshold:.6f}):")
     logger.info(f"    N neurons: {len(valid_abs)}")
     logger.info(f"    mean={valid_abs.mean():.4f}, median={np.median(valid_abs):.4f}")
-    logger.info(f"    5th/95th pctl: [{np.percentile(valid_abs, 5):.4f}, "
-                f"{np.percentile(valid_abs, 95):.4f}]")
+    logger.info(
+        f"    5th/95th pctl: [{np.percentile(valid_abs, 5):.4f}, "
+        f"{np.percentile(valid_abs, 95):.4f}]"
+    )
     abs_in_band = ((valid_abs > 0.8) & (valid_abs < 1.2)).sum()
-    logger.info(f"    [0.8-1.2]: {abs_in_band}/{len(valid_abs)} "
-                f"({abs_in_band/len(valid_abs)*100:.1f}%)")
+    logger.info(
+        f"    [0.8-1.2]: {abs_in_band}/{len(valid_abs)} "
+        f"({abs_in_band/len(valid_abs)*100:.1f}%)"
+    )
 
     # --- Per-image linearity ratio (orig as denominator — robust) ---
     # For each (image, neuron): (all_broken + RG + RB + GB) / L2²(orig)
@@ -823,16 +899,16 @@ def main():
         if not alive_mask[n_i]:
             continue
         idx = topk_indices[n_i]  # top-K image indices for this neuron
-        orig_vals = l2sq_orig[idx, n_i]      # (K,)
-        all_vals  = l2sq_all_arr[idx, n_i]   # (K,)
-        R_vals    = l2sq_R_arr[idx, n_i]     # (K,)
-        G_vals    = l2sq_G_arr[idx, n_i]     # (K,)
-        B_vals    = l2sq_B_arr[idx, n_i]     # (K,)
+        orig_vals = l2sq_orig[idx, n_i]  # (K,)
+        all_vals = l2sq_all_arr[idx, n_i]  # (K,)
+        R_vals = l2sq_R_arr[idx, n_i]  # (K,)
+        G_vals = l2sq_G_arr[idx, n_i]  # (K,)
+        B_vals = l2sq_B_arr[idx, n_i]  # (K,)
 
         # Per-image contributions
-        rg_i = B_vals - all_vals   # RG preserved when B shifts
-        rb_i = G_vals - all_vals   # RB preserved when G shifts
-        gb_i = R_vals - all_vals   # GB preserved when R shifts
+        rg_i = B_vals - all_vals  # RG preserved when B shifts
+        rb_i = G_vals - all_vals  # RB preserved when G shifts
+        gb_i = R_vals - all_vals  # GB preserved when R shifts
 
         # Reconstructed = all_broken + pairwise contributions
         reconstructed = all_vals + rg_i + rb_i + gb_i
@@ -849,13 +925,19 @@ def main():
     valid_lin = valid_lin[np.isfinite(valid_lin)]
     logger.info(f"    N neurons: {len(valid_lin)}")
     logger.info(f"    mean={valid_lin.mean():.4f}, median={np.median(valid_lin):.4f}")
-    logger.info(f"    5th/95th pctl: [{np.percentile(valid_lin, 5):.4f}, "
-                f"{np.percentile(valid_lin, 95):.4f}]")
+    logger.info(
+        f"    5th/95th pctl: [{np.percentile(valid_lin, 5):.4f}, "
+        f"{np.percentile(valid_lin, 95):.4f}]"
+    )
     lin_in_band = ((valid_lin > 0.8) & (valid_lin < 1.2)).sum()
-    logger.info(f"    [0.8-1.2]: {lin_in_band}/{len(valid_lin)} "
-                f"({lin_in_band/len(valid_lin)*100:.1f}%)")
-    logger.info(f"    Interpretation: 1.0 = perfect pairwise decomposition, "
-                f"<1.0 = 3-way interaction exists")
+    logger.info(
+        f"    [0.8-1.2]: {lin_in_band}/{len(valid_lin)} "
+        f"({lin_in_band/len(valid_lin)*100:.1f}%)"
+    )
+    logger.info(
+        f"    Interpretation: 1.0 = perfect pairwise decomposition, "
+        f"<1.0 = 3-way interaction exists"
+    )
 
     # ══════════════════════════════════════════════════════════════
     # PHASE D: GAP-based Attribution (parallel to L2²)
@@ -875,10 +957,10 @@ def main():
             continue
         idx = topk_indices[n_i]  # same top-K (based on orig L2²)
         g_topk_orig[n_i] = gap_orig[idx, n_i].mean()
-        g_topk_all[n_i]  = gap_conds["all_broken"][idx, n_i].mean()
-        g_topk_R[n_i]    = gap_conds["R_only"][idx, n_i].mean()
-        g_topk_G[n_i]    = gap_conds["G_only"][idx, n_i].mean()
-        g_topk_B[n_i]    = gap_conds["B_only"][idx, n_i].mean()
+        g_topk_all[n_i] = gap_conds["all_broken"][idx, n_i].mean()
+        g_topk_R[n_i] = gap_conds["R_only"][idx, n_i].mean()
+        g_topk_G[n_i] = gap_conds["G_only"][idx, n_i].mean()
+        g_topk_B[n_i] = gap_conds["B_only"][idx, n_i].mean()
 
     g_contrib_GB = g_topk_R - g_topk_all
     g_contrib_RB = g_topk_G - g_topk_all
@@ -887,21 +969,31 @@ def main():
 
     logger.info(f"\n  GAP(orig) mean: {g_topk_orig[alive_mask].mean():.6f}")
     logger.info(f"  GAP(all_broken) mean: {g_topk_all[alive_mask].mean():.6f}")
-    logger.info(f"  GAP total spatial effect mean: {g_total_spatial[alive_mask].mean():.6f}")
+    logger.info(
+        f"  GAP total spatial effect mean: {g_total_spatial[alive_mask].mean():.6f}"
+    )
 
-    for pair, contrib in [("RG", g_contrib_RG), ("RB", g_contrib_RB), ("GB", g_contrib_GB)]:
+    for pair, contrib in [
+        ("RG", g_contrib_RG),
+        ("RB", g_contrib_RB),
+        ("GB", g_contrib_GB),
+    ]:
         vals = contrib[alive_mask]
         n_neg = int((vals < 0).sum())
-        logger.info(f"  GAP {pair}_contrib: mean={vals.mean():.6f}, "
-                    f"median={np.median(vals):.6f}, std={vals.std():.6f}, "
-                    f"negative={n_neg}/{len(vals)} ({n_neg/len(vals)*100:.1f}%)")
+        logger.info(
+            f"  GAP {pair}_contrib: mean={vals.mean():.6f}, "
+            f"median={np.median(vals):.6f}, std={vals.std():.6f}, "
+            f"negative={n_neg}/{len(vals)} ({n_neg/len(vals)*100:.1f}%)"
+        )
 
     # GAP additivity
     g_sum_contribs = g_contrib_RG + g_contrib_RB + g_contrib_GB
     g_agg_sum = g_sum_contribs[alive_mask].sum()
     g_agg_total = g_total_spatial[alive_mask].sum()
-    logger.info(f"\n  GAP aggregate ratio: {g_agg_sum:.4f} / {g_agg_total:.4f} = "
-                f"{g_agg_sum / (g_agg_total + 1e-12):.4f}")
+    logger.info(
+        f"\n  GAP aggregate ratio: {g_agg_sum:.4f} / {g_agg_total:.4f} = "
+        f"{g_agg_sum / (g_agg_total + 1e-12):.4f}"
+    )
 
     # GAP per-image linearity (orig as denominator)
     g_linearity = np.full(d_sae, np.nan)
@@ -925,11 +1017,15 @@ def main():
     logger.info(f"\n  GAP per-image linearity: reconstructed / GAP(orig)")
     logger.info(f"    N neurons: {len(g_valid)}")
     logger.info(f"    mean={g_valid.mean():.4f}, median={np.median(g_valid):.4f}")
-    logger.info(f"    5th/95th pctl: [{np.percentile(g_valid, 5):.4f}, "
-                f"{np.percentile(g_valid, 95):.4f}]")
+    logger.info(
+        f"    5th/95th pctl: [{np.percentile(g_valid, 5):.4f}, "
+        f"{np.percentile(g_valid, 95):.4f}]"
+    )
     g_in_band = ((g_valid > 0.8) & (g_valid < 1.2)).sum()
-    logger.info(f"    [0.8-1.2]: {g_in_band}/{len(g_valid)} "
-                f"({g_in_band/len(g_valid)*100:.1f}%)")
+    logger.info(
+        f"    [0.8-1.2]: {g_in_band}/{len(g_valid)} "
+        f"({g_in_band/len(g_valid)*100:.1f}%)"
+    )
 
     # GAP fractions
     g_RG_clip = np.maximum(g_contrib_RG, 0)
@@ -941,7 +1037,9 @@ def main():
     g_frac_GB = g_GB_clip / g_total_clip
     for pair, frac in [("RG", g_frac_RG), ("RB", g_frac_RB), ("GB", g_frac_GB)]:
         vals = frac[alive_mask]
-        logger.info(f"  GAP {pair} fraction: mean={vals.mean():.4f}, std={vals.std():.4f}")
+        logger.info(
+            f"  GAP {pair} fraction: mean={vals.mean():.4f}, std={vals.std():.4f}"
+        )
 
     # ── Interaction fractions (normalized to sum=1) — L2² ──
     total_contrib = contrib_RG + contrib_RB + contrib_GB
@@ -961,28 +1059,35 @@ def main():
 
     # ── Save ──
     npz_path = os.path.join(out_dir, "channel_attribution_results.npz")
-    np.savez_compressed(npz_path,
-                        # Phase A: invariance (first pair)
-                        inv_ratio_all=first_pair_flat,
-                        inv_ratio_per_neuron=pn_median_first,
-                        # Phase B: attribution
-                        l2sq_orig=topk_orig,
-                        l2sq_all_broken=topk_all,
-                        l2sq_R_only=topk_R,
-                        l2sq_G_only=topk_G,
-                        l2sq_B_only=topk_B,
-                        contrib_RG=contrib_RG,
-                        contrib_RB=contrib_RB,
-                        contrib_GB=contrib_GB,
-                        total_spatial=total_spatial,
-                        # Phase C: additivity
-                        additivity_ratio=additivity_ratio,
-                        # Fractions
-                        frac_RG=frac_RG, frac_RB=frac_RB, frac_GB=frac_GB,
-                        # Metadata
-                        alive_mask=alive_mask, usage_ema=usage_ema,
-                        de_mask=de_mask, de_log2fc=de_log2fc_full,
-                        top_k=k_actual, seam_margin=margin)
+    np.savez_compressed(
+        npz_path,
+        # Phase A: invariance (first pair)
+        inv_ratio_all=first_pair_flat,
+        inv_ratio_per_neuron=pn_median_first,
+        # Phase B: attribution
+        l2sq_orig=topk_orig,
+        l2sq_all_broken=topk_all,
+        l2sq_R_only=topk_R,
+        l2sq_G_only=topk_G,
+        l2sq_B_only=topk_B,
+        contrib_RG=contrib_RG,
+        contrib_RB=contrib_RB,
+        contrib_GB=contrib_GB,
+        total_spatial=total_spatial,
+        # Phase C: additivity
+        additivity_ratio=additivity_ratio,
+        # Fractions
+        frac_RG=frac_RG,
+        frac_RB=frac_RB,
+        frac_GB=frac_GB,
+        # Metadata
+        alive_mask=alive_mask,
+        usage_ema=usage_ema,
+        de_mask=de_mask,
+        de_log2fc=de_log2fc_full,
+        top_k=k_actual,
+        seam_margin=margin,
+    )
     logger.info(f"\nSaved: {npz_path}")
 
     # ══════════════════════════════════════════════════════════════
@@ -996,23 +1101,49 @@ def main():
     fGB = frac_GB[alive_mask]
     sort_idx = np.argsort(fRG)
     x_pos = np.arange(n_alive)
-    ax.bar(x_pos, fRG[sort_idx], label="RG (Mito-Lyso)", color="#E74C3C", alpha=0.8, width=1.0)
-    ax.bar(x_pos, fRB[sort_idx], bottom=fRG[sort_idx],
-           label="RB (Mito-Cell)", color="#3498DB", alpha=0.8, width=1.0)
-    ax.bar(x_pos, fGB[sort_idx],
-           bottom=fRG[sort_idx] + fRB[sort_idx],
-           label="GB (Lyso-Cell)", color="#2ECC71", alpha=0.8, width=1.0)
+    ax.bar(
+        x_pos,
+        fRG[sort_idx],
+        label="RG (Mito-Lyso)",
+        color="#E74C3C",
+        alpha=0.8,
+        width=1.0,
+    )
+    ax.bar(
+        x_pos,
+        fRB[sort_idx],
+        bottom=fRG[sort_idx],
+        label="RB (Mito-Cell)",
+        color="#3498DB",
+        alpha=0.8,
+        width=1.0,
+    )
+    ax.bar(
+        x_pos,
+        fGB[sort_idx],
+        bottom=fRG[sort_idx] + fRB[sort_idx],
+        label="GB (Lyso-Cell)",
+        color="#2ECC71",
+        alpha=0.8,
+        width=1.0,
+    )
     ax.set_xlabel("Neuron (sorted by RG fraction)", fontsize=12)
     ax.set_ylabel("Interaction fraction", fontsize=12)
-    ax.set_title("Channel Spatial Interaction Attribution per SAE Neuron",
-                 fontsize=13, fontweight="bold")
+    ax.set_title(
+        "Channel Spatial Interaction Attribution per SAE Neuron",
+        fontsize=13,
+        fontweight="bold",
+    )
     ax.legend(fontsize=11)
     ax.set_xlim(0, n_alive)
     ax.set_ylim(0, 1)
     ax.grid(True, alpha=0.2)
     fig.tight_layout()
-    fig.savefig(os.path.join(out_dir, "attribution_stacked.png"),
-                dpi=args.dpi, bbox_inches="tight")
+    fig.savefig(
+        os.path.join(out_dir, "attribution_stacked.png"),
+        dpi=args.dpi,
+        bbox_inches="tight",
+    )
     if _IN_COLAB:
         plt.show()
     plt.close(fig)
@@ -1020,10 +1151,13 @@ def main():
     # ── Per-pair histograms ──
     for name, frac in [("RG", frac_RG), ("RB", frac_RB), ("GB", frac_GB)]:
         plot_histogram(
-            frac, f"{name} Interaction Fraction",
+            frac,
+            f"{name} Interaction Fraction",
             "Fraction (0–1)",
             os.path.join(out_dir, f"hist_frac_{name}.png"),
-            alive_mask=alive_mask, dpi=args.dpi)
+            alive_mask=alive_mask,
+            dpi=args.dpi,
+        )
 
     # ── Additivity ratio histogram ──
     plot_histogram(
@@ -1031,15 +1165,21 @@ def main():
         "Additivity Check: sum(RG+RB+GB) / total_spatial",
         "Ratio",
         os.path.join(out_dir, "hist_additivity_ratio.png"),
-        alive_mask=alive_mask, vline=1.0, dpi=args.dpi)
+        alive_mask=alive_mask,
+        vline=1.0,
+        dpi=args.dpi,
+    )
 
     # ── Raw contribution histograms ──
     for name, contrib in [("RG", contrib_RG), ("RB", contrib_RB), ("GB", contrib_GB)]:
         plot_histogram(
-            contrib, f"{name} Raw Contribution (L2² diff)",
+            contrib,
+            f"{name} Raw Contribution (L2² diff)",
             "L2² (single-channel) - L2² (all-broken)",
             os.path.join(out_dir, f"hist_contrib_{name}.png"),
-            alive_mask=alive_mask, dpi=args.dpi)
+            alive_mask=alive_mask,
+            dpi=args.dpi,
+        )
 
     logger.info(f"\n{'='*60}")
     logger.info("Channel spatial interaction attribution complete!")

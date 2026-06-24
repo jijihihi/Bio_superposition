@@ -18,25 +18,24 @@
 #   main()
 # ==============================================================================
 
+import argparse
+import csv
 import os
 import sys
-import csv
-import argparse
 from collections import defaultdict
 
+import matplotlib
 import numpy as np
 
-import matplotlib
 if "google.colab" not in sys.modules:
     matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-
+import seaborn as sns
 from scipy import stats
 from scipy.stats import wilcoxon
-import seaborn as sns
 
-plt.rcParams['svg.fonttype'] = 'none'
-plt.rcParams['pdf.fonttype'] = 42      
+plt.rcParams["svg.fonttype"] = "none"
+plt.rcParams["pdf.fonttype"] = 42
 sns.set_style("ticks")
 
 
@@ -51,13 +50,13 @@ GENE_LABELS = {"SNCA only": "SNCA", "GBA only": "GBA", "LRRK2 only": "LRRK2"}
 
 # Training config → (l2norm config name, raw config name)
 CONFIG_PAIRS = {
-    "MoCo":   ("MoCo_l2norm",   "MoCo_raw"),
+    "MoCo": ("MoCo_l2norm", "MoCo_raw"),
     "noNorm": ("noNorm_l2norm", "noNorm_raw"),
 }
 
 L2_COLORS = {
-    "raw":    "#7A9DC7",   # soft blue — L2 OFF
-    "l2norm": "#E07B54",   # warm orange — L2 ON
+    "raw": "#7A9DC7",  # soft blue — L2 OFF
+    "l2norm": "#E07B54",  # warm orange — L2 ON
 }
 
 
@@ -70,15 +69,17 @@ def read_all_folds_csv(csv_path):
     with open(csv_path, "r", newline="") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            rows.append({
-                "config": row["Config"],
-                "seed": int(row["Seed"]),
-                "model": row["Model"],
-                "layer": row["Layer"],
-                "group": row["Group"],
-                "fold_idx": int(row["Fold_idx"]),
-                "r2": float(row["R2"]),
-            })
+            rows.append(
+                {
+                    "config": row["Config"],
+                    "seed": int(row["Seed"]),
+                    "model": row["Model"],
+                    "layer": row["Layer"],
+                    "group": row["Group"],
+                    "fold_idx": int(row["Fold_idx"]),
+                    "r2": float(row["R2"]),
+                }
+            )
     return rows
 
 
@@ -90,14 +91,16 @@ def read_pooled_perm_csv(csv_path):
     with open(csv_path, "r", newline="") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            rows.append({
-                "config": row["Config"],
-                "model": row["Model"],
-                "layer": row["Layer"],
-                "group": row["Group"],
-                "null_mean_r2": float(row["Null_mean_R2"]),
-                "pooled_p_value": float(row["Pooled_p_value"]),
-            })
+            rows.append(
+                {
+                    "config": row["Config"],
+                    "model": row["Model"],
+                    "layer": row["Layer"],
+                    "group": row["Group"],
+                    "null_mean_r2": float(row["Null_mean_R2"]),
+                    "pooled_p_value": float(row["Pooled_p_value"]),
+                }
+            )
     return rows
 
 
@@ -211,16 +214,33 @@ def pval_to_stars(p):
 # ==============================================================================
 def draw_bracket(ax, x1, x2, y, h, text, fontsize=9):
     ax.plot([x1, x1, x2, x2], [y, y + h, y + h, y], lw=1.2, color="black")
-    ax.text((x1 + x2) / 2, y + h, text,
-            ha="center", va="bottom", fontsize=fontsize, fontweight="bold")
+    ax.text(
+        (x1 + x2) / 2,
+        y + h,
+        text,
+        ha="center",
+        va="bottom",
+        fontsize=fontsize,
+        fontweight="bold",
+    )
 
 
 # ==============================================================================
 # Main plot
 # ==============================================================================
-def plot_l2norm_effect(stats_off, stats_on, wilcoxon_results, null_perm,
-                       results_dir, training_config, layer, model,
-                       folds=None, cfg_on=None, cfg_off=None):
+def plot_l2norm_effect(
+    stats_off,
+    stats_on,
+    wilcoxon_results,
+    null_perm,
+    results_dir,
+    training_config,
+    layer,
+    model,
+    folds=None,
+    cfg_on=None,
+    cfg_off=None,
+):
     """
     Paired dot-line plot: L2 OFF vs L2 ON, one figure per mutation.
     Dots = per-seed mean R² (averaged over CV folds).
@@ -262,7 +282,7 @@ def plot_l2norm_effect(stats_off, stats_on, wilcoxon_results, null_perm,
         # Per-seed mean (for plotting)
         seed_off = defaultdict(list)
         seed_on = defaultdict(list)
-        for (seed, fold_idx) in common_fold_keys:
+        for seed, fold_idx in common_fold_keys:
             seed_off[seed].append(off_dict[(seed, fold_idx)])
             seed_on[seed].append(on_dict[(seed, fold_idx)])
 
@@ -284,19 +304,32 @@ def plot_l2norm_effect(stats_off, stats_on, wilcoxon_results, null_perm,
             ax.plot(
                 [x_off + jitter[i], x_on + jitter[i]],
                 [seed_mean_off[i], seed_mean_on[i]],
-                color="#AAAAAA", alpha=0.35, linewidth=1.0, zorder=2,
+                color="#AAAAAA",
+                alpha=0.35,
+                linewidth=1.0,
+                zorder=2,
             )
 
         # Individual dots (same jitter as lines)
         ax.scatter(
-            x_off + jitter, seed_mean_off,
-            s=40, color=L2_COLORS["raw"], alpha=0.7,
-            edgecolors="white", linewidths=0.5, zorder=4,
+            x_off + jitter,
+            seed_mean_off,
+            s=40,
+            color=L2_COLORS["raw"],
+            alpha=0.7,
+            edgecolors="white",
+            linewidths=0.5,
+            zorder=4,
         )
         ax.scatter(
-            x_on + jitter, seed_mean_on,
-            s=40, color=L2_COLORS["l2norm"], alpha=0.7,
-            edgecolors="white", linewidths=0.5, zorder=4,
+            x_on + jitter,
+            seed_mean_on,
+            s=40,
+            color=L2_COLORS["l2norm"],
+            alpha=0.7,
+            edgecolors="white",
+            linewidths=0.5,
+            zorder=4,
         )
 
         # Grand mean (RED, prominent)
@@ -304,22 +337,44 @@ def plot_l2norm_effect(stats_off, stats_on, wilcoxon_results, null_perm,
         grand_mean_on = seed_mean_on.mean()
 
         ax.plot(
-            [x_off, x_on], [grand_mean_off, grand_mean_on],
-            color="#D32F2F", linewidth=2.8, zorder=6, solid_capstyle="round",
+            [x_off, x_on],
+            [grand_mean_off, grand_mean_on],
+            color="#D32F2F",
+            linewidth=2.8,
+            zorder=6,
+            solid_capstyle="round",
         )
         ax.scatter(
-            [x_off, x_on], [grand_mean_off, grand_mean_on],
-            s=90, color="#D32F2F", edgecolors="white", linewidths=1.8,
+            [x_off, x_on],
+            [grand_mean_off, grand_mean_on],
+            s=90,
+            color="#D32F2F",
+            edgecolors="white",
+            linewidths=1.8,
             zorder=7,
         )
 
         # Annotate grand means
-        ax.text(x_off - 0.15, grand_mean_off, f"{grand_mean_off:.3f}",
-                fontsize=9, color="#D32F2F", fontweight="bold",
-                ha="right", va="center")
-        ax.text(x_on + 0.15, grand_mean_on, f"{grand_mean_on:.3f}",
-                fontsize=9, color="#D32F2F", fontweight="bold",
-                ha="left", va="center")
+        ax.text(
+            x_off - 0.15,
+            grand_mean_off,
+            f"{grand_mean_off:.3f}",
+            fontsize=9,
+            color="#D32F2F",
+            fontweight="bold",
+            ha="right",
+            va="center",
+        )
+        ax.text(
+            x_on + 0.15,
+            grand_mean_on,
+            f"{grand_mean_on:.3f}",
+            fontsize=9,
+            color="#D32F2F",
+            fontweight="bold",
+            ha="left",
+            va="center",
+        )
 
         # ── Wilcoxon p-value + effect size r (independently computed) ──
         if grp in wilcoxon_results:
@@ -336,18 +391,29 @@ def plot_l2norm_effect(stats_off, stats_on, wilcoxon_results, null_perm,
 
             # Cross-validation: also compute Z from p-value for sanity check
             from scipy.stats import norm
+
             z_from_p = abs(norm.ppf(pval / 2)) if pval > 0 else 5.0
             r_from_p = z_from_p / np.sqrt(n_folds)
 
             p_str = f"p<0.001" if pval < 0.001 else f"p={pval:.3f}"
             stat_text = f"{p_str},  r={effect_r:.2f}"
-            ax.text(0.98, 0.97, stat_text, transform=ax.transAxes,
-                    fontsize=8, fontweight="bold", color="#333333",
-                    ha="right", va="top")
+            ax.text(
+                0.98,
+                0.97,
+                stat_text,
+                transform=ax.transAxes,
+                fontsize=8,
+                fontweight="bold",
+                color="#333333",
+                ha="right",
+                va="top",
+            )
 
-            print(f"  {gene_label}: Wilcoxon W={W_stat:.1f}, p={pval:.6f}, "
-                  f"r(from W)={effect_r:.3f}, r(from p)={r_from_p:.3f}, "
-                  f"n_pairs={n_folds}")
+            print(
+                f"  {gene_label}: Wilcoxon W={W_stat:.1f}, p={pval:.6f}, "
+                f"r(from W)={effect_r:.3f}, r(from p)={r_from_p:.3f}, "
+                f"n_pairs={n_folds}"
+            )
 
         # ── Y-axis: tight zoom to data range ──
         all_vals = np.concatenate([seed_mean_off, seed_mean_on])
@@ -363,7 +429,9 @@ def plot_l2norm_effect(stats_off, stats_on, wilcoxon_results, null_perm,
         ax.set_title(
             f"{gene_label} — GAP L2 Norm Effect\n"
             f"({training_config} | {layer} | {model})",
-            fontsize=12, fontweight="bold", pad=10,
+            fontsize=12,
+            fontweight="bold",
+            pad=10,
         )
         ax.set_xlim(-0.4, 1.4)
         ax.grid(axis="y", alpha=0.15, zorder=0)
@@ -393,8 +461,10 @@ def print_summary(stats_off, stats_on, wilcoxon_results, training_config, layer,
     print(f"  Config OFF: {cfg_off}")
     print(f"{'=' * 90}")
 
-    print(f"\n  {'Gene':6s}  {'L2 OFF mean':>12s}  {'L2 ON mean':>12s}  "
-          f"{'Δ(ON−OFF)':>10s}  {'95% CI OFF':>22s}  {'95% CI ON':>22s}")
+    print(
+        f"\n  {'Gene':6s}  {'L2 OFF mean':>12s}  {'L2 ON mean':>12s}  "
+        f"{'Δ(ON−OFF)':>10s}  {'95% CI OFF':>22s}  {'95% CI ON':>22s}"
+    )
     print("  " + "-" * 95)
 
     for grp in GROUPS_OF_INTEREST:
@@ -404,13 +474,17 @@ def print_summary(stats_off, stats_on, wilcoxon_results, training_config, layer,
             continue
 
         delta = on["mean"] - off["mean"]
-        print(f"  {GENE_LABELS[grp]:6s}  {off['mean']:>12.4f}  {on['mean']:>12.4f}  "
-              f"{delta:>+10.4f}  [{off['ci_lo']:.4f}, {off['ci_hi']:.4f}]  "
-              f"[{on['ci_lo']:.4f}, {on['ci_hi']:.4f}]")
+        print(
+            f"  {GENE_LABELS[grp]:6s}  {off['mean']:>12.4f}  {on['mean']:>12.4f}  "
+            f"{delta:>+10.4f}  [{off['ci_lo']:.4f}, {off['ci_hi']:.4f}]  "
+            f"[{on['ci_lo']:.4f}, {on['ci_hi']:.4f}]"
+        )
 
     if wilcoxon_results:
         print(f"\n  Wilcoxon Signed-Rank Test (paired by seed × fold):")
-        print(f"  {'Gene':6s}  {'N pairs':>8s}  {'W stat':>8s}  {'p-value':>10s}  {'Sig':>5s}")
+        print(
+            f"  {'Gene':6s}  {'N pairs':>8s}  {'W stat':>8s}  {'p-value':>10s}  {'Sig':>5s}"
+        )
         print("  " + "-" * 45)
 
         for grp in GROUPS_OF_INTEREST:
@@ -418,25 +492,44 @@ def print_summary(stats_off, stats_on, wilcoxon_results, training_config, layer,
                 continue
             w = wilcoxon_results[grp]
             stars = pval_to_stars(w["p_value"])
-            print(f"  {GENE_LABELS[grp]:6s}  {w['n_pairs']:>8d}  "
-                  f"{w['W_stat']:>8.1f}  {w['p_value']:>10.6f}  {stars:>5s}")
+            print(
+                f"  {GENE_LABELS[grp]:6s}  {w['n_pairs']:>8d}  "
+                f"{w['W_stat']:>8.1f}  {w['p_value']:>10.6f}  {stars:>5s}"
+            )
 
 
 # ==============================================================================
 # Save CSV
 # ==============================================================================
-def save_results_csv(stats_off, stats_on, wilcoxon_results, null_perm,
-                     results_dir, training_config, layer, model):
+def save_results_csv(
+    stats_off,
+    stats_on,
+    wilcoxon_results,
+    null_perm,
+    results_dir,
+    training_config,
+    layer,
+    model,
+):
     csv_path = os.path.join(
-        results_dir,
-        f"l2norm_effect_{training_config}_{layer}_{model}.csv"
+        results_dir, f"l2norm_effect_{training_config}_{layer}_{model}.csv"
     )
     with open(csv_path, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow([
-            "Gene", "Condition", "Mean_R2", "CI95_lower", "CI95_upper",
-            "N_folds", "Null_mean_R2", "Wilcoxon_W", "Wilcoxon_p", "Sig",
-        ])
+        w.writerow(
+            [
+                "Gene",
+                "Condition",
+                "Mean_R2",
+                "CI95_lower",
+                "CI95_upper",
+                "N_folds",
+                "Null_mean_R2",
+                "Wilcoxon_W",
+                "Wilcoxon_p",
+                "Sig",
+            ]
+        )
 
         cfg_on, cfg_off = CONFIG_PAIRS[training_config]
 
@@ -448,9 +541,14 @@ def save_results_csv(stats_off, stats_on, wilcoxon_results, null_perm,
             # Null perm (average of both conditions)
             null_vals = []
             for cfg in [cfg_on, cfg_off]:
-                matches = [r for r in null_perm
-                           if r["config"] == cfg and r["layer"] == layer
-                           and r["model"] == model and r["group"] == grp]
+                matches = [
+                    r
+                    for r in null_perm
+                    if r["config"] == cfg
+                    and r["layer"] == layer
+                    and r["model"] == model
+                    and r["group"] == grp
+                ]
                 if matches:
                     null_vals.append(matches[0]["null_mean_r2"])
             null_mean = np.mean(null_vals) if null_vals else ""
@@ -458,17 +556,20 @@ def save_results_csv(stats_off, stats_on, wilcoxon_results, null_perm,
             for label, st in [("L2_OFF", off), ("L2_ON", on)]:
                 if not st:
                     continue
-                w.writerow([
-                    GENE_LABELS[grp], label,
-                    f"{st['mean']:.6f}",
-                    f"{st['ci_lo']:.6f}",
-                    f"{st['ci_hi']:.6f}",
-                    st["n"],
-                    f"{null_mean:.6f}" if isinstance(null_mean, float) else "",
-                    f"{wres['W_stat']:.1f}" if wres else "",
-                    f"{wres['p_value']:.6f}" if wres else "",
-                    pval_to_stars(wres["p_value"]) if wres else "",
-                ])
+                w.writerow(
+                    [
+                        GENE_LABELS[grp],
+                        label,
+                        f"{st['mean']:.6f}",
+                        f"{st['ci_lo']:.6f}",
+                        f"{st['ci_hi']:.6f}",
+                        st["n"],
+                        f"{null_mean:.6f}" if isinstance(null_mean, float) else "",
+                        f"{wres['W_stat']:.1f}" if wres else "",
+                        f"{wres['p_value']:.6f}" if wres else "",
+                        pval_to_stars(wres["p_value"]) if wres else "",
+                    ]
+                )
 
     print(f"  Saved results CSV: {csv_path}")
 
@@ -481,22 +582,27 @@ def main():
         description="Plot GAP L2 Norm effect on R² with paired Wilcoxon test"
     )
     parser.add_argument(
-        "--results_dir", type=str, required=True,
-        help="Path to results directory"
+        "--results_dir", type=str, required=True, help="Path to results directory"
     )
     parser.add_argument(
-        "--training_config", type=str, default="MoCo",
+        "--training_config",
+        type=str,
+        default="MoCo",
         choices=["MoCo", "noNorm"],
-        help="Training config pair (default: MoCo) or noNorm"
+        help="Training config pair (default: MoCo) or noNorm",
     )
     parser.add_argument(
-        "--layer", type=str, default="stage5_out",
+        "--layer",
+        type=str,
+        default="stage5_out",
         choices=["stage5_mid", "stage5_out", "refine_out"],
-        help="Layer to plot (default: stage5_out)"
+        help="Layer to plot (default: stage5_out)",
     )
     parser.add_argument(
-        "--model", type=str, default="Ridge",
-        help="Model to plot (default: Ridge) or XGBoost"
+        "--model",
+        type=str,
+        default="Ridge",
+        help="Model to plot (default: Ridge) or XGBoost",
     )
     args = parser.parse_args()
 
@@ -526,8 +632,10 @@ def main():
     stats_on = compute_group_stats(folds, cfg_on, args.layer, args.model)
 
     if not stats_off and not stats_on:
-        print(f"ERROR: No data for training_config={args.training_config}, "
-              f"layer={args.layer}, model={args.model}")
+        print(
+            f"ERROR: No data for training_config={args.training_config}, "
+            f"layer={args.layer}, model={args.model}"
+        )
         sys.exit(1)
 
     # Wilcoxon
@@ -536,20 +644,40 @@ def main():
     )
 
     # Print
-    print_summary(stats_off, stats_on, wilcoxon_results,
-                  args.training_config, args.layer, args.model)
+    print_summary(
+        stats_off,
+        stats_on,
+        wilcoxon_results,
+        args.training_config,
+        args.layer,
+        args.model,
+    )
 
     # Plot
     plot_l2norm_effect(
-        stats_off, stats_on, wilcoxon_results, null_perm,
-        args.results_dir, args.training_config, args.layer, args.model,
-        folds=folds, cfg_on=cfg_on, cfg_off=cfg_off,
+        stats_off,
+        stats_on,
+        wilcoxon_results,
+        null_perm,
+        args.results_dir,
+        args.training_config,
+        args.layer,
+        args.model,
+        folds=folds,
+        cfg_on=cfg_on,
+        cfg_off=cfg_off,
     )
 
     # Save CSV
     save_results_csv(
-        stats_off, stats_on, wilcoxon_results, null_perm,
-        args.results_dir, args.training_config, args.layer, args.model,
+        stats_off,
+        stats_on,
+        wilcoxon_results,
+        null_perm,
+        args.results_dir,
+        args.training_config,
+        args.layer,
+        args.model,
     )
 
     print("\n  DONE")

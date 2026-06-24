@@ -21,44 +21,58 @@ Usage (Colab):
   main()
 """
 
+import argparse
+import csv
 import os
 import sys
-import csv
-import argparse
+
+import matplotlib
 import numpy as np
 from scipy.stats import pearsonr
 
-import matplotlib
 _IN_COLAB = "google.colab" in sys.modules
 if not _IN_COLAB:
     matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from sae_project.step02_logging_utils import get_logger, SUPERCLASS_MAP
+from sae_project.step02_logging_utils import SUPERCLASS_MAP, get_logger
 
 logger = get_logger("verify_gap_means")
 
 
 def get_args():
     p = argparse.ArgumentParser(description="Verify GAP means: cache vs CSV")
-    p.add_argument("--features_cache", type=str, required=True,
-                   help="Path to .npz cache (X_all, y, usage_ema, etc.)")
-    p.add_argument("--gap_csv", type=str, required=True,
-                   help="Path to class_gap_means.csv from step09_sae_eval")
+    p.add_argument(
+        "--features_cache",
+        type=str,
+        required=True,
+        help="Path to .npz cache (X_all, y, usage_ema, etc.)",
+    )
+    p.add_argument(
+        "--gap_csv",
+        type=str,
+        required=True,
+        help="Path to class_gap_means.csv from step09_sae_eval",
+    )
     p.add_argument("--dead_threshold", type=float, default=1e-5)
-    p.add_argument("--output_dir", type=str, default="",
-                   help="Where to save comparison plots (default: same dir as gap_csv)")
-    p.add_argument("--top_k", type=int, default=20,
-                   help="Show top-K most deviated neurons")
+    p.add_argument(
+        "--output_dir",
+        type=str,
+        default="",
+        help="Where to save comparison plots (default: same dir as gap_csv)",
+    )
+    p.add_argument(
+        "--top_k", type=int, default=20, help="Show top-K most deviated neurons"
+    )
     return p.parse_args()
 
 
 def load_cache(cache_path, dead_threshold):
     """Load features cache and return X_all, lines, alive_indices."""
     data = np.load(cache_path, allow_pickle=True)
-    X_all = data["X_all"]       # (N, d_sae) — all neurons
-    y = data["y"]                # (N,) int labels
-    lines = data["lines"]        # (N,) string line names (e.g. 'Control_C4', 'SNCA')
+    X_all = data["X_all"]  # (N, d_sae) — all neurons
+    y = data["y"]  # (N,) int labels
+    lines = data["lines"]  # (N,) string line names (e.g. 'Control_C4', 'SNCA')
     usage_ema = data["usage_ema"]  # (d_sae,)
 
     alive_mask = usage_ema >= dead_threshold
@@ -75,15 +89,21 @@ def load_cache(cache_path, dead_threshold):
 
     # Auto-detect: X_all might be all neurons or alive-only
     if X_all.shape[1] == n_alive and n_alive != n_total:
-        logger.info(f"  ✅ X_all columns ({X_all.shape[1]}) == n_alive ({n_alive}) — "
-                     f"cache already has alive neurons only")
+        logger.info(
+            f"  ✅ X_all columns ({X_all.shape[1]}) == n_alive ({n_alive}) — "
+            f"cache already has alive neurons only"
+        )
     elif X_all.shape[1] == n_total:
-        logger.info(f"  ℹ️  X_all columns ({X_all.shape[1]}) == d_sae ({n_total}) — "
-                     f"cache has ALL neurons (will apply alive_mask)")
+        logger.info(
+            f"  ℹ️  X_all columns ({X_all.shape[1]}) == d_sae ({n_total}) — "
+            f"cache has ALL neurons (will apply alive_mask)"
+        )
         X_all = X_all[:, alive_mask]
     else:
-        logger.warning(f"  ⚠️  X_all columns ({X_all.shape[1]}) != n_alive ({n_alive}) "
-                        f"and != d_sae ({n_total}) — dimension mismatch!")
+        logger.warning(
+            f"  ⚠️  X_all columns ({X_all.shape[1]}) != n_alive ({n_alive}) "
+            f"and != d_sae ({n_total}) — dimension mismatch!"
+        )
 
     # Check if normrestored or raw
     fname = os.path.basename(cache_path).lower()
@@ -115,7 +135,7 @@ def load_gap_csv(csv_path):
 
 def compute_gap_means_from_cache(X_all, lines):
     """Compute per-class per-neuron mean from the cache.
-    
+
     X_all: (N, d) array
     lines: (N,) string line names (e.g. 'Control_C4', 'SNCA')
     Returns: dict {superclass_name: (d,) array}
@@ -123,9 +143,7 @@ def compute_gap_means_from_cache(X_all, lines):
     class_names = ["Control", "SNCA", "GBA", "LRRK2"]
 
     # Map line names to superclass using SUPERCLASS_MAP
-    superclasses = np.array([
-        SUPERCLASS_MAP.get(str(ln), str(ln)) for ln in lines
-    ])
+    superclasses = np.array([SUPERCLASS_MAP.get(str(ln), str(ln)) for ln in lines])
     unique_sc = sorted(set(superclasses))
     logger.info(f"  Line samples: {lines[:5]}")
     logger.info(f"  Mapped superclasses: {unique_sc}")
@@ -137,7 +155,9 @@ def compute_gap_means_from_cache(X_all, lines):
         n = mask.sum()
         if n > 0:
             class_means[cn] = X_all[mask].mean(axis=0)  # (d,)
-            logger.info(f"  {cn}: n={n}, mean range=[{class_means[cn].min():.6f}, {class_means[cn].max():.6f}]")
+            logger.info(
+                f"  {cn}: n={n}, mean range=[{class_means[cn].min():.6f}, {class_means[cn].max():.6f}]"
+            )
         else:
             class_means[cn] = np.zeros(d)
             logger.warning(f"  ⚠️ {cn}: n=0 — NO samples matched! Check label mapping.")
@@ -147,7 +167,7 @@ def compute_gap_means_from_cache(X_all, lines):
 
 def compare_means(cache_means, csv_concepts, alive_indices, top_k=20, output_dir=""):
     """Compare cache-derived means vs CSV means.
-    
+
     cache_means: {class: (n_alive,)} — from cache (alive only)
     csv_concepts: {concept_id: {class: float}} — from CSV (all d_sae)
     alive_indices: global neuron indices that correspond to cache columns
@@ -175,7 +195,7 @@ def compare_means(cache_means, csv_concepts, alive_indices, top_k=20, output_dir
 
     for cn in class_names:
         cache_vals = cache_means[cn]  # (n_alive,)
-        csv_vals = csv_means[cn]       # (n_alive,)
+        csv_vals = csv_means[cn]  # (n_alive,)
 
         abs_diff = np.abs(cache_vals - csv_vals)
         rel_diff = abs_diff / (np.abs(csv_vals) + 1e-10)
@@ -193,11 +213,15 @@ def compare_means(cache_means, csv_concepts, alive_indices, top_k=20, output_dir
         logger.info(f"    Pearson r = {r:.6f} (p = {p:.2e})")
         logger.info(f"    Cache mean: {cache_vals.mean():.6f} ± {cache_vals.std():.6f}")
         logger.info(f"    CSV   mean: {csv_vals.mean():.6f} ± {csv_vals.std():.6f}")
-        logger.info(f"    Abs diff: mean={abs_diff.mean():.6f}, max={abs_diff.max():.6f}")
+        logger.info(
+            f"    Abs diff: mean={abs_diff.mean():.6f}, max={abs_diff.max():.6f}"
+        )
         if len(rel_diff_nonzero) > 0:
-            logger.info(f"    Rel diff (nonzero): mean={rel_diff_nonzero.mean():.4f}, "
-                        f"median={np.median(rel_diff_nonzero):.4f}, "
-                        f"max={rel_diff_nonzero.max():.4f}")
+            logger.info(
+                f"    Rel diff (nonzero): mean={rel_diff_nonzero.mean():.4f}, "
+                f"median={np.median(rel_diff_nonzero):.4f}, "
+                f"max={rel_diff_nonzero.max():.4f}"
+            )
 
         # Exact match check
         exact = np.sum(abs_diff < 1e-8)
@@ -210,9 +234,11 @@ def compare_means(cache_means, csv_concepts, alive_indices, top_k=20, output_dir
         logger.info(f"    Top-{min(top_k, 5)} most deviated neurons:")
         for rank, li in enumerate(worst_idx[:5]):
             gi = alive_indices[li]
-            logger.info(f"      [{rank+1}] neuron {gi}: "
-                        f"cache={cache_vals[li]:.6f}, csv={csv_vals[li]:.6f}, "
-                        f"diff={abs_diff[li]:.6f}")
+            logger.info(
+                f"      [{rank+1}] neuron {gi}: "
+                f"cache={cache_vals[li]:.6f}, csv={csv_vals[li]:.6f}, "
+                f"diff={abs_diff[li]:.6f}"
+            )
 
         all_cache_vals.extend(cache_vals.tolist())
         all_csv_vals.extend(csv_vals.tolist())
@@ -230,24 +256,34 @@ def compare_means(cache_means, csv_concepts, alive_indices, top_k=20, output_dir
 
     # Diagnosis
     if r_all > 0.999:
-        logger.info(f"    ✅ MATCH: Cache and CSV are essentially identical (r > 0.999)")
+        logger.info(
+            f"    ✅ MATCH: Cache and CSV are essentially identical (r > 0.999)"
+        )
     elif r_all > 0.99:
         logger.info(f"    ⚠️  CLOSE: Minor numerical differences (r > 0.99)")
     elif r_all > 0.9:
-        logger.info(f"    ⚠️  DIFFERENT: Significant differences — likely different normalization")
+        logger.info(
+            f"    ⚠️  DIFFERENT: Significant differences — likely different normalization"
+        )
         logger.info(f"       Check if one uses normrestored and the other doesn't")
     else:
-        logger.info(f"    ❌ MISMATCH: Very different (r < 0.9) — likely completely different computation")
+        logger.info(
+            f"    ❌ MISMATCH: Very different (r < 0.9) — likely completely different computation"
+        )
 
     # Scale check
     ratio = np.mean(np.abs(all_cache)) / (np.mean(np.abs(all_csv)) + 1e-10)
     logger.info(f"    Scale ratio (cache/csv): {ratio:.4f}")
     if ratio > 1.5:
-        logger.info(f"    → Cache values are ~{ratio:.1f}x larger than CSV → "
-                     f"likely normrestored in cache, raw in CSV")
+        logger.info(
+            f"    → Cache values are ~{ratio:.1f}x larger than CSV → "
+            f"likely normrestored in cache, raw in CSV"
+        )
     elif ratio < 0.67:
-        logger.info(f"    → CSV values are ~{1/ratio:.1f}x larger than cache → "
-                     f"likely normrestored in CSV, raw in cache")
+        logger.info(
+            f"    → CSV values are ~{1/ratio:.1f}x larger than cache → "
+            f"likely normrestored in CSV, raw in cache"
+        )
     else:
         logger.info(f"    → Similar scale (ratio ≈ 1)")
 
@@ -263,17 +299,16 @@ def compare_means(cache_means, csv_concepts, alive_indices, top_k=20, output_dir
             except Exception:
                 r = 0
 
-            ax.scatter(csvv, cv, s=3, alpha=0.5, c='steelblue')
-            lims = [min(csvv.min(), cv.min()),
-                    max(csvv.max(), cv.max())]
-            ax.plot(lims, lims, '--', c='red', lw=1, alpha=0.7, label='y=x')
+            ax.scatter(csvv, cv, s=3, alpha=0.5, c="steelblue")
+            lims = [min(csvv.min(), cv.min()), max(csvv.max(), cv.max())]
+            ax.plot(lims, lims, "--", c="red", lw=1, alpha=0.7, label="y=x")
             ax.set_xlabel("CSV GAP mean", fontsize=10)
             ax.set_ylabel("Cache GAP mean", fontsize=10)
-            ax.set_title(f"{cn}\nr = {r:.6f}", fontsize=11, fontweight='bold')
+            ax.set_title(f"{cn}\nr = {r:.6f}", fontsize=11, fontweight="bold")
             ax.legend(fontsize=8)
             ax.grid(True, alpha=0.2)
 
-        fig.suptitle("GAP Means: Cache vs CSV", fontsize=14, fontweight='bold')
+        fig.suptitle("GAP Means: Cache vs CSV", fontsize=14, fontweight="bold")
         fig.tight_layout()
         plot_path = os.path.join(output_dir, "verify_gap_means_comparison.png")
         fig.savefig(plot_path, dpi=150, bbox_inches="tight")
@@ -289,7 +324,7 @@ def compute_gini(class_values, eps=1e-8):
     values = np.maximum(values, 0)
     total = values.sum() + eps
     probs = values / total
-    return float(1.0 - np.sum(probs ** 2))
+    return float(1.0 - np.sum(probs**2))
 
 
 def compare_gini(cache_means, csv_concepts, alive_indices, output_dir=""):
@@ -319,6 +354,7 @@ def compare_gini(cache_means, csv_concepts, alive_indices, output_dir=""):
 
     # Gini correlation
     from scipy.stats import spearmanr
+
     try:
         r_gini, p_gini = pearsonr(cache_gini, csv_gini)
         rho_gini, _ = spearmanr(cache_gini, csv_gini)
@@ -326,7 +362,9 @@ def compare_gini(cache_means, csv_concepts, alive_indices, output_dir=""):
         r_gini, rho_gini = 0, 0
     logger.info(f"  Gini Pearson r  = {r_gini:.4f}")
     logger.info(f"  Gini Spearman ρ = {rho_gini:.4f}")
-    logger.info(f"  Cache Gini: mean={cache_gini.mean():.4f}, std={cache_gini.std():.4f}")
+    logger.info(
+        f"  Cache Gini: mean={cache_gini.mean():.4f}, std={cache_gini.std():.4f}"
+    )
     logger.info(f"  CSV   Gini: mean={csv_gini.mean():.4f}, std={csv_gini.std():.4f}")
 
     # Max class comparison
@@ -349,19 +387,25 @@ def compare_gini(cache_means, csv_concepts, alive_indices, output_dir=""):
             jaccard = len(cache_set & csv_set) / len(cache_set | csv_set)
         else:
             jaccard = 0
-        logger.info(f"    max_gini={max_gini}: "
-                    f"cache={len(cache_set)}, csv={len(csv_set)}, "
-                    f"overlap={len(cache_set & csv_set)}, "
-                    f"Jaccard={jaccard:.3f}")
+        logger.info(
+            f"    max_gini={max_gini}: "
+            f"cache={len(cache_set)}, csv={len(csv_set)}, "
+            f"overlap={len(cache_set & csv_set)}, "
+            f"Jaccard={jaccard:.3f}"
+        )
 
         # Show neurons in CSV but not cache (and vice versa) at max_gini=0.74
         if max_gini == 0.74:
             only_csv = csv_set - cache_set
             only_cache = cache_set - csv_set
             if only_csv:
-                logger.info(f"      CSV-only ({len(only_csv)}): {sorted(list(only_csv))[:10]}...")
+                logger.info(
+                    f"      CSV-only ({len(only_csv)}): {sorted(list(only_csv))[:10]}..."
+                )
             if only_cache:
-                logger.info(f"      Cache-only ({len(only_cache)}): {sorted(list(only_cache))[:10]}...")
+                logger.info(
+                    f"      Cache-only ({len(only_cache)}): {sorted(list(only_cache))[:10]}..."
+                )
 
     # Top neurons with largest Gini difference
     gini_diff = np.abs(cache_gini - csv_gini)
@@ -371,31 +415,39 @@ def compare_gini(cache_means, csv_concepts, alive_indices, output_dir=""):
         gi = alive_indices[li]
         cv = [float(cache_means[cn][li]) for cn in class_names]
         csvv = [float(csv_means[cn][li]) for cn in class_names]
-        logger.info(f"    [{rank+1}] neuron {gi}: "
-                    f"cache_gini={cache_gini[li]:.4f}, csv_gini={csv_gini[li]:.4f}, "
-                    f"diff={gini_diff[li]:.4f}")
-        logger.info(f"         cache: {dict(zip(class_names, [f'{v:.4f}' for v in cv]))}")
-        logger.info(f"         csv  : {dict(zip(class_names, [f'{v:.4f}' for v in csvv]))}")
+        logger.info(
+            f"    [{rank+1}] neuron {gi}: "
+            f"cache_gini={cache_gini[li]:.4f}, csv_gini={csv_gini[li]:.4f}, "
+            f"diff={gini_diff[li]:.4f}"
+        )
+        logger.info(
+            f"         cache: {dict(zip(class_names, [f'{v:.4f}' for v in cv]))}"
+        )
+        logger.info(
+            f"         csv  : {dict(zip(class_names, [f'{v:.4f}' for v in csvv]))}"
+        )
 
     # Plot
     if output_dir:
         fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 
         ax = axes[0]
-        ax.scatter(csv_gini, cache_gini, s=3, alpha=0.5, c='steelblue')
-        ax.plot([0, 0.75], [0, 0.75], '--', c='red', lw=1, alpha=0.7, label='y=x')
+        ax.scatter(csv_gini, cache_gini, s=3, alpha=0.5, c="steelblue")
+        ax.plot([0, 0.75], [0, 0.75], "--", c="red", lw=1, alpha=0.7, label="y=x")
         ax.set_xlabel("CSV Gini", fontsize=11)
         ax.set_ylabel("Cache Gini", fontsize=11)
-        ax.set_title(f"Gini: r={r_gini:.4f}, ρ={rho_gini:.4f}", fontsize=12, fontweight='bold')
+        ax.set_title(
+            f"Gini: r={r_gini:.4f}, ρ={rho_gini:.4f}", fontsize=12, fontweight="bold"
+        )
         ax.legend()
         ax.grid(True, alpha=0.2)
 
         ax = axes[1]
-        ax.hist(csv_gini, bins=50, alpha=0.5, label='CSV', color='steelblue')
-        ax.hist(cache_gini, bins=50, alpha=0.5, label='Cache', color='coral')
+        ax.hist(csv_gini, bins=50, alpha=0.5, label="CSV", color="steelblue")
+        ax.hist(cache_gini, bins=50, alpha=0.5, label="Cache", color="coral")
         ax.set_xlabel("Gini impurity", fontsize=11)
         ax.set_ylabel("Count", fontsize=11)
-        ax.set_title("Gini Distribution", fontsize=12, fontweight='bold')
+        ax.set_title("Gini Distribution", fontsize=12, fontweight="bold")
         ax.legend()
         ax.grid(True, alpha=0.2)
 
@@ -429,13 +481,17 @@ def main():
 
     # 4. Compare means
     logger.info("\nStep 4: Comparing means")
-    compare_means(cache_means, csv_concepts, alive_indices,
-                  top_k=args.top_k, output_dir=output_dir)
+    compare_means(
+        cache_means,
+        csv_concepts,
+        alive_indices,
+        top_k=args.top_k,
+        output_dir=output_dir,
+    )
 
     # 5. Compare Gini
     logger.info("\nStep 5: Comparing Gini impurity & neuron selection")
-    compare_gini(cache_means, csv_concepts, alive_indices,
-                 output_dir=output_dir)
+    compare_gini(cache_means, csv_concepts, alive_indices, output_dir=output_dir)
 
     logger.info("\n" + "=" * 70)
     logger.info("Done!")
@@ -443,5 +499,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-

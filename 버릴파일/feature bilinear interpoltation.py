@@ -10,19 +10,24 @@
 # - File name includes line + winner + pos/neg values
 # ============================================================
 
-import os, io, csv, json, pickle, hashlib, re
+import csv
+import hashlib
+import io
+import json
+import os
+import pickle
+import re
 from dataclasses import dataclass
 from typing import List, Tuple
 
 import numpy as np
+import tifffile
 import torch
 import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader
-from tqdm.auto import tqdm
-
-import tifffile
 from PIL import Image
 from torch.utils.checkpoint import checkpoint_sequential
+from torch.utils.data import DataLoader, Dataset
+from tqdm.auto import tqdm
 
 # =========================
 # Constants / maps
@@ -30,17 +35,31 @@ from torch.utils.checkpoint import checkpoint_sequential
 OUT_DIM = 512
 PLATE_DIR_RE = re.compile(r"plate=(\d{6})")
 
+
 # =========================
 # Model Definition (bias=True)
 # =========================
 def conv2d(in_ch, out_ch, k=3, stride=1, padding=1, dilation=1, bias=True):
-    return nn.Conv2d(in_ch, out_ch, kernel_size=k, stride=stride, padding=padding, dilation=dilation, bias=bias)
+    return nn.Conv2d(
+        in_ch,
+        out_ch,
+        kernel_size=k,
+        stride=stride,
+        padding=padding,
+        dilation=dilation,
+        bias=bias,
+    )
+
 
 class ResBlock(nn.Module):
     def __init__(self, in_ch, out_ch, dilation=1):
         super().__init__()
-        self.c1 = conv2d(in_ch, out_ch, 3, 1, padding=dilation, dilation=dilation, bias=True)
-        self.c2 = conv2d(out_ch, out_ch, 3, 1, padding=dilation, dilation=dilation, bias=True)
+        self.c1 = conv2d(
+            in_ch, out_ch, 3, 1, padding=dilation, dilation=dilation, bias=True
+        )
+        self.c2 = conv2d(
+            out_ch, out_ch, 3, 1, padding=dilation, dilation=dilation, bias=True
+        )
         self.proj = None
         if in_ch != out_ch:
             self.proj = conv2d(in_ch, out_ch, 1, 1, padding=0, bias=False)
@@ -55,8 +74,11 @@ class ResBlock(nn.Module):
             identity = self.proj(identity)
         return x + identity
 
+
 class Stage(nn.Module):
-    def __init__(self, in_ch, out_ch, n_blocks, dilation, use_ckpt: bool, ckpt_segments: int):
+    def __init__(
+        self, in_ch, out_ch, n_blocks, dilation, use_ckpt: bool, ckpt_segments: int
+    ):
         super().__init__()
         self.use_ckpt = bool(use_ckpt)
         self.ckpt_segments = int(ckpt_segments)
@@ -66,34 +88,66 @@ class Stage(nn.Module):
         self.blocks = nn.Sequential(*blocks)
 
     def forward(self, x):
-        if self.use_ckpt and self.training and self.ckpt_segments > 1 and len(self.blocks) > 1:
+        if (
+            self.use_ckpt
+            and self.training
+            and self.ckpt_segments > 1
+            and len(self.blocks) > 1
+        ):
             seg = min(self.ckpt_segments, len(self.blocks))
             return checkpoint_sequential(self.blocks, seg, x, use_reentrant=False)
         return self.blocks(x)
 
+
 class Encoder(nn.Module):
-    def __init__(self, blocks=(2,2,4,4), dilations=(1,1,1,1), refine_blocks=1, ckpt_segments=2):
+    def __init__(
+        self,
+        blocks=(2, 2, 4, 4),
+        dilations=(1, 1, 1, 1),
+        refine_blocks=1,
+        ckpt_segments=2,
+    ):
         super().__init__()
-        b2,b3,b4,b5 = blocks
-        d2,d3,d4,d5 = dilations
+        b2, b3, b4, b5 = blocks
+        d2, d3, d4, d5 = dilations
 
         self.stem = nn.Sequential(conv2d(3, 64, k=3, stride=2, padding=1, bias=True))
         self.stage2 = Stage(64, 128, b2, d2, use_ckpt=False, ckpt_segments=1)
         self.stage3 = Stage(128, 256, b3, d3, use_ckpt=False, ckpt_segments=1)
-        self.stage4 = Stage(256, 512, b4, d4, use_ckpt=True, ckpt_segments=ckpt_segments)
-        self.stage5 = Stage(512, OUT_DIM, b5, d5, use_ckpt=True, ckpt_segments=ckpt_segments)
-        self.refine = Stage(OUT_DIM, OUT_DIM, int(refine_blocks), 1, use_ckpt=True, ckpt_segments=ckpt_segments)
+        self.stage4 = Stage(
+            256, 512, b4, d4, use_ckpt=True, ckpt_segments=ckpt_segments
+        )
+        self.stage5 = Stage(
+            512, OUT_DIM, b5, d5, use_ckpt=True, ckpt_segments=ckpt_segments
+        )
+        self.refine = Stage(
+            OUT_DIM,
+            OUT_DIM,
+            int(refine_blocks),
+            1,
+            use_ckpt=True,
+            ckpt_segments=ckpt_segments,
+        )
 
-        self.trunk = nn.Sequential(self.stem, self.stage2, self.stage3, self.stage4, self.stage5, self.refine)
-        self.gap = nn.AdaptiveAvgPool2d((1,1))
+        self.trunk = nn.Sequential(
+            self.stem, self.stage2, self.stage3, self.stage4, self.stage5, self.refine
+        )
+        self.gap = nn.AdaptiveAvgPool2d((1, 1))
 
     def forward(self, x):
         x = self.trunk(x)
         x = self.gap(x).flatten(1)
         return x
 
-def build_projector(in_dim: int, embed_dim: int, proj_layers: int, proj_hidden: int,
-                    use_bn: bool, dropout: float) -> nn.Module:
+
+def build_projector(
+    in_dim: int,
+    embed_dim: int,
+    proj_layers: int,
+    proj_hidden: int,
+    use_bn: bool,
+    dropout: float,
+) -> nn.Module:
     proj_layers = int(proj_layers)
     proj_hidden = int(proj_hidden)
     dropout = float(dropout)
@@ -134,12 +188,13 @@ def build_projector(in_dim: int, embed_dim: int, proj_layers: int, proj_hidden: 
 
     raise ValueError(f"Unsupported proj_layers={proj_layers}")
 
+
 class SupConMoCoModel(nn.Module):
     def __init__(
         self,
         embed_dim=512,
-        blocks=(2,2,4,4),
-        dilations=(1,1,1,1),
+        blocks=(2, 2, 4, 4),
+        dilations=(1, 1, 1, 1),
         refine_blocks=1,
         ckpt_segments=2,
         proj_layers: int = 2,
@@ -152,7 +207,7 @@ class SupConMoCoModel(nn.Module):
             blocks=blocks,
             dilations=dilations,
             refine_blocks=refine_blocks,
-            ckpt_segments=ckpt_segments
+            ckpt_segments=ckpt_segments,
         )
 
         self.projector = build_projector(
@@ -170,20 +225,19 @@ class SupConMoCoModel(nn.Module):
         z = self.projector(pooled)
         return F.normalize(z, dim=1)
 
-LINE_FOLDERS = [
-    "Control_C4", "Control_C18", "Control_C19",
-    "SNCA", "GBA", "LRRK2"
-]
+
+LINE_FOLDERS = ["Control_C4", "Control_C18", "Control_C19", "SNCA", "GBA", "LRRK2"]
 SUPERCLASS_MAP = {
-    "Control_C4":  "Control",
+    "Control_C4": "Control",
     "Control_C18": "Control",
     "Control_C19": "Control",
-    "SNCA":        "SNCA",
-    "GBA":         "GBA",
-    "LRRK2":       "LRRK2",
+    "SNCA": "SNCA",
+    "GBA": "GBA",
+    "LRRK2": "LRRK2",
 }
 CLASS_TO_LABEL = {"Control": 0, "SNCA": 1, "GBA": 2, "LRRK2": 3}
 LABEL_TO_CLASS = {v: k for k, v in CLASS_TO_LABEL.items()}
+
 
 # =========================
 # Normalize (same as training)
@@ -197,6 +251,7 @@ class SafeInstanceNormalize:
         std = tensor.std(dim=[1, 2], keepdim=True).clamp_min(self.threshold)
         return (tensor - mean) / std
 
+
 def validate_uint16_rgb(img: np.ndarray, img_size: int):
     if img is None:
         raise ValueError("decoded None")
@@ -207,6 +262,7 @@ def validate_uint16_rgb(img: np.ndarray, img_size: int):
     h, w = img.shape[:2]
     if (h, w) != (img_size, img_size):
         raise ValueError(f"size must be {(img_size, img_size)}, got {(h, w)}")
+
 
 # =========================
 # refs / tar offset index
@@ -224,6 +280,7 @@ class SampleRef:
     label: int
     plate: str
 
+
 def _infer_line_and_plate_from_tarpath(tar_path: str) -> Tuple[str, str]:
     parts = tar_path.replace("\\", "/").split("/")
     line = parts[-3]
@@ -231,12 +288,14 @@ def _infer_line_and_plate_from_tarpath(tar_path: str) -> Tuple[str, str]:
     plate = m.group(1) if m else "UNKNOWN"
     return line, plate
 
+
 def build_tar_index_if_needed(tar_path: str):
     idx_path = tar_path + ".pkl"
     if os.path.exists(idx_path):
         return
 
     import tarfile
+
     items = {}
     with tarfile.open(tar_path, "r") as tf:
         for m in tf.getmembers():
@@ -259,13 +318,17 @@ def build_tar_index_if_needed(tar_path: str):
     pairs = []
     for pref, it in items.items():
         if "tif_off" in it and "js_off" in it:
-            pairs.append((pref, it["tif_off"], it["tif_size"], it["js_off"], it["js_size"]))
+            pairs.append(
+                (pref, it["tif_off"], it["tif_size"], it["js_off"], it["js_size"])
+            )
 
     with open(idx_path, "wb") as f:
         pickle.dump(pairs, f, protocol=pickle.HIGHEST_PROTOCOL)
 
+
 def load_all_sample_refs(shard_root: str) -> List[SampleRef]:
     import glob
+
     tar_paths = sorted(glob.glob(os.path.join(shard_root, "*", "plate=*", "*.tar")))
     if len(tar_paths) == 0:
         raise FileNotFoundError(f"No tar shards found under: {shard_root}")
@@ -283,19 +346,22 @@ def load_all_sample_refs(shard_root: str) -> List[SampleRef]:
             pairs = pickle.load(f)
 
         for pref, tif_off, tif_size, js_off, js_size in pairs:
-            refs.append(SampleRef(
-                tar_path=tp,
-                prefix=pref,
-                tif_off=int(tif_off),
-                tif_size=int(tif_size),
-                js_off=int(js_off),
-                js_size=int(js_size),
-                line=line,
-                superclass=superclass,
-                label=label,
-                plate=plate
-            ))
+            refs.append(
+                SampleRef(
+                    tar_path=tp,
+                    prefix=pref,
+                    tif_off=int(tif_off),
+                    tif_size=int(tif_size),
+                    js_off=int(js_off),
+                    js_size=int(js_size),
+                    line=line,
+                    superclass=superclass,
+                    label=label,
+                    plate=plate,
+                )
+            )
     return refs
+
 
 # =========================
 # Split CSV loader (uid only)
@@ -307,6 +373,7 @@ def load_uids_from_split_csv(path: str) -> List[str]:
         for row in r:
             uids.append(row["uid"])
     return uids
+
 
 # =========================
 # Tar reader (seek+read cache)
@@ -337,6 +404,7 @@ class TarOffsetReader:
         validate_uint16_rgb(img, img_size)
         return img
 
+
 # =========================
 # Scan Dataset (no aug; only model input)
 # =========================
@@ -363,7 +431,7 @@ class ScanDataset(Dataset):
             reader = self._get_reader()
             img = reader.read_uint16_rgb(ref, self.img_size)  # (H,W,3) uint16
 
-            x = (img.astype(np.float32) / 65535.0)
+            x = img.astype(np.float32) / 65535.0
             x = torch.from_numpy(x).permute(2, 0, 1)  # (3,H,W)
             x = self.norm(x)
 
@@ -373,12 +441,19 @@ class ScanDataset(Dataset):
         except Exception:
             return None
 
+
 def collate_skip_none(batch):
     batch = [b for b in batch if b is not None]
     if len(batch) == 0:
         return None
     xs, ys, ridxs, uids = zip(*batch)
-    return torch.stack(xs, 0), torch.stack(ys, 0), torch.tensor(ridxs, dtype=torch.long), list(uids)
+    return (
+        torch.stack(xs, 0),
+        torch.stack(ys, 0),
+        torch.tensor(ridxs, dtype=torch.long),
+        list(uids),
+    )
+
 
 # =========================
 # Scan TopK per channel with reason (pos/neg)
@@ -410,7 +485,9 @@ def scan_topk_abspeak_with_reason(
         if batch is None:
             continue
         x, _, ridx, _ = batch
-        x = x.to(device, non_blocking=True).contiguous(memory_format=torch.channels_last)
+        x = x.to(device, non_blocking=True).contiguous(
+            memory_format=torch.channels_last
+        )
 
         with torch.amp.autocast(**autocast_kwargs):
             fmap = model_q.encoder.trunk(x)  # (B,C,h,w)
@@ -420,28 +497,28 @@ def scan_topk_abspeak_with_reason(
             first_shape_printed = True
 
         fmap = fmap.float()
-        posv = fmap.amax(dim=(2, 3))      # (B,C)
-        negv = (-fmap.amin(dim=(2, 3)))   # (B,C)  (abs of negative min)
-        win = (posv >= negv).to(torch.long)     # (B,C)
-        score = torch.maximum(posv, negv)       # (B,C)
+        posv = fmap.amax(dim=(2, 3))  # (B,C)
+        negv = -fmap.amin(dim=(2, 3))  # (B,C)  (abs of negative min)
+        win = (posv >= negv).to(torch.long)  # (B,C)
+        score = torch.maximum(posv, negv)  # (B,C)
 
         # transpose to (C,B)
         score_t = score.t().contiguous()
-        pos_t   = posv.t().contiguous()
-        neg_t   = negv.t().contiguous()
-        win_t   = win.t().contiguous()
+        pos_t = posv.t().contiguous()
+        neg_t = negv.t().contiguous()
+        win_t = win.t().contiguous()
 
-        batch_ids = ridx.to(device, non_blocking=True)             # (B,)
-        batch_ids_mat = batch_ids.view(1, -1).expand(C, -1)        # (C,B)
+        batch_ids = ridx.to(device, non_blocking=True)  # (B,)
+        batch_ids_mat = batch_ids.view(1, -1).expand(C, -1)  # (C,B)
 
-        cand_score = torch.cat([top_score, score_t], dim=1)        # (C,K+B)
-        cand_ref   = torch.cat([top_refidx, batch_ids_mat], dim=1)
-        cand_pos   = torch.cat([top_posval, pos_t], dim=1)
-        cand_neg   = torch.cat([top_negval, neg_t], dim=1)
-        cand_win   = torch.cat([top_winner, win_t], dim=1)
+        cand_score = torch.cat([top_score, score_t], dim=1)  # (C,K+B)
+        cand_ref = torch.cat([top_refidx, batch_ids_mat], dim=1)
+        cand_pos = torch.cat([top_posval, pos_t], dim=1)
+        cand_neg = torch.cat([top_negval, neg_t], dim=1)
+        cand_win = torch.cat([top_winner, win_t], dim=1)
 
         new_score, idx = cand_score.topk(K, dim=1, largest=True, sorted=True)
-        top_score  = new_score
+        top_score = new_score
         top_refidx = cand_ref.gather(1, idx)
         top_posval = cand_pos.gather(1, idx)
         top_negval = cand_neg.gather(1, idx)
@@ -454,6 +531,7 @@ def scan_topk_abspeak_with_reason(
         top_negval.detach().cpu(),
         top_winner.detach().cpu(),
     )
+
 
 # =========================
 # Load weights (flex: compile/DDP prefixes)
@@ -478,11 +556,13 @@ def load_weights_flex(model, weight_path, device="cpu", strict=True):
         raise RuntimeError("State_dict mismatch. See logs above.")
     return model
 
+
 # =========================
 # Visualization utils
 # =========================
 def linear_uint16_to_uint8_rgb(img_u16: np.ndarray) -> np.ndarray:
     return (img_u16.astype(np.float32) / 65535.0 * 255.0).round().astype(np.uint8)
+
 
 def robust_uint16_to_uint8_rgb(img_u16: np.ndarray, p_lo=10.0, p_hi=99.5) -> np.ndarray:
     """
@@ -490,13 +570,13 @@ def robust_uint16_to_uint8_rgb(img_u16: np.ndarray, p_lo=10.0, p_hi=99.5) -> np.
     Matches QC code's linear scaling logic.
     """
     MIN_STD_THRESHOLD = 655.0  # for uint16 input (same as QC code)
-    
+
     img = img_u16.astype(np.float32)
     out = np.zeros_like(img, dtype=np.uint8)
     for c in range(3):
         v = img[..., c]
         raw_std = np.std(v)
-        
+
         # Skip scaling if channel has very low variance (no meaningful signal)
         if raw_std < MIN_STD_THRESHOLD:
             # Just do simple linear conversion without percentile stretching
@@ -507,9 +587,10 @@ def robust_uint16_to_uint8_rgb(img_u16: np.ndarray, p_lo=10.0, p_hi=99.5) -> np.
             if hi <= lo + 1e-6:
                 hi = lo + 1.0
             vv = np.clip((v - lo) / (hi - lo), 0, 1)
-        
+
         out[..., c] = (vv * 255.0).round().astype(np.uint8)
     return out
+
 
 def apply_colormap_01(a01: np.ndarray, cmap_name: str = "jet") -> np.ndarray:
     """
@@ -517,11 +598,13 @@ def apply_colormap_01(a01: np.ndarray, cmap_name: str = "jet") -> np.ndarray:
     return: (H,W,3) uint8
     """
     import matplotlib.cm as cm
+
     a01 = np.clip(a01.astype(np.float32), 0.0, 1.0)
     cmap = cm.get_cmap(cmap_name)
     rgba = cmap(a01)  # (H,W,4)
     rgb8 = (rgba[..., :3] * 255.0).round().astype(np.uint8)
     return rgb8
+
 
 def _minmax01(x: np.ndarray, eps: float = 1e-6) -> np.ndarray:
     x = x.astype(np.float32)
@@ -529,6 +612,7 @@ def _minmax01(x: np.ndarray, eps: float = 1e-6) -> np.ndarray:
     if mx <= mn + eps:
         return np.zeros_like(x, dtype=np.float32)
     return (x - mn) / (mx - mn)
+
 
 def pos_neg_minmax_colormap(
     act_hw: np.ndarray,
@@ -552,6 +636,7 @@ def pos_neg_minmax_colormap(
     neg_rgb8 = apply_colormap_01(neg01, cmap_name=cmap_neg)
     return neg_rgb8, pos_rgb8
 
+
 # =========================
 # Save per-channel K sets (4 images per set)
 # - include winner + pos/neg values in filenames
@@ -560,10 +645,10 @@ def pos_neg_minmax_colormap(
 def save_topk_sets_per_channel_posneg(
     model_q,
     refs: List[SampleRef],
-    top_refidx: torch.Tensor,   # (C,K) CPU
-    top_posval: torch.Tensor,   # (C,K) CPU
-    top_negval: torch.Tensor,   # (C,K) CPU
-    top_winner: torch.Tensor,   # (C,K) CPU (1=pos, 0=neg)
+    top_refidx: torch.Tensor,  # (C,K) CPU
+    top_posval: torch.Tensor,  # (C,K) CPU
+    top_negval: torch.Tensor,  # (C,K) CPU
+    top_winner: torch.Tensor,  # (C,K) CPU (1=pos, 0=neg)
     save_root: str,
     img_size: int,
     K=15,
@@ -598,21 +683,25 @@ def save_topk_sets_per_channel_posneg(
             uid = f"{ref.tar_path}:{ref.prefix}"
             uid_hash = hashlib.md5(uid.encode("utf-8")).hexdigest()[:10]
 
-            posv = float(top_posval[ch, rank-1].item())
-            negv = float(top_negval[ch, rank-1].item())
-            win_str = "pos" if int(top_winner[ch, rank-1].item()) == 1 else "neg"
+            posv = float(top_posval[ch, rank - 1].item())
+            negv = float(top_negval[ch, rank - 1].item())
+            win_str = "pos" if int(top_winner[ch, rank - 1].item()) == 1 else "neg"
 
             img_u16 = reader.read_uint16_rgb(ref, img_size)
             raw_imgs_u16.append(img_u16)
 
-            x = (img_u16.astype(np.float32) / 65535.0)
+            x = img_u16.astype(np.float32) / 65535.0
             x = torch.from_numpy(x).permute(2, 0, 1)
             x = norm(x)
             xs.append(x)
 
             metas.append((line, uid_hash, rank, win_str, posv, negv))
 
-        xb = torch.stack(xs, 0).to(device, non_blocking=True).contiguous(memory_format=torch.channels_last)
+        xb = (
+            torch.stack(xs, 0)
+            .to(device, non_blocking=True)
+            .contiguous(memory_format=torch.channels_last)
+        )
 
         with torch.amp.autocast(**autocast_kwargs):
             fmap = model_q.encoder.trunk(xb)  # (B,C,h,w)
@@ -623,8 +712,10 @@ def save_topk_sets_per_channel_posneg(
             act.unsqueeze(1),
             size=(img_size, img_size),
             mode="bilinear",
-            align_corners=False
-        ).squeeze(1)  # (B,H,W)
+            align_corners=False,
+        ).squeeze(
+            1
+        )  # (B,H,W)
 
         for i in range(K):
             line, uid_hash, rank, win_str, posv, negv = metas[i]
@@ -641,31 +732,44 @@ def save_topk_sets_per_channel_posneg(
 
             # 01 orig (linear)
             orig_rgb8 = linear_uint16_to_uint8_rgb(raw_imgs_u16[i])
-            Image.fromarray(orig_rgb8, mode="RGB").save(os.path.join(out_dir, f"{base}_01_orig.png"))
+            Image.fromarray(orig_rgb8, mode="RGB").save(
+                os.path.join(out_dir, f"{base}_01_orig.png")
+            )
 
             # 02 bright (percentile stretch)
-            bright_rgb8 = robust_uint16_to_uint8_rgb(raw_imgs_u16[i], p_lo=1.0, p_hi=99.0)
-            Image.fromarray(bright_rgb8, mode="RGB").save(os.path.join(out_dir, f"{base}_02_bright.png"))
+            bright_rgb8 = robust_uint16_to_uint8_rgb(
+                raw_imgs_u16[i], p_lo=1.0, p_hi=99.0
+            )
+            Image.fromarray(bright_rgb8, mode="RGB").save(
+                os.path.join(out_dir, f"{base}_02_bright.png")
+            )
 
             # 03 neg/04 pos (min-max + colormap)
             act_hw = act_up[i].detach().cpu().numpy()
-            neg_rgb8, pos_rgb8 = pos_neg_minmax_colormap(act_hw, cmap_pos=cmap_pos, cmap_neg=cmap_neg)
+            neg_rgb8, pos_rgb8 = pos_neg_minmax_colormap(
+                act_hw, cmap_pos=cmap_pos, cmap_neg=cmap_neg
+            )
 
-            Image.fromarray(neg_rgb8, mode="RGB").save(os.path.join(out_dir, f"{base}_03_neg_minmax.png"))
-            Image.fromarray(pos_rgb8, mode="RGB").save(os.path.join(out_dir, f"{base}_04_pos_minmax.png"))
+            Image.fromarray(neg_rgb8, mode="RGB").save(
+                os.path.join(out_dir, f"{base}_03_neg_minmax.png")
+            )
+            Image.fromarray(pos_rgb8, mode="RGB").save(
+                os.path.join(out_dir, f"{base}_04_pos_minmax.png")
+            )
+
 
 # =========================
 # Main (Execution)
 # =========================
 
 # 1) Paths
-SAVE_DIR   = "/content/drive/MyDrive/Final_paper/Model_MoCoXBM_PlateLP_LRRK2_L2 norm_hidden2048_resume_bias=True"
+SAVE_DIR = "/content/drive/MyDrive/Final_paper/Model_MoCoXBM_PlateLP_LRRK2_L2 norm_hidden2048_resume_bias=True"
 SHARD_ROOT = "/content/wds_shards"
-WEIGHTS    = os.path.join(SAVE_DIR, "best_model.pt")
+WEIGHTS = os.path.join(SAVE_DIR, "best_model.pt")
 
 TRAIN_CSV = os.path.join(SAVE_DIR, "train_split.csv")
-VAL_CSV   = os.path.join(SAVE_DIR, "val_split.csv")
-TEST_CSV  = os.path.join(SAVE_DIR, "test_split.csv")
+VAL_CSV = os.path.join(SAVE_DIR, "val_split.csv")
+TEST_CSV = os.path.join(SAVE_DIR, "test_split.csv")
 
 OUT_ROOT = os.path.join(SAVE_DIR, "featmap_top15_posneg_sets_reason")
 INDEX_OUT = os.path.join(SAVE_DIR, "featmap_top15_abspeak_reason_index.pt")
@@ -674,13 +778,15 @@ INDEX_OUT = os.path.join(SAVE_DIR, "featmap_top15_abspeak_reason_index.pt")
 with open(os.path.join(SAVE_DIR, "args.json"), "r", encoding="utf-8") as f:
     argsj = json.load(f)
 
+
 def parse_int_list(s: str, n: int):
     parts = [p.strip() for p in s.split(",") if p.strip() != ""]
     vals = [int(p) for p in parts]
     assert len(vals) == n
     return tuple(vals)
 
-blocks    = parse_int_list(argsj["blocks"], 4)
+
+blocks = parse_int_list(argsj["blocks"], 4)
 dilations = parse_int_list(argsj["dilations"], 4)
 
 # 3) refs
@@ -708,10 +814,10 @@ loader = DataLoader(
     ds,
     batch_size=512,
     shuffle=False,
-    num_workers=2,   # if environment is unstable, try 0
+    num_workers=2,  # if environment is unstable, try 0
     pin_memory=True,
     collate_fn=collate_skip_none,
-    drop_last=False
+    drop_last=False,
 )
 
 # 6) model + weights
@@ -736,16 +842,19 @@ model_q.eval().to(device).to(memory_format=torch.channels_last)
 # 7) scan top-K (abs-peak + reason)
 K_SETS = 40  # ✅ change this to control number of sets per channel (sets=K, total images per channel = K*4)
 
-top_scores, top_refidx, top_posval, top_negval, top_winner = scan_topk_abspeak_with_reason(
-    model_q, loader, device,
-    K=K_SETS,
-    use_bf16=True
+top_scores, top_refidx, top_posval, top_negval, top_winner = (
+    scan_topk_abspeak_with_reason(model_q, loader, device, K=K_SETS, use_bf16=True)
 )
 
 torch.save(
-    {"top_scores": top_scores, "top_refidx": top_refidx,
-     "top_posval": top_posval, "top_negval": top_negval, "top_winner": top_winner},
-    INDEX_OUT
+    {
+        "top_scores": top_scores,
+        "top_refidx": top_refidx,
+        "top_posval": top_posval,
+        "top_negval": top_negval,
+        "top_winner": top_winner,
+    },
+    INDEX_OUT,
 )
 print("Saved index ->", INDEX_OUT)
 

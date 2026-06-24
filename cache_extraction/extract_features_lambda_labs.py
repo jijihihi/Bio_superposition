@@ -35,41 +35,31 @@
 
 
 # bilinear interpolation. sparsity 3200, loss function에 L2 norm 안 곱해서 훈련 (strict plate 사용)
-# 각 이미지 bilinear interpolation 할때는 per imgae token centering함. 
+# 각 이미지 bilinear interpolation 할때는 per imgae token centering함.
 # 어떤 뉴런 볼지 할때는 gap_csv 기반 했는데, batch centering (StrictPlateBalanced) 해서 각 뉴런 각 이미지에 대한 활성화하고, 여기서 DE filter로 해서 뽑아냄. (❌ restore_token_norm 없음, ❌ pooled 후 F.normalize 없음, ✅ 토큰 L2 정규화 있음, ✅ batch centering (StrictPlateBalanced))
 
 
-
-
-
-
-
-
-
-
-
-import os
 import argparse
+import gc
+import os
 import random
-import numpy as np
 from collections import defaultdict
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
-import gc
 
-from sae_project.step02_logging_utils import get_logger, SUPERCLASS_MAP
-from sae_project.step03_data_shards import load_all_sample_refs, build_uid_to_refidx
-from sae_project.step04_data_bank import (
-    InMemoryTarBank, InMemorySixteenBitDataset, load_split_csv,
-    seed_worker, collate_skip_none,
-)
-from sae_project.step05_model_encoder import (
-    SupMoCoModel, parse_int_list, renorm_unit_per_out_channel_,
-    robust_load_state_dict,
-)
+from sae_project.step02_logging_utils import SUPERCLASS_MAP, get_logger
+from sae_project.step03_data_shards import (build_uid_to_refidx,
+                                            load_all_sample_refs)
+from sae_project.step04_data_bank import (InMemorySixteenBitDataset,
+                                          InMemoryTarBank, collate_skip_none,
+                                          load_split_csv, seed_worker)
+from sae_project.step05_model_encoder import (SupMoCoModel, parse_int_list,
+                                              renorm_unit_per_out_channel_,
+                                              robust_load_state_dict)
 from sae_project.step06_gated_sae import GatedSAE
 
 logger = get_logger("extract_features")
@@ -85,31 +75,57 @@ def get_args():
 
     # SAE / Model
     p.add_argument("--sae_ckpt", type=str, required=True)
-    p.add_argument("--save_dir", type=str, required=True,
-                   help="Model output dir (contains train/val/test_split.csv)")
+    p.add_argument(
+        "--save_dir",
+        type=str,
+        required=True,
+        help="Model output dir (contains train/val/test_split.csv)",
+    )
     p.add_argument("--model_state_path", type=str, required=True)
     p.add_argument("--shard_root", type=str, required=True)
 
     # Output
-    p.add_argument("--output_path", type=str, default="",
-                   help="Path for .npz cache file (default: next to SAE ckpt)")
+    p.add_argument(
+        "--output_path",
+        type=str,
+        default="",
+        help="Path for .npz cache file (default: next to SAE ckpt)",
+    )
 
     # Feature extraction
-    p.add_argument("--which_layer", type=str, default="",
-                   help="Encoder layer to extract (default: use SAE ckpt value, e.g. refine_out, stage5_out)")
-    p.add_argument("--restore_token_norm", action="store_true",
-                   help="Multiply SAE activations by original per-token L2 norms before pooling")
+    p.add_argument(
+        "--which_layer",
+        type=str,
+        default="",
+        help="Encoder layer to extract (default: use SAE ckpt value, e.g. refine_out, stage5_out)",
+    )
+    p.add_argument(
+        "--restore_token_norm",
+        action="store_true",
+        help="Multiply SAE activations by original per-token L2 norms before pooling",
+    )
 
     # Sampling
-    p.add_argument("--samples_per_class", type=int, default=0,
-                   help="Samples per class (0 = use ALL, no sampling)")
-    p.add_argument("--use_all_data", action="store_true",
-                   help="Load train+val+test (default: val+test only). "
-                        "Also sets samples_per_class=0 if not explicitly set")
-    p.add_argument("--test_only", action="store_true",
-                   help="Load strictly ONLY test_split.csv")
-    p.add_argument("--ignore_splits", action="store_true",
-                   help="Ignore train/val/test split CSVs and use ALL images found in shard_root")
+    p.add_argument(
+        "--samples_per_class",
+        type=int,
+        default=0,
+        help="Samples per class (0 = use ALL, no sampling)",
+    )
+    p.add_argument(
+        "--use_all_data",
+        action="store_true",
+        help="Load train+val+test (default: val+test only). "
+        "Also sets samples_per_class=0 if not explicitly set",
+    )
+    p.add_argument(
+        "--test_only", action="store_true", help="Load strictly ONLY test_split.csv"
+    )
+    p.add_argument(
+        "--ignore_splits",
+        action="store_true",
+        help="Ignore train/val/test split CSVs and use ALL images found in shard_root",
+    )
     p.add_argument("--seed", type=int, default=42)
 
     # Encoder architecture
@@ -183,11 +199,7 @@ def extract_all_sae_features(
 
         # GAP-scalar normalization
         gap = fmap.mean(dim=(2, 3))
-        gap_norm = (
-            gap.norm(dim=1, keepdim=True)
-            .view(curr_bs, 1, 1, 1)
-            .clamp_min(1e-12)
-        )
+        gap_norm = gap.norm(dim=1, keepdim=True).view(curr_bs, 1, 1, 1).clamp_min(1e-12)
         fmap = fmap / gap_norm
 
         fmap = fmap.permute(0, 2, 3, 1).contiguous()
@@ -199,29 +211,31 @@ def extract_all_sae_features(
         # ==============================================================================
         # 1. fmap_reshaped: 현재 배치의 형태를 (B, H_W, C)로 변환합니다.
         fmap_reshaped = fmap.view(curr_bs, H_W, C)
-        
+
         # 2. image_means: 오직 '자기 자신 1장의 이미지' 내부에 있는 공간 토큰들(dim=1)의 평균만 구합니다.
         #    배치 차원(dim=0)에 대해서 평균을 구하지 않으므로, 옆에 있는 다른 이미지의 정보나
         #    클래스 라벨 정보가 절대로 섞여 들어가지 않습니다. (Data Leakage 원천 차단)
-        image_means = fmap_reshaped.mean(dim=1, keepdim=True) # (B, 1, C)
-        
+        image_means = fmap_reshaped.mean(dim=1, keepdim=True)  # (B, 1, C)
+
         # 3. 평균 빼기: 각 이미지에서 '자신의 평균'만을 뺍니다.
         #    이렇게 하면 데이터셋의 라벨이나 배치 구성(shuffle 여부)에 완벽하게 독립적인,
         #    가장 정석적이고 안전한 정규화(Normalization)가 수행됩니다.
         fmap_reshaped = fmap_reshaped - image_means
-        
+
         flat_tokens = fmap_reshaped.view(-1, C)
 
         # Save per-token L2 norms before normalization
         token_l2_norms = flat_tokens.norm(dim=1, keepdim=True).clamp_min(1e-12)
 
-        flat_tokens = F.normalize(flat_tokens, dim=1, eps=1e-12)  ## SAE 넣어줄때 토큰 L2 정규화해서 넣어준다. 그렇게 학습했으니까.
+        flat_tokens = F.normalize(
+            flat_tokens, dim=1, eps=1e-12
+        )  ## SAE 넣어줄때 토큰 L2 정규화해서 넣어준다. 그렇게 학습했으니까.
 
         # SAE forward in chunks
         token_batch_size = 8192
         acts_chunks = []
         for s in range(0, flat_tokens.size(0), token_batch_size):
-            chunk = flat_tokens[s: s + token_batch_size]
+            chunk = flat_tokens[s : s + token_batch_size]
             with torch.amp.autocast(**autocast_kwargs):
                 _, chunk_acts, _, _, _ = sae(chunk)
             acts_chunks.append(chunk_acts)
@@ -236,7 +250,7 @@ def extract_all_sae_features(
         # Pool → image-level GAP
         acts = acts.view(curr_bs, H_W, sae.d_sae)
         pooled = acts.mean(dim=1)  # (B, d_sae)
-        #pooled = F.normalize(pooled, dim=1)  # 이걸 왜 하지. 이미지별로 L2 norm을 할 이유가 없어. SAE 벡터인데 이걸 L2 norm을 왜 해. 물론 DPT할때는 아마 크게 영향은 안줬을꺼야. 그래도 모르긴 한다. 이거 없이 다시 뽑아야해.
+        # pooled = F.normalize(pooled, dim=1)  # 이걸 왜 하지. 이미지별로 L2 norm을 할 이유가 없어. SAE 벡터인데 이걸 L2 norm을 왜 해. 물론 DPT할때는 아마 크게 영향은 안줬을꺼야. 그래도 모르긴 한다. 이거 없이 다시 뽑아야해.
 
         # Save ALL neurons (no alive_mask filtering!)
         X_list.append(pooled.cpu().numpy())
@@ -261,8 +275,9 @@ def extract_all_sae_features(
 # ==============================================================================
 # Data Loading (val + test, balanced) — copied from dpt_kendall.py
 # ==============================================================================
-def make_balanced_loader(args, refs, uid_to_refidx, samples_per_class, seed,
-                         include_train=False):
+def make_balanced_loader(
+    args, refs, uid_to_refidx, samples_per_class, seed, include_train=False
+):
     """Load data, optionally balanced per class.
 
     include_train: if True, also loads train_split.csv
@@ -270,7 +285,9 @@ def make_balanced_loader(args, refs, uid_to_refidx, samples_per_class, seed,
     """
     if getattr(args, "ignore_splits", False):
         refidx_list = list(range(len(refs)))
-        logger.info(f"  [!] --ignore_splits is ON: Using all {len(refs)} images found in shard_root, bypassing CSVs.")
+        logger.info(
+            f"  [!] --ignore_splits is ON: Using all {len(refs)} images found in shard_root, bypassing CSVs."
+        )
     else:
         csv_paths = []
         if getattr(args, "test_only", False):
@@ -280,7 +297,7 @@ def make_balanced_loader(args, refs, uid_to_refidx, samples_per_class, seed,
                 csv_paths.append(os.path.join(args.save_dir, "train_split.csv"))
             csv_paths.append(os.path.join(args.save_dir, "val_split.csv"))
             csv_paths.append(os.path.join(args.save_dir, "test_split.csv"))
-    
+
         all_uids = []
         for csv_path in csv_paths:
             if os.path.exists(csv_path):
@@ -289,10 +306,10 @@ def make_balanced_loader(args, refs, uid_to_refidx, samples_per_class, seed,
                 logger.info(f"  Loaded {csv_path}: {len(uids)} UIDs")
             else:
                 logger.warning(f"  Not found (skipping): {csv_path}")
-    
+
         if not all_uids:
             raise FileNotFoundError(f"No val/test CSVs in {args.save_dir}")
-    
+
         # Normalize UIDs for cross-machine path matching
         KNOWN_ROOTS = [
             "/home/ubuntu/model-east3/wds_shards_tar/",
@@ -300,22 +317,22 @@ def make_balanced_loader(args, refs, uid_to_refidx, samples_per_class, seed,
             args.shard_root.rstrip("/\\") + "/",
             args.shard_root.rstrip("/\\") + "\\",
         ]
-    
+
         def uid_to_relative(uid: str) -> str:
             for root in KNOWN_ROOTS:
                 if uid.startswith(root):
-                    return uid[len(root):]
+                    return uid[len(root) :]
             for cls_prefix in ["Control/", "SNCA/", "GBA/", "LRRK2/"]:
                 idx = uid.find(cls_prefix)
                 if idx >= 0:
                     return uid[idx:]
             return uid
-    
+
         rel_to_refidx = {}
         for uid, ridx in uid_to_refidx.items():
             rel_key = uid_to_relative(uid)
             rel_to_refidx[rel_key] = ridx
-    
+
         refidx_list = []
         n_missing = 0
         for uid in all_uids:
@@ -324,9 +341,11 @@ def make_balanced_loader(args, refs, uid_to_refidx, samples_per_class, seed,
                 refidx_list.append(rel_to_refidx[rel_key])
             else:
                 n_missing += 1
-    
+
         if n_missing > 0:
-            logger.warning(f"  {n_missing}/{len(all_uids)} UIDs not matched (path mismatch?)")
+            logger.warning(
+                f"  {n_missing}/{len(all_uids)} UIDs not matched (path mismatch?)"
+            )
         logger.info(f"  Matched: {len(refidx_list)}/{len(all_uids)} UIDs from CSVs")
 
         # [CRITICAL RESTORE] CSV 파일에 없는 OOD 클래스 (Label 4 이상, 예: Alpha-Synuclein) 무조건 포함!
@@ -346,29 +365,33 @@ def make_balanced_loader(args, refs, uid_to_refidx, samples_per_class, seed,
 
     rng = np.random.default_rng(seed)
     selected = []
-    
+
     for cls in sorted(class_to_lines.keys()):
         lines_dict = class_to_lines[cls]
         num_lines = len(lines_dict)
-        
+
         if samples_per_class > 0:
             target_total = samples_per_class
             base_take = target_total // num_lines
             remainder = target_total % num_lines
-            
+
             sorted_lines = sorted(lines_dict.keys())
             class_selected = []
-            
+
             for idx, line_name in enumerate(sorted_lines):
                 pool = lines_dict[line_name]
                 take_for_this_line = base_take + (1 if idx < remainder else 0)
                 n_take = min(take_for_this_line, len(pool))
                 chosen = rng.choice(pool, size=n_take, replace=False).tolist()
                 class_selected.extend(chosen)
-                logger.info(f"    Line {line_name} (Class {cls}): {n_take}/{len(pool)} selected")
-                
+                logger.info(
+                    f"    Line {line_name} (Class {cls}): {n_take}/{len(pool)} selected"
+                )
+
             selected.extend(class_selected)
-            logger.info(f"  Class {cls} Total: {len(class_selected)} selected (across {num_lines} lines)")
+            logger.info(
+                f"  Class {cls} Total: {len(class_selected)} selected (across {num_lines} lines)"
+            )
         else:
             class_selected = []
             for line_name in sorted(lines_dict.keys()):
@@ -377,21 +400,23 @@ def make_balanced_loader(args, refs, uid_to_refidx, samples_per_class, seed,
             logger.info(f"  Class {cls}: {len(class_selected)} selected (all)")
 
     selected_refidx = [refidx_list[i] for i in selected]
-    
+
     bank = InMemoryTarBank(refs, selected_refidx, args.img_size)
     ib = list(range(len(selected_refidx)))
     ds = InMemorySixteenBitDataset(bank, ib, args.img_size, augment=False)
 
     loader = DataLoader(
-        ds, 
-        batch_size=args.batch_size, 
-        shuffle=False, 
-        num_workers=args.num_workers, 
+        ds,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
         pin_memory=torch.cuda.is_available(),
-        collate_fn=collate_skip_none
+        collate_fn=collate_skip_none,
     )
-    
-    logger.info(f"  Total: {len(selected)} images (Sequential Sequential Loading, shuffle=False)")
+
+    logger.info(
+        f"  Total: {len(selected)} images (Sequential Sequential Loading, shuffle=False)"
+    )
     return loader
 
 
@@ -430,7 +455,9 @@ def main():
     usage_ema = sae.usage_ema.cpu().numpy()
 
     if args.which_layer and args.which_layer != which_layer_ckpt:
-        logger.warning(f"Overriding SAE ckpt layer '{which_layer_ckpt}' → '{which_layer}'")
+        logger.warning(
+            f"Overriding SAE ckpt layer '{which_layer_ckpt}' → '{which_layer}'"
+        )
     logger.info(f"SAE: d_sae={d_sae}, layer={which_layer}")
 
     # ── 2. Load encoder ──────────────────────────────────────────────────
@@ -441,10 +468,15 @@ def main():
     dilations = parse_int_list(args.dilations, 4)
 
     model = SupMoCoModel(
-        embed_dim=args.embed_dim, blocks=blocks, dilations=dilations,
-        refine_blocks=args.refine_blocks, ckpt_segments=args.ckpt_segments,
-        proj_layers=args.proj_layers, proj_hidden=args.proj_hidden,
-        proj_bn=args.proj_bn, proj_dropout=args.proj_dropout,
+        embed_dim=args.embed_dim,
+        blocks=blocks,
+        dilations=dilations,
+        refine_blocks=args.refine_blocks,
+        ckpt_segments=args.ckpt_segments,
+        proj_layers=args.proj_layers,
+        proj_hidden=args.proj_hidden,
+        proj_bn=args.proj_bn,
+        proj_dropout=args.proj_dropout,
     )
     sd = torch.load(args.model_state_path, map_location="cpu", weights_only=False)
     robust_load_state_dict(model, sd, strict=True)
@@ -477,7 +509,9 @@ def main():
     uid_to_refidx = build_uid_to_refidx(refs)
 
     loader = make_balanced_loader(
-        args, refs, uid_to_refidx,
+        args,
+        refs,
+        uid_to_refidx,
         samples_per_class=spc,
         seed=args.seed,
         include_train=use_all,
@@ -485,11 +519,17 @@ def main():
 
     # ── 4. Extract features (ALL neurons) ────────────────────────────────
     logger.info(f"\n{'='*60}")
-    logger.info(f"Extracting SAE GAP features — ALL {d_sae} neurons "
-                f"(restore_token_norm={args.restore_token_norm})")
+    logger.info(
+        f"Extracting SAE GAP features — ALL {d_sae} neurons "
+        f"(restore_token_norm={args.restore_token_norm})"
+    )
 
     X_all, y, lines, uids = extract_all_sae_features(
-        encoder, sae, loader, device, which_layer,
+        encoder,
+        sae,
+        loader,
+        device,
+        which_layer,
         restore_token_norm=args.restore_token_norm,
     )
     logger.info(f"Features: {X_all.shape}")
@@ -502,7 +542,7 @@ def main():
         all_tag = "_all" if use_all else ""
         out_path = os.path.join(
             os.path.dirname(args.sae_ckpt),
-            f"features_cache_{which_layer}{suffix}{all_tag}.npz"
+            f"features_cache_{which_layer}{suffix}{all_tag}.npz",
         )
 
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
@@ -527,6 +567,7 @@ def main():
 
     # ── Summary ──────────────────────────────────────────────────────────
     from sae_project.step02_logging_utils import SUPERCLASS_MAP
+
     superclasses = [SUPERCLASS_MAP.get(ln, ln) for ln in lines]
     unique_classes, class_counts = np.unique(superclasses, return_counts=True)
     logger.info(f"\n  Classes: {dict(zip(unique_classes, class_counts))}")

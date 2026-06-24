@@ -1,10 +1,13 @@
-import torch
 import numpy as np
+import torch
+
 
 def compare_recursive(val1, val2, key_name="root"):
     # 1. 타입이 다른 경우
     if type(val1) != type(val2):
-        print(f"❌ '{key_name}'의 타입이 일치하지 않습니다. ({type(val1)} vs {type(val2)})")
+        print(
+            f"❌ '{key_name}'의 타입이 일치하지 않습니다. ({type(val1)} vs {type(val2)})"
+        )
         return False
 
     # 2. 딕셔너리(dict)인 경우
@@ -54,11 +57,12 @@ def compare_recursive(val1, val2, key_name="root"):
                 return False
         return True
 
+
 def compare_models(path1, path2):
     print("🔍 비교를 시작합니다... (용량이 크면 시간이 조금 걸릴 수 있습니다)")
     try:
-        model1_dict = torch.load(path1, map_location='cpu', weights_only=False)
-        model2_dict = torch.load(path2, map_location='cpu', weights_only=False)
+        model1_dict = torch.load(path1, map_location="cpu", weights_only=False)
+        model2_dict = torch.load(path2, map_location="cpu", weights_only=False)
     except Exception as e:
         print(f"❌ 파일을 불러오는 중 오류 발생: {e}")
         return
@@ -68,11 +72,11 @@ def compare_models(path1, path2):
     else:
         print("\n❌ [확인 결과] 두 모델은 서로 다른 데이터가 포함되어 있습니다.")
 
+
 # 경로 설정
 path1 = r"C:\python\최종 논문 용\람다랩스로 돌린거 최종모델\output\MoCo_seed87\SAE\stage5_out_d4096_gated_sp3200.0_aux0.03125_tied_ep008.pt"
-path2 = r"C:\Users\admin\Downloads\stage5_out_d4096_gated_sp3200.0_aux0.03125_tied_ep008.pt"
+path2 = (
+    r"C:\Users\admin\Downloads\stage5_out_d4096_gated_sp3200.0_aux0.03125_tied_ep008.pt"
+)
 
 compare_models(path1, path2)
-
-
-

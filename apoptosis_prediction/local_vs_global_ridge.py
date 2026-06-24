@@ -30,33 +30,29 @@
 #     --output_dir "/content/local_vs_global_ridge"
 # ==============================================================================
 
+import argparse
+import json
 import os
 import sys
-import json
-import argparse
-import numpy as np
 
 import matplotlib
+import numpy as np
+
 _IN_COLAB = "google.colab" in sys.modules
 if not _IN_COLAB:
     matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import seaborn as sns
-
+from sklearn.decomposition import PCA
 from sklearn.linear_model import RidgeCV
-from sklearn.preprocessing import StandardScaler
 from sklearn.neighbors import NearestNeighbors
 from sklearn.pipeline import Pipeline
-from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
 
-from sae_project.step02_logging_utils import get_logger, SUPERCLASS_MAP
 from kendall_correlation_coefficient.dpt_kendall import (
-    load_features_cache,
-    load_and_match_apoptosis,
-    apply_normalization,
-    compute_cv_per_neuron,
-    compute_de_neurons,
-)
+    apply_normalization, compute_cv_per_neuron, compute_de_neurons,
+    load_and_match_apoptosis, load_features_cache)
+from sae_project.step02_logging_utils import SUPERCLASS_MAP, get_logger
 
 logger = get_logger("local_vs_global_ridge")
 

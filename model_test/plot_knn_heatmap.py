@@ -16,27 +16,28 @@
 #       --metric accuracy
 # ==============================================================================
 
-import os
-import sys
-import json
-import glob
-import re
 import argparse
-import numpy as np
+import glob
+import json
+import os
+import re
+import sys
 
 import matplotlib
+import numpy as np
+
 _IN_COLAB = ("google.colab" in sys.modules) or os.path.isdir("/content")
 if not _IN_COLAB:
     matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
+import matplotlib.pyplot as plt
 
 from sae_project.step02_logging_utils import get_logger
 
 logger = get_logger("knn_heatmap")
 
-plt.rcParams['svg.fonttype'] = 'none'
-plt.rcParams['pdf.fonttype'] = 42
+plt.rcParams["svg.fonttype"] = "none"
+plt.rcParams["pdf.fonttype"] = 42
 
 
 # ==============================================================================
@@ -84,42 +85,98 @@ def get_args():
     p = argparse.ArgumentParser(
         description="KNN Accuracy Heatmap — CNN vs SAE comparison"
     )
-    p.add_argument("--results_dir", type=str, required=True,
-                   help="Root directory containing CNN_seed*/SAE_sp*_seed*/ subdirs")
-    p.add_argument("--mode", type=str, default="both",
-                   choices=["accuracy", "delta", "both", "compact"],
-                   help="Heatmap mode: 'accuracy' (side-by-side CNN/SAE), "
-                        "'delta' (SAE − CNN_mean), 'both', "
-                        "'compact' (3-row paper-ready: CNN mean, SAE mean, Δ). "
-                        "Default: both")
-    p.add_argument("--metric", type=str, default="accuracy",
-                   choices=["accuracy", "macro_f1"],
-                   help="Metric to plot. Default: accuracy")
-    p.add_argument("--cmap_acc", type=str, default="YlGnBu",
-                   help="Colormap for accuracy heatmaps. Default: YlGnBu")
-    p.add_argument("--alpha", type=float, default=1.0,
-                   help="Heatmap alpha (transparency). Default: 1.0")
-    p.add_argument("--cmap_lo", type=float, default=0.0,
-                   help="Colormap lower bound (0.0–1.0). Default: 0.0")
-    p.add_argument("--cmap_hi", type=float, default=1.0,
-                   help="Colormap upper bound (0.0–1.0). Default: 1.0")
-    p.add_argument("--cmap_end_color", type=str, default="",
-                   help="Override cmap end color with hex code (e.g. '#AF7BA1'). "
-                        "Start follows cmap_acc from cmap_lo, end blends to this color. "
-                        "Default: '' (use cmap as-is)")
-    p.add_argument("--cmap_delta", type=str, default="RdBu_r",
-                   help="Colormap for delta heatmap (diverging). Default: RdBu_r")
-    p.add_argument("--output_dir", type=str, default="",
-                   help="Output directory (default: results_dir)")
+    p.add_argument(
+        "--results_dir",
+        type=str,
+        required=True,
+        help="Root directory containing CNN_seed*/SAE_sp*_seed*/ subdirs",
+    )
+    p.add_argument(
+        "--mode",
+        type=str,
+        default="both",
+        choices=["accuracy", "delta", "both", "compact"],
+        help="Heatmap mode: 'accuracy' (side-by-side CNN/SAE), "
+        "'delta' (SAE − CNN_mean), 'both', "
+        "'compact' (3-row paper-ready: CNN mean, SAE mean, Δ). "
+        "Default: both",
+    )
+    p.add_argument(
+        "--metric",
+        type=str,
+        default="accuracy",
+        choices=["accuracy", "macro_f1"],
+        help="Metric to plot. Default: accuracy",
+    )
+    p.add_argument(
+        "--cmap_acc",
+        type=str,
+        default="YlGnBu",
+        help="Colormap for accuracy heatmaps. Default: YlGnBu",
+    )
+    p.add_argument(
+        "--alpha",
+        type=float,
+        default=1.0,
+        help="Heatmap alpha (transparency). Default: 1.0",
+    )
+    p.add_argument(
+        "--cmap_lo",
+        type=float,
+        default=0.0,
+        help="Colormap lower bound (0.0–1.0). Default: 0.0",
+    )
+    p.add_argument(
+        "--cmap_hi",
+        type=float,
+        default=1.0,
+        help="Colormap upper bound (0.0–1.0). Default: 1.0",
+    )
+    p.add_argument(
+        "--cmap_end_color",
+        type=str,
+        default="",
+        help="Override cmap end color with hex code (e.g. '#AF7BA1'). "
+        "Start follows cmap_acc from cmap_lo, end blends to this color. "
+        "Default: '' (use cmap as-is)",
+    )
+    p.add_argument(
+        "--cmap_delta",
+        type=str,
+        default="RdBu_r",
+        help="Colormap for delta heatmap (diverging). Default: RdBu_r",
+    )
+    p.add_argument(
+        "--output_dir",
+        type=str,
+        default="",
+        help="Output directory (default: results_dir)",
+    )
     p.add_argument("--dpi", type=int, default=200)
-    p.add_argument("--vmin", type=float, default=0.0,
-                   help="Min value for accuracy colorbar (default: 0.0 = auto)")
-    p.add_argument("--vmax", type=float, default=0.0,
-                   help="Max value for accuracy colorbar (default: 0.0 = auto)")
-    p.add_argument("--annot_fontsize", type=float, default=11,
-                   help="Font size for cell annotations. Default: 11")
-    p.add_argument("--figscale", type=float, default=1.0,
-                   help="Figure size multiplier. Default: 1.0")
+    p.add_argument(
+        "--vmin",
+        type=float,
+        default=0.0,
+        help="Min value for accuracy colorbar (default: 0.0 = auto)",
+    )
+    p.add_argument(
+        "--vmax",
+        type=float,
+        default=0.0,
+        help="Max value for accuracy colorbar (default: 0.0 = auto)",
+    )
+    p.add_argument(
+        "--annot_fontsize",
+        type=float,
+        default=11,
+        help="Font size for cell annotations. Default: 11",
+    )
+    p.add_argument(
+        "--figscale",
+        type=float,
+        default=1.0,
+        help="Figure size multiplier. Default: 1.0",
+    )
     return p.parse_args()
 
 
@@ -176,7 +233,8 @@ def collect_results(results_dir, metric="accuracy"):
             if subdir.startswith("CNN"):
                 # Try to extract layer: CNN_stage5_out_seed42
                 layer_match = re.match(
-                    r"CNN_(stage5_mid|stage5_out|refine_out)_seed\d+$", subdir)
+                    r"CNN_(stage5_mid|stage5_out|refine_out)_seed\d+$", subdir
+                )
                 if layer_match:
                     layer = layer_match.group(1)
                 else:
@@ -193,8 +251,9 @@ def collect_results(results_dir, metric="accuracy"):
                     layer_data[layer][seed][k] = (
                         r["accuracy"] if metric == "accuracy" else r["macro_f1"]
                     )
-                logger.info(f"  Loaded CNN {layer} seed={seed}: "
-                            f"{len(knn_results)} k values")
+                logger.info(
+                    f"  Loaded CNN {layer} seed={seed}: " f"{len(knn_results)} k values"
+                )
 
             elif subdir.startswith("SAE"):
                 sae_data[seed] = {}
@@ -204,8 +263,9 @@ def collect_results(results_dir, metric="accuracy"):
                     sae_data[seed][k] = (
                         r["accuracy"] if metric == "accuracy" else r["macro_f1"]
                     )
-                logger.info(f"  Loaded SAE seed={seed}: "
-                            f"{len(knn_results)} k values")
+                logger.info(
+                    f"  Loaded SAE seed={seed}: " f"{len(knn_results)} k values"
+                )
 
     k_values = sorted(k_values_set)
 
@@ -241,9 +301,20 @@ def build_matrix(data, seeds, k_values):
 # ==============================================================================
 # Draw single heatmap on an axis
 # ==============================================================================
-def draw_heatmap(ax, mat, row_labels, col_labels, title, alpha,
-                 cmap="YlGnBu", vmin=None, vmax=None,
-                 fmt=".1%", annot_fontsize=11, is_delta=False):
+def draw_heatmap(
+    ax,
+    mat,
+    row_labels,
+    col_labels,
+    title,
+    alpha,
+    cmap="YlGnBu",
+    vmin=None,
+    vmax=None,
+    fmt=".1%",
+    annot_fontsize=11,
+    is_delta=False,
+):
     """Draw an annotated heatmap on the given axis."""
 
     if vmin is None:
@@ -263,8 +334,15 @@ def draw_heatmap(ax, mat, row_labels, col_labels, title, alpha,
         for j in range(mat.shape[1]):
             val = mat[i, j]
             if np.isnan(val):
-                ax.text(j, i, "—", ha="center", va="center",
-                        fontsize=annot_fontsize, color="gray")
+                ax.text(
+                    j,
+                    i,
+                    "—",
+                    ha="center",
+                    va="center",
+                    fontsize=annot_fontsize,
+                    color="gray",
+                )
                 continue
 
             # Choose text color based on background brightness
@@ -282,9 +360,16 @@ def draw_heatmap(ax, mat, row_labels, col_labels, title, alpha,
             else:
                 text = f"{val:.1%}"
 
-            ax.text(j, i, text, ha="center", va="center",
-                    fontsize=annot_fontsize, color=text_color,
-                    fontweight="bold" if is_delta and abs(val) > 0.02 else "normal")
+            ax.text(
+                j,
+                i,
+                text,
+                ha="center",
+                va="center",
+                fontsize=annot_fontsize,
+                color=text_color,
+                fontweight="bold" if is_delta and abs(val) > 0.02 else "normal",
+            )
 
     # Axis labels
     ax.set_xticks(range(len(col_labels)))
@@ -306,10 +391,22 @@ def draw_heatmap(ax, mat, row_labels, col_labels, title, alpha,
 # ==============================================================================
 # Plot: Accuracy heatmaps (side-by-side CNN / SAE)
 # ==============================================================================
-def plot_accuracy_heatmaps(cnn_mat, sae_mat, cnn_seeds, sae_seeds, k_values,
-                           metric_name, cmap, output_path, dpi=200,
-                           alpha=1.0, vmin=None, vmax=None, annot_fontsize=11,
-                           figscale=1.0):
+def plot_accuracy_heatmaps(
+    cnn_mat,
+    sae_mat,
+    cnn_seeds,
+    sae_seeds,
+    k_values,
+    metric_name,
+    cmap,
+    output_path,
+    dpi=200,
+    alpha=1.0,
+    vmin=None,
+    vmax=None,
+    annot_fontsize=11,
+    figscale=1.0,
+):
     """Two side-by-side heatmaps: CNN and SAE."""
 
     # Determine shared color range
@@ -326,21 +423,33 @@ def plot_accuracy_heatmaps(cnn_mat, sae_mat, cnn_seeds, sae_seeds, k_values,
     fig, axes = plt.subplots(1, 2, figsize=(fig_w, fig_h))
 
     # CNN
-    im1 = draw_heatmap(axes[0], cnn_mat,
-                       [f"seed {s}" for s in cnn_seeds],
-                       k_values,
-                       f"CNN — KNN {metric_name.title()}",
-                       cmap=cmap, vmin=vmin, vmax=vmax,
-                       annot_fontsize=annot_fontsize, alpha=alpha)
+    im1 = draw_heatmap(
+        axes[0],
+        cnn_mat,
+        [f"seed {s}" for s in cnn_seeds],
+        k_values,
+        f"CNN — KNN {metric_name.title()}",
+        cmap=cmap,
+        vmin=vmin,
+        vmax=vmax,
+        annot_fontsize=annot_fontsize,
+        alpha=alpha,
+    )
     axes[0].set_ylabel("CNN Encoder Seed", fontsize=12)
 
     # SAE
-    im2 = draw_heatmap(axes[1], sae_mat,
-                       [f"seed {s}" for s in sae_seeds],
-                       k_values,
-                       f"SAE — KNN {metric_name.title()}",
-                       cmap=cmap, vmin=vmin, vmax=vmax,
-                       annot_fontsize=annot_fontsize, alpha=alpha)
+    im2 = draw_heatmap(
+        axes[1],
+        sae_mat,
+        [f"seed {s}" for s in sae_seeds],
+        k_values,
+        f"SAE — KNN {metric_name.title()}",
+        cmap=cmap,
+        vmin=vmin,
+        vmax=vmax,
+        annot_fontsize=annot_fontsize,
+        alpha=alpha,
+    )
     axes[1].set_ylabel("SAE Seed", fontsize=12)
 
     # Shared colorbar
@@ -354,11 +463,16 @@ def plot_accuracy_heatmaps(cnn_mat, sae_mat, cnn_seeds, sae_seeds, k_values,
     sae_mean = np.nanmean(sae_mat, axis=0)
     cnn_overall = np.nanmean(cnn_mat)
     sae_overall = np.nanmean(sae_mat)
-    fig.text(0.5, 0.01,
-             f"CNN mean: {cnn_overall:.1%}  |  SAE mean: {sae_overall:.1%}  |  "
-             f"Δ(SAE−CNN): {(sae_overall - cnn_overall)*100:+.1f}pp",
-             ha="center", fontsize=11, style="italic",
-             color="#333333")
+    fig.text(
+        0.5,
+        0.01,
+        f"CNN mean: {cnn_overall:.1%}  |  SAE mean: {sae_overall:.1%}  |  "
+        f"Δ(SAE−CNN): {(sae_overall - cnn_overall)*100:+.1f}pp",
+        ha="center",
+        fontsize=11,
+        style="italic",
+        color="#333333",
+    )
 
     fig.tight_layout(rect=[0, 0.04, 0.88, 1.0])
     fig.savefig(output_path, dpi=dpi, bbox_inches="tight")
@@ -372,9 +486,19 @@ def plot_accuracy_heatmaps(cnn_mat, sae_mat, cnn_seeds, sae_seeds, k_values,
 # ==============================================================================
 # Plot: Delta heatmap (SAE − CNN_mean)
 # ==============================================================================
-def plot_delta_heatmap(cnn_mat, sae_mat, sae_seeds, k_values,
-                       metric_name, cmap, output_path, dpi=200,
-                       alpha=1.0, annot_fontsize=11, figscale=1.0):
+def plot_delta_heatmap(
+    cnn_mat,
+    sae_mat,
+    sae_seeds,
+    k_values,
+    metric_name,
+    cmap,
+    output_path,
+    dpi=200,
+    alpha=1.0,
+    annot_fontsize=11,
+    figscale=1.0,
+):
     """Single heatmap: Δ = SAE_seed_k − CNN_mean_k for each cell."""
 
     # CNN mean per k (across all CNN seeds)
@@ -387,13 +511,17 @@ def plot_delta_heatmap(cnn_mat, sae_mat, sae_seeds, k_values,
     fig_h = (len(sae_seeds) * 0.8 + 3) * figscale
     fig, ax = plt.subplots(figsize=(fig_w, fig_h))
 
-    im = draw_heatmap(ax, delta_mat,
-                      [f"SAE seed {s}" for s in sae_seeds],
-                      k_values,
-                      f"Δ{metric_name.title()} (SAE − CNN mean)",
-                      alpha=alpha,
-                      cmap=cmap, is_delta=True,
-                      annot_fontsize=annot_fontsize)
+    im = draw_heatmap(
+        ax,
+        delta_mat,
+        [f"SAE seed {s}" for s in sae_seeds],
+        k_values,
+        f"Δ{metric_name.title()} (SAE − CNN mean)",
+        alpha=alpha,
+        cmap=cmap,
+        is_delta=True,
+        annot_fontsize=annot_fontsize,
+    )
     ax.set_ylabel("SAE Seed", fontsize=12)
 
     # Colorbar
@@ -402,9 +530,15 @@ def plot_delta_heatmap(cnn_mat, sae_mat, sae_seeds, k_values,
 
     # Annotation: CNN baseline
     cnn_str = "  ".join([f"k={k}: {v:.1%}" for k, v in zip(k_values, cnn_mean_per_k)])
-    fig.text(0.5, -0.01,
-             f"CNN mean baseline — {cnn_str}",
-             ha="center", fontsize=9, style="italic", color="#555555")
+    fig.text(
+        0.5,
+        -0.01,
+        f"CNN mean baseline — {cnn_str}",
+        ha="center",
+        fontsize=9,
+        style="italic",
+        color="#555555",
+    )
 
     fig.tight_layout()
     fig.savefig(output_path, dpi=dpi, bbox_inches="tight")
@@ -418,9 +552,23 @@ def plot_delta_heatmap(cnn_mat, sae_mat, sae_seeds, k_values,
 # ==============================================================================
 # Plot: Combined (accuracy + delta in one figure)
 # ==============================================================================
-def plot_combined(cnn_mat, sae_mat, cnn_seeds, sae_seeds, k_values,
-                  metric_name, cmap_acc, cmap_delta, output_path, dpi=200,
-                  alpha=1.0, vmin=None, vmax=None, annot_fontsize=11, figscale=1.0):
+def plot_combined(
+    cnn_mat,
+    sae_mat,
+    cnn_seeds,
+    sae_seeds,
+    k_values,
+    metric_name,
+    cmap_acc,
+    cmap_delta,
+    output_path,
+    dpi=200,
+    alpha=1.0,
+    vmin=None,
+    vmax=None,
+    annot_fontsize=11,
+    figscale=1.0,
+):
     """Three panels: CNN accuracy, SAE accuracy, Delta."""
 
     # Shared color range for accuracy panels
@@ -441,44 +589,60 @@ def plot_combined(cnn_mat, sae_mat, cnn_seeds, sae_seeds, k_values,
     fig, axes = plt.subplots(1, 3, figsize=(fig_w, fig_h))
 
     # CNN accuracy
-    im1 = draw_heatmap(axes[0], cnn_mat,
-                       [f"seed {s}" for s in cnn_seeds],
-                       k_values,
-                       f"CNN — {metric_name.title()}",
-                       alpha=alpha,
-                       cmap=cmap_acc, vmin=vmin, vmax=vmax,
-                       annot_fontsize=annot_fontsize)
+    im1 = draw_heatmap(
+        axes[0],
+        cnn_mat,
+        [f"seed {s}" for s in cnn_seeds],
+        k_values,
+        f"CNN — {metric_name.title()}",
+        alpha=alpha,
+        cmap=cmap_acc,
+        vmin=vmin,
+        vmax=vmax,
+        annot_fontsize=annot_fontsize,
+    )
     axes[0].set_ylabel("CNN Encoder Seed", fontsize=12)
 
     # SAE accuracy
-    im2 = draw_heatmap(axes[1], sae_mat,
-                       [f"seed {s}" for s in sae_seeds],
-                       k_values,
-                       f"SAE — {metric_name.title()}",
-                       alpha=alpha,
-                       cmap=cmap_acc, vmin=vmin, vmax=vmax,
-                       annot_fontsize=annot_fontsize)
+    im2 = draw_heatmap(
+        axes[1],
+        sae_mat,
+        [f"seed {s}" for s in sae_seeds],
+        k_values,
+        f"SAE — {metric_name.title()}",
+        alpha=alpha,
+        cmap=cmap_acc,
+        vmin=vmin,
+        vmax=vmax,
+        annot_fontsize=annot_fontsize,
+    )
     axes[1].set_ylabel("SAE Seed", fontsize=12)
 
     # Delta
-    im3 = draw_heatmap(axes[2], delta_mat,
-                       [f"seed {s}" for s in sae_seeds],
-                       k_values,
-                       f"Δ (SAE − CNN mean)",
-                       alpha=alpha,
-                       cmap=cmap_delta, is_delta=True,
-                       annot_fontsize=annot_fontsize)
+    im3 = draw_heatmap(
+        axes[2],
+        delta_mat,
+        [f"seed {s}" for s in sae_seeds],
+        k_values,
+        f"Δ (SAE − CNN mean)",
+        alpha=alpha,
+        cmap=cmap_delta,
+        is_delta=True,
+        annot_fontsize=annot_fontsize,
+    )
     axes[2].set_ylabel("SAE Seed", fontsize=12)
 
     # Colorbars
     # Accuracy colorbar (shared for panels 0, 1)
-    cb1 = fig.colorbar(im2, ax=axes[:2], shrink=0.7, pad=0.03,
-                       location="bottom", aspect=30)
+    cb1 = fig.colorbar(
+        im2, ax=axes[:2], shrink=0.7, pad=0.03, location="bottom", aspect=30
+    )
     cb1.set_label(metric_name.title(), fontsize=11)
 
     # Delta colorbar
-    cb2 = fig.colorbar(im3, ax=axes[2], shrink=0.7, pad=0.03,
-                       location="bottom", aspect=15)
+    cb2 = fig.colorbar(
+        im3, ax=axes[2], shrink=0.7, pad=0.03, location="bottom", aspect=15
+    )
     cb2.set_label(f"Δ (pp)", fontsize=11)
 
     # Overall summary
@@ -489,7 +653,9 @@ def plot_combined(cnn_mat, sae_mat, cnn_seeds, sae_seeds, k_values,
         f"KNN Evaluation — CNN vs SAE\n"
         f"CNN: {cnn_overall:.1%}  |  SAE: {sae_overall:.1%}  |  "
         f"Δ: {delta_overall*100:+.1f}pp",
-        fontsize=15, fontweight="bold", y=1.02
+        fontsize=15,
+        fontweight="bold",
+        y=1.02,
     )
 
     fig.tight_layout()
@@ -504,9 +670,21 @@ def plot_combined(cnn_mat, sae_mat, cnn_seeds, sae_seeds, k_values,
 # ==============================================================================
 # Plot: Compact paper-ready heatmap — 3 CNN layers + SAE + Δ per layer
 # ==============================================================================
-def plot_compact(layer_mats, sae_mat, k_values,
-                 metric_name, cmap_acc, cmap_delta, output_path, dpi=200,
-                 alpha=1.0, vmin=None, vmax=None, annot_fontsize=12, figscale=1.0):
+def plot_compact(
+    layer_mats,
+    sae_mat,
+    k_values,
+    metric_name,
+    cmap_acc,
+    cmap_delta,
+    output_path,
+    dpi=200,
+    alpha=1.0,
+    vmin=None,
+    vmax=None,
+    annot_fontsize=12,
+    figscale=1.0,
+):
     """Compact heatmap for paper.
 
     Top rows: mean(±std) for each CNN layer + SAE
@@ -543,8 +721,9 @@ def plot_compact(layer_mats, sae_mat, k_values,
         "stage5_out": "CNN stage5_out",
         "refine_out": "CNN refine_out",
     }
-    acc_labels = [f"{LAYER_DISPLAY.get(l, l)} (n={layer_n[l]})"
-                  for l in layers] + [f"SAE (n={n_sae})"]
+    acc_labels = [f"{LAYER_DISPLAY.get(l, l)} (n={layer_n[l]})" for l in layers] + [
+        f"SAE (n={n_sae})"
+    ]
     delta_labels = [f"Δ vs {LAYER_DISPLAY.get(l, l)[:12]}" for l in layers]
 
     # ── Figure sizing ──
@@ -554,9 +733,10 @@ def plot_compact(layer_mats, sae_mat, k_values,
     fig_h = (n_acc_rows + n_delta_rows) * cell_h + 3 * figscale
 
     fig, (ax_acc, ax_delta) = plt.subplots(
-        2, 1, figsize=(fig_w, fig_h),
-        gridspec_kw={'height_ratios': [n_acc_rows, n_delta_rows],
-                     'hspace': 0.08},
+        2,
+        1,
+        figsize=(fig_w, fig_h),
+        gridspec_kw={"height_ratios": [n_acc_rows, n_delta_rows], "hspace": 0.08},
     )
 
     # ── Color range ──
@@ -572,12 +752,11 @@ def plot_compact(layer_mats, sae_mat, k_values,
         vmax_acc = vmax
 
     # ── Accuracy heatmap ──
-    im_acc = ax_acc.imshow(acc_mat, cmap=cmap_acc,
-                           vmin=vmin_acc, vmax=vmax_acc, aspect='auto',
-                           alpha=alpha)
+    im_acc = ax_acc.imshow(
+        acc_mat, cmap=cmap_acc, vmin=vmin_acc, vmax=vmax_acc, aspect="auto", alpha=alpha
+    )
 
-    cmap_obj_acc = (cmap_acc if not isinstance(cmap_acc, str)
-                    else plt.get_cmap(cmap_acc))
+    cmap_obj_acc = cmap_acc if not isinstance(cmap_acc, str) else plt.get_cmap(cmap_acc)
     for i in range(n_acc_rows):
         for j in range(n_k):
             val = acc_mat[i, j]
@@ -590,12 +769,25 @@ def plot_compact(layer_mats, sae_mat, k_values,
             tc = "white" if lum < 0.55 else "black"
             tc_sub = "#dddddd" if lum < 0.55 else "#555555"
 
-            ax_acc.text(j, i - 0.08, f"{val:.1%}",
-                        ha="center", va="center",
-                        fontsize=annot_fontsize, fontweight="bold", color=tc)
-            ax_acc.text(j, i + 0.28, f"±{std_val:.1%}",
-                        ha="center", va="center",
-                        fontsize=annot_fontsize - 3, color=tc_sub)
+            ax_acc.text(
+                j,
+                i - 0.08,
+                f"{val:.1%}",
+                ha="center",
+                va="center",
+                fontsize=annot_fontsize,
+                fontweight="bold",
+                color=tc,
+            )
+            ax_acc.text(
+                j,
+                i + 0.28,
+                f"±{std_val:.1%}",
+                ha="center",
+                va="center",
+                fontsize=annot_fontsize - 3,
+                color=tc_sub,
+            )
 
     ax_acc.set_xticks(range(n_k))
     ax_acc.set_xticklabels([])
@@ -611,9 +803,14 @@ def plot_compact(layer_mats, sae_mat, k_values,
 
     # ── Delta heatmap ──
     abs_max = max(np.abs(delta_mat).max(), 0.005)
-    im_delta = ax_delta.imshow(delta_mat, cmap=cmap_delta,
-                               vmin=-abs_max, vmax=abs_max, aspect='auto',
-                               alpha=alpha)
+    im_delta = ax_delta.imshow(
+        delta_mat,
+        cmap=cmap_delta,
+        vmin=-abs_max,
+        vmax=abs_max,
+        aspect="auto",
+        alpha=alpha,
+    )
 
     cmap_obj_delta = plt.get_cmap(cmap_delta)
     for i in range(n_delta_rows):
@@ -624,9 +821,16 @@ def plot_compact(layer_mats, sae_mat, k_values,
             lum = 0.299 * bg[0] + 0.587 * bg[1] + 0.114 * bg[2]
             tc = "white" if lum < 0.55 else "black"
             sign = "+" if val > 0 else ""
-            ax_delta.text(j, i, f"{sign}{val*100:.1f}pp",
-                          ha="center", va="center",
-                          fontsize=annot_fontsize, fontweight="bold", color=tc)
+            ax_delta.text(
+                j,
+                i,
+                f"{sign}{val*100:.1f}pp",
+                ha="center",
+                va="center",
+                fontsize=annot_fontsize,
+                fontweight="bold",
+                color=tc,
+            )
 
     ax_delta.set_xticks(range(n_k))
     ax_delta.set_xticklabels([f"k={k}" for k in k_values], fontsize=11)
@@ -645,8 +849,12 @@ def plot_compact(layer_mats, sae_mat, k_values,
     cb_delta = fig.colorbar(im_delta, ax=ax_delta, shrink=0.85, pad=0.03)
     cb_delta.set_label("Δ (pp)", fontsize=10)
 
-    fig.suptitle(f"KNN Classification — {metric_name.title()}",
-                 fontsize=14, fontweight="bold", y=0.98)
+    fig.suptitle(
+        f"KNN Classification — {metric_name.title()}",
+        fontsize=14,
+        fontweight="bold",
+        y=0.98,
+    )
 
     fig.savefig(output_path, dpi=dpi, bbox_inches="tight")
     fig.savefig(output_path.replace(".png", ".svg"), bbox_inches="tight")
@@ -659,10 +867,20 @@ def plot_compact(layer_mats, sae_mat, k_values,
 # ==============================================================================
 # Plot: Summary table — rows = k, columns = layers + SAE (mean ± std)
 # ==============================================================================
-def plot_summary_table(layer_mats, sae_mat, k_values,
-                       metric_name, cmap_acc, output_path, dpi=200,
-                       alpha=1.0, vmin=None, vmax=None,
-                       annot_fontsize=13, figscale=1.0):
+def plot_summary_table(
+    layer_mats,
+    sae_mat,
+    k_values,
+    metric_name,
+    cmap_acc,
+    output_path,
+    dpi=200,
+    alpha=1.0,
+    vmin=None,
+    vmax=None,
+    annot_fontsize=13,
+    figscale=1.0,
+):
     """Summary table: rows = k values, columns = CNN layers + SAE.
     Each cell shows mean +/- std across seeds.
     """
@@ -708,8 +926,14 @@ def plot_summary_table(layer_mats, sae_mat, k_values,
     vmin_use = vmin if vmin is not None else max(all_vals.min() - 0.02, 0)
     vmax_use = vmax if vmax is not None else min(all_vals.max() + 0.02, 1)
 
-    im = ax.imshow(mean_mat, cmap=cmap_acc, vmin=vmin_use, vmax=vmax_use,
-                   aspect='auto', alpha=alpha)
+    im = ax.imshow(
+        mean_mat,
+        cmap=cmap_acc,
+        vmin=vmin_use,
+        vmax=vmax_use,
+        aspect="auto",
+        alpha=alpha,
+    )
 
     cmap_obj = cmap_acc if not isinstance(cmap_acc, str) else plt.get_cmap(cmap_acc)
     for i in range(n_k):
@@ -724,21 +948,33 @@ def plot_summary_table(layer_mats, sae_mat, k_values,
             tc = "white" if lum < 0.55 else "black"
             tc_sub = "#dddddd" if lum < 0.55 else "#555555"
 
-            ax.text(j, i - 0.12, f"{val:.1%}",
-                    ha="center", va="center",
-                    fontsize=annot_fontsize, fontweight="bold", color=tc)
-            ax.text(j, i + 0.25, f"±{std_val:.1%}",
-                    ha="center", va="center",
-                    fontsize=annot_fontsize - 3, color=tc_sub)
+            ax.text(
+                j,
+                i - 0.12,
+                f"{val:.1%}",
+                ha="center",
+                va="center",
+                fontsize=annot_fontsize,
+                fontweight="bold",
+                color=tc,
+            )
+            ax.text(
+                j,
+                i + 0.25,
+                f"±{std_val:.1%}",
+                ha="center",
+                va="center",
+                fontsize=annot_fontsize - 3,
+                color=tc_sub,
+            )
 
     # Axis
     ax.set_xticks(range(n_cols))
     ax.set_xticklabels(col_labels, fontsize=11, fontweight="bold")
-    ax.xaxis.set_ticks_position('top')
-    ax.xaxis.set_label_position('top')
+    ax.xaxis.set_ticks_position("top")
+    ax.xaxis.set_label_position("top")
     ax.set_yticks(range(n_k))
-    ax.set_yticklabels([f"k = {k}" for k in k_values],
-                       fontsize=12, fontweight="bold")
+    ax.set_yticklabels([f"k = {k}" for k in k_values], fontsize=12, fontweight="bold")
 
     # Grid
     for i in range(n_k + 1):
@@ -750,8 +986,12 @@ def plot_summary_table(layer_mats, sae_mat, k_values,
     cb = fig.colorbar(im, ax=ax, shrink=0.8, pad=0.05)
     cb.set_label(metric_name.title(), fontsize=11)
 
-    ax.set_title(f"KNN {metric_name.title()} — Summary (mean ± std)",
-                 fontsize=14, fontweight="bold", pad=50)
+    ax.set_title(
+        f"KNN {metric_name.title()} — Summary (mean ± std)",
+        fontsize=14,
+        fontweight="bold",
+        pad=50,
+    )
 
     fig.tight_layout()
     fig.savefig(output_path, dpi=dpi, bbox_inches="tight")
@@ -765,10 +1005,22 @@ def plot_summary_table(layer_mats, sae_mat, k_values,
 # ==============================================================================
 # Plot: All seeds detail — one big heatmap, grouped by layer
 # ==============================================================================
-def plot_all_seeds_detail(layer_data, layer_mats, sae_mat, sae_seeds, k_values,
-                          metric_name, cmap_acc, output_path, dpi=200,
-                          alpha=1.0, vmin=None, vmax=None,
-                          annot_fontsize=10, figscale=1.0):
+def plot_all_seeds_detail(
+    layer_data,
+    layer_mats,
+    sae_mat,
+    sae_seeds,
+    k_values,
+    metric_name,
+    cmap_acc,
+    output_path,
+    dpi=200,
+    alpha=1.0,
+    vmin=None,
+    vmax=None,
+    annot_fontsize=10,
+    figscale=1.0,
+):
     """All seeds × all layers in one heatmap.
     Rows: seeds grouped by layer.  Cols: k values.
     """
@@ -814,24 +1066,44 @@ def plot_all_seeds_detail(layer_data, layer_mats, sae_mat, sae_seeds, k_values,
     vmin_use = vmin if vmin is not None else max(all_vals.min() - 0.02, 0)
     vmax_use = vmax if vmax is not None else min(all_vals.max() + 0.02, 1)
 
-    im = ax.imshow(full_mat, cmap=cmap_acc, vmin=vmin_use, vmax=vmax_use,
-                   aspect='auto', alpha=alpha)
+    im = ax.imshow(
+        full_mat,
+        cmap=cmap_acc,
+        vmin=vmin_use,
+        vmax=vmax_use,
+        aspect="auto",
+        alpha=alpha,
+    )
 
     cmap_obj = cmap_acc if not isinstance(cmap_acc, str) else plt.get_cmap(cmap_acc)
     for i in range(n_rows):
         for j in range(n_k):
             val = full_mat[i, j]
             if np.isnan(val):
-                ax.text(j, i, "—", ha="center", va="center",
-                        fontsize=annot_fontsize, color="gray")
+                ax.text(
+                    j,
+                    i,
+                    "—",
+                    ha="center",
+                    va="center",
+                    fontsize=annot_fontsize,
+                    color="gray",
+                )
                 continue
             norm_v = (val - vmin_use) / max(vmax_use - vmin_use, 1e-12)
             bg = cmap_obj(norm_v)
             lum = 0.299 * bg[0] + 0.587 * bg[1] + 0.114 * bg[2]
             tc = "white" if lum < 0.55 else "black"
-            ax.text(j, i, f"{val:.1%}",
-                    ha="center", va="center",
-                    fontsize=annot_fontsize, fontweight="bold", color=tc)
+            ax.text(
+                j,
+                i,
+                f"{val:.1%}",
+                ha="center",
+                va="center",
+                fontsize=annot_fontsize,
+                fontweight="bold",
+                color=tc,
+            )
 
     # Axis
     ax.set_xticks(range(n_k))
@@ -850,8 +1122,9 @@ def plot_all_seeds_detail(layer_data, layer_mats, sae_mat, sae_seeds, k_values,
     cb = fig.colorbar(im, ax=ax, shrink=0.8, pad=0.04)
     cb.set_label(metric_name.title(), fontsize=11)
 
-    ax.set_title(f"KNN {metric_name.title()} — All Seeds",
-                 fontsize=14, fontweight="bold", pad=10)
+    ax.set_title(
+        f"KNN {metric_name.title()} — All Seeds", fontsize=14, fontweight="bold", pad=10
+    )
 
     fig.tight_layout()
     fig.savefig(output_path, dpi=dpi, bbox_inches="tight")
@@ -896,16 +1169,26 @@ def main():
         layer_mats[layer] = mat
         logger.info(f"\n  ── CNN {layer} Accuracy ──")
         for i, seed in enumerate(seeds):
-            vals = "  ".join([f"k={k}: {mat[i,j]:.1%}"
-                              if not np.isnan(mat[i,j]) else f"k={k}: —"
-                              for j, k in enumerate(k_values)])
+            vals = "  ".join(
+                [
+                    f"k={k}: {mat[i,j]:.1%}" if not np.isnan(mat[i, j]) else f"k={k}: —"
+                    for j, k in enumerate(k_values)
+                ]
+            )
             logger.info(f"    seed {seed:>4d}  {vals}")
 
     logger.info(f"\n  ── SAE Accuracy ──")
     for i, seed in enumerate(sae_seeds):
-        vals = "  ".join([f"k={k}: {sae_mat[i,j]:.1%}"
-                          if not np.isnan(sae_mat[i,j]) else f"k={k}: —"
-                          for j, k in enumerate(k_values)])
+        vals = "  ".join(
+            [
+                (
+                    f"k={k}: {sae_mat[i,j]:.1%}"
+                    if not np.isnan(sae_mat[i, j])
+                    else f"k={k}: —"
+                )
+                for j, k in enumerate(k_values)
+            ]
+        )
         logger.info(f"    seed {seed:>4d}  {vals}")
 
     # Determine vmin/vmax
@@ -913,70 +1196,128 @@ def main():
     vmax = args.vmax if args.vmax > 0 else None
 
     # Truncate colormaps if requested
-    cmap_acc = truncate_cmap(args.cmap_acc, args.cmap_lo, args.cmap_hi,
-                             end_color=args.cmap_end_color or None)
+    cmap_acc = truncate_cmap(
+        args.cmap_acc, args.cmap_lo, args.cmap_hi, end_color=args.cmap_end_color or None
+    )
     cmap_delta_name = args.cmap_delta
 
     metric_name = args.metric
 
     # For backward compat: flatten all CNN layers into one matrix for
     # accuracy/delta/both modes (using stage5_out if available, else first)
-    primary_layer = "stage5_out" if "stage5_out" in layer_mats else list(layer_mats.keys())[0]
+    primary_layer = (
+        "stage5_out" if "stage5_out" in layer_mats else list(layer_mats.keys())[0]
+    )
     cnn_mat = layer_mats[primary_layer]
     cnn_seeds = sorted(layer_data[primary_layer].keys())
 
     if args.mode in ("accuracy", "both"):
         acc_path = os.path.join(out_dir, f"heatmap_knn_{metric_name}.png")
         plot_accuracy_heatmaps(
-            cnn_mat, sae_mat, cnn_seeds, sae_seeds, k_values,
-            metric_name, cmap_acc, acc_path, args.dpi,
-            alpha=args.alpha, vmin=vmin, vmax=vmax,
-            annot_fontsize=args.annot_fontsize, figscale=args.figscale,
+            cnn_mat,
+            sae_mat,
+            cnn_seeds,
+            sae_seeds,
+            k_values,
+            metric_name,
+            cmap_acc,
+            acc_path,
+            args.dpi,
+            alpha=args.alpha,
+            vmin=vmin,
+            vmax=vmax,
+            annot_fontsize=args.annot_fontsize,
+            figscale=args.figscale,
         )
 
     if args.mode in ("delta", "both"):
         delta_path = os.path.join(out_dir, f"heatmap_knn_delta_{metric_name}.png")
         plot_delta_heatmap(
-            cnn_mat, sae_mat, sae_seeds, k_values,
-            metric_name, args.cmap_delta, delta_path, args.dpi,
+            cnn_mat,
+            sae_mat,
+            sae_seeds,
+            k_values,
+            metric_name,
+            args.cmap_delta,
+            delta_path,
+            args.dpi,
             alpha=args.alpha,
-            annot_fontsize=args.annot_fontsize, figscale=args.figscale,
+            annot_fontsize=args.annot_fontsize,
+            figscale=args.figscale,
         )
 
     if args.mode == "both":
         combo_path = os.path.join(out_dir, f"heatmap_knn_combined_{metric_name}.png")
         plot_combined(
-            cnn_mat, sae_mat, cnn_seeds, sae_seeds, k_values,
-            metric_name, cmap_acc, args.cmap_delta, combo_path, args.dpi,
-            alpha=args.alpha, vmin=vmin, vmax=vmax,
-            annot_fontsize=args.annot_fontsize, figscale=args.figscale,
+            cnn_mat,
+            sae_mat,
+            cnn_seeds,
+            sae_seeds,
+            k_values,
+            metric_name,
+            cmap_acc,
+            args.cmap_delta,
+            combo_path,
+            args.dpi,
+            alpha=args.alpha,
+            vmin=vmin,
+            vmax=vmax,
+            annot_fontsize=args.annot_fontsize,
+            figscale=args.figscale,
         )
 
     if args.mode == "compact":
         compact_path = os.path.join(out_dir, f"heatmap_knn_compact_{metric_name}.png")
         plot_compact(
-            layer_mats, sae_mat, k_values,
-            metric_name, cmap_acc, args.cmap_delta, compact_path, args.dpi,
-            alpha=args.alpha, vmin=vmin, vmax=vmax,
-            annot_fontsize=args.annot_fontsize, figscale=args.figscale,
+            layer_mats,
+            sae_mat,
+            k_values,
+            metric_name,
+            cmap_acc,
+            args.cmap_delta,
+            compact_path,
+            args.dpi,
+            alpha=args.alpha,
+            vmin=vmin,
+            vmax=vmax,
+            annot_fontsize=args.annot_fontsize,
+            figscale=args.figscale,
         )
 
         # --- Summary table: k-rows × layer-columns (mean ± std) ---
         summary_path = os.path.join(out_dir, f"heatmap_knn_summary_{metric_name}.png")
         plot_summary_table(
-            layer_mats, sae_mat, k_values,
-            metric_name, cmap_acc, summary_path, args.dpi,
-            alpha=args.alpha, vmin=vmin, vmax=vmax,
-            annot_fontsize=args.annot_fontsize, figscale=args.figscale,
+            layer_mats,
+            sae_mat,
+            k_values,
+            metric_name,
+            cmap_acc,
+            summary_path,
+            args.dpi,
+            alpha=args.alpha,
+            vmin=vmin,
+            vmax=vmax,
+            annot_fontsize=args.annot_fontsize,
+            figscale=args.figscale,
         )
 
         # --- All-seeds detail: every seed for every layer ---
         detail_path = os.path.join(out_dir, f"heatmap_knn_all_seeds_{metric_name}.png")
         plot_all_seeds_detail(
-            layer_data, layer_mats, sae_mat, sae_seeds, k_values,
-            metric_name, cmap_acc, detail_path, args.dpi,
-            alpha=args.alpha, vmin=vmin, vmax=vmax,
-            annot_fontsize=args.annot_fontsize, figscale=args.figscale,
+            layer_data,
+            layer_mats,
+            sae_mat,
+            sae_seeds,
+            k_values,
+            metric_name,
+            cmap_acc,
+            detail_path,
+            args.dpi,
+            alpha=args.alpha,
+            vmin=vmin,
+            vmax=vmax,
+            annot_fontsize=args.annot_fontsize,
+            figscale=args.figscale,
         )
 
     # Save raw data as CSV
@@ -988,12 +1329,16 @@ def main():
             seeds = sorted(ld.keys())
             mat = layer_mats[layer]
             for i, seed in enumerate(seeds):
-                vals = [f"{mat[i,j]:.4f}" if not np.isnan(mat[i,j]) else ""
-                        for j in range(len(k_values))]
+                vals = [
+                    f"{mat[i,j]:.4f}" if not np.isnan(mat[i, j]) else ""
+                    for j in range(len(k_values))
+                ]
                 f.write(f"CNN,{layer},{seed}," + ",".join(vals) + "\n")
         for i, seed in enumerate(sae_seeds):
-            vals = [f"{sae_mat[i,j]:.4f}" if not np.isnan(sae_mat[i,j]) else ""
-                    for j in range(len(k_values))]
+            vals = [
+                f"{sae_mat[i,j]:.4f}" if not np.isnan(sae_mat[i, j]) else ""
+                for j in range(len(k_values))
+            ]
             f.write(f"SAE,stage5_out,{seed}," + ",".join(vals) + "\n")
     logger.info(f"\n  Saved CSV: {csv_path}")
 

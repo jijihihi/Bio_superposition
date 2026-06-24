@@ -24,22 +24,22 @@
 #       --output_dir /path/to/output
 # ==============================================================================
 
-import os
-import sys
+import argparse
 import csv
 import json
-import random
-import argparse
 import logging
+import os
+import random
+import sys
 from typing import Dict, Tuple
 
+import matplotlib
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 
-import matplotlib
 _IN_COLAB = ("google.colab" in sys.modules) or os.path.isdir("/content")
 if not _IN_COLAB:
     matplotlib.use("Agg")
@@ -65,9 +65,9 @@ def load_cache(npz_path: str, gap_l2_norm: bool = True):
     uids     : (N,)  str
     """
     data = np.load(npz_path, allow_pickle=True)
-    features = data["X_gap"].astype(np.float32)      # (N, d)
-    labels = data["y"].astype(int)                   # (N,)
-    uids = data["uids"]                              # (N,) str
+    features = data["X_gap"].astype(np.float32)  # (N, d)
+    labels = data["y"].astype(int)  # (N,)
+    uids = data["uids"]  # (N,) str
 
     if gap_l2_norm:
         norms = np.linalg.norm(features, axis=1, keepdims=True)
@@ -104,7 +104,9 @@ def apply_split(features, labels, uids, split_dir):
     test_idx = [uid_to_idx[u] for u in test_uids if u in uid_to_idx]
 
     if not train_idx or not test_idx:
-        logger.warning(f"  Split CSVs incomplete in {split_dir}, using 80/20 random split")
+        logger.warning(
+            f"  Split CSVs incomplete in {split_dir}, using 80/20 random split"
+        )
         n = len(features)
         perm = np.random.permutation(n)
         split = int(0.8 * n)
@@ -123,10 +125,19 @@ def apply_split(features, labels, uids, split_dir):
 # ==============================================================================
 # Linear probe (SGD)
 # ==============================================================================
-def train_linear_probe(X_train, y_train, X_test, y_test,
-                       num_classes=4, lr=0.1, momentum=0.9,
-                       weight_decay=1e-4, epochs=50, batch_size=512,
-                       seed=42) -> Dict:
+def train_linear_probe(
+    X_train,
+    y_train,
+    X_test,
+    y_test,
+    num_classes=4,
+    lr=0.1,
+    momentum=0.9,
+    weight_decay=1e-4,
+    epochs=50,
+    batch_size=512,
+    seed=42,
+) -> Dict:
     """Train linear probe and return metrics."""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     rng = np.random.RandomState(seed)
@@ -138,8 +149,9 @@ def train_linear_probe(X_train, y_train, X_test, y_test,
 
     probe = nn.Linear(X_tr.shape[1], num_classes, bias=False).to(device)
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.SGD(probe.parameters(), lr=lr, momentum=momentum,
-                          weight_decay=weight_decay)
+    optimizer = optim.SGD(
+        probe.parameters(), lr=lr, momentum=momentum, weight_decay=weight_decay
+    )
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
     n = X_tr.shape[0]
@@ -149,8 +161,8 @@ def train_linear_probe(X_train, y_train, X_test, y_test,
         X_shuf = X_tr[perm]
         y_shuf = y_tr[perm]
         for i in range(0, n, batch_size):
-            xb = X_shuf[i:i+batch_size].to(device)
-            yb = y_shuf[i:i+batch_size].to(device)
+            xb = X_shuf[i : i + batch_size].to(device)
+            yb = y_shuf[i : i + batch_size].to(device)
             optimizer.zero_grad(set_to_none=True)
             loss = criterion(probe(xb), yb)
             loss.backward()
@@ -162,10 +174,10 @@ def train_linear_probe(X_train, y_train, X_test, y_test,
     with torch.no_grad():
         all_preds, all_true = [], []
         for i in range(0, X_te.shape[0], batch_size):
-            xb = X_te[i:i+batch_size].to(device)
+            xb = X_te[i : i + batch_size].to(device)
             preds = probe(xb).argmax(dim=1).cpu()
             all_preds.append(preds)
-            all_true.append(y_te[i:i+batch_size])
+            all_true.append(y_te[i : i + batch_size])
         preds = torch.cat(all_preds).numpy()
         true = torch.cat(all_true).numpy()
 
@@ -202,8 +214,12 @@ def train_linear_probe(X_train, y_train, X_test, y_test,
 # ==============================================================================
 # Alignment & Uniformity (Wang & Isola 2020)
 # ==============================================================================
-def compute_alignment(features: np.ndarray, labels: np.ndarray,
-                      alpha: float = 2.0, max_pairs: int = 500_000) -> float:
+def compute_alignment(
+    features: np.ndarray,
+    labels: np.ndarray,
+    alpha: float = 2.0,
+    max_pairs: int = 500_000,
+) -> float:
     """Alignment: E[‖f(x) - f(x⁺)‖^α] for same-class (positive) pairs.
 
     Lower is better — features of same-class samples should be close.
@@ -229,18 +245,19 @@ def compute_alignment(features: np.ndarray, labels: np.ndarray,
         for _ in range(n_pairs):
             i, j = np.random.choice(idx, 2, replace=False)
             diff = feats[i] - feats[j]
-            dists_sq.append(float(np.sum(diff ** 2)))
+            dists_sq.append(float(np.sum(diff**2)))
 
     if not dists_sq:
-        return float('nan')
+        return float("nan")
 
     dists_sq = np.array(dists_sq)
     # alignment = E[‖f-f⁺‖^α]
     return float(np.mean(dists_sq ** (alpha / 2)))
 
 
-def compute_uniformity(features: np.ndarray, t: float = 2.0,
-                       max_samples: int = 10_000) -> float:
+def compute_uniformity(
+    features: np.ndarray, t: float = 2.0, max_samples: int = 10_000
+) -> float:
     """Uniformity: log E[e^{-t·‖f(x) - f(y)‖²}] for all pairs.
 
     Lower (more negative) is better — features should be uniformly distributed.
@@ -284,20 +301,41 @@ def compute_uniformity(features: np.ndarray, t: float = 2.0,
 # ==============================================================================
 def get_args():
     p = argparse.ArgumentParser(
-        description="Layer-wise Linear Classification + Alignment & Uniformity")
+        description="Layer-wise Linear Classification + Alignment & Uniformity"
+    )
 
-    p.add_argument("--features_cache", type=str, required=True,
-                   help="NPZ file: cnn_gap_{layer}_all.npz")
-    p.add_argument("--split_dir", type=str, required=True,
-                   help="Directory containing train_split.csv / test_split.csv")
-    p.add_argument("--layer_name", type=str, required=True,
-                   help="Layer name (e.g. stage5_mid, stage5_out, refine_out)")
-    p.add_argument("--seed_name", type=str, default="",
-                   help="CNN encoder seed name for labeling (e.g. 87)")
-    p.add_argument("--gap_l2_norm", action="store_true",
-                   help="Apply L2 normalization to GAP features")
-    p.add_argument("--output_dir", type=str, default="./layer_au_results",
-                   help="Output directory")
+    p.add_argument(
+        "--features_cache",
+        type=str,
+        required=True,
+        help="NPZ file: cnn_gap_{layer}_all.npz",
+    )
+    p.add_argument(
+        "--split_dir",
+        type=str,
+        required=True,
+        help="Directory containing train_split.csv / test_split.csv",
+    )
+    p.add_argument(
+        "--layer_name",
+        type=str,
+        required=True,
+        help="Layer name (e.g. stage5_mid, stage5_out, refine_out)",
+    )
+    p.add_argument(
+        "--seed_name",
+        type=str,
+        default="",
+        help="CNN encoder seed name for labeling (e.g. 87)",
+    )
+    p.add_argument(
+        "--gap_l2_norm",
+        action="store_true",
+        help="Apply L2 normalization to GAP features",
+    )
+    p.add_argument(
+        "--output_dir", type=str, default="./layer_au_results", help="Output directory"
+    )
 
     # Linear probe
     p.add_argument("--lp_lr", type=float, default=0.1)
@@ -306,14 +344,27 @@ def get_args():
     p.add_argument("--lp_batch_size", type=int, default=512)
 
     # A&U
-    p.add_argument("--au_alpha", type=float, default=2.0,
-                   help="Alignment exponent (Wang & Isola 2020). Default: 2")
-    p.add_argument("--au_t", type=float, default=2.0,
-                   help="Uniformity temperature. Default: 2")
-    p.add_argument("--au_max_samples", type=int, default=10000,
-                   help="Max samples for uniformity (memory). Default: 10000")
-    p.add_argument("--au_max_pairs", type=int, default=500000,
-                   help="Max same-class pairs for alignment. Default: 500000")
+    p.add_argument(
+        "--au_alpha",
+        type=float,
+        default=2.0,
+        help="Alignment exponent (Wang & Isola 2020). Default: 2",
+    )
+    p.add_argument(
+        "--au_t", type=float, default=2.0, help="Uniformity temperature. Default: 2"
+    )
+    p.add_argument(
+        "--au_max_samples",
+        type=int,
+        default=10000,
+        help="Max samples for uniformity (memory). Default: 10000",
+    )
+    p.add_argument(
+        "--au_max_pairs",
+        type=int,
+        default=500000,
+        help="Max same-class pairs for alignment. Default: 500000",
+    )
 
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--quiet", action="store_true")
@@ -344,33 +395,42 @@ def main():
 
     # ── 2. Train/test split ──
     X_train, y_train, X_test, y_test = apply_split(
-        features, labels, uids, args.split_dir)
+        features, labels, uids, args.split_dir
+    )
 
     # ── 3. Linear probe ──
-    logger.info(f"  Training linear probe (SGD, lr={args.lp_lr}, "
-                f"epochs={args.lp_epochs})...")
+    logger.info(
+        f"  Training linear probe (SGD, lr={args.lp_lr}, "
+        f"epochs={args.lp_epochs})..."
+    )
     lp_result = train_linear_probe(
-        X_train, y_train, X_test, y_test,
+        X_train,
+        y_train,
+        X_test,
+        y_test,
         num_classes=NUM_CLASSES,
-        lr=args.lp_lr, weight_decay=args.lp_wd,
-        epochs=args.lp_epochs, batch_size=args.lp_batch_size,
+        lr=args.lp_lr,
+        weight_decay=args.lp_wd,
+        epochs=args.lp_epochs,
+        batch_size=args.lp_batch_size,
         seed=args.seed,
     )
     logger.info(f"  Linear Probe Accuracy: {lp_result['accuracy']:.4f}")
     logger.info(f"  Macro F1: {lp_result['macro_f1']:.4f}")
-    for c, a in lp_result['per_class_accuracy'].items():
+    for c, a in lp_result["per_class_accuracy"].items():
         logger.info(f"    {c:>10s}: {a:.4f}")
 
     # ── 4. Alignment & Uniformity (on ALL features, L2-normalized) ──
     logger.info(f"  Computing Alignment (α={args.au_alpha})...")
     alignment = compute_alignment(
-        features, labels,
-        alpha=args.au_alpha, max_pairs=args.au_max_pairs)
+        features, labels, alpha=args.au_alpha, max_pairs=args.au_max_pairs
+    )
     logger.info(f"  Alignment: {alignment:.6f}")
 
     logger.info(f"  Computing Uniformity (t={args.au_t})...")
     uniformity = compute_uniformity(
-        features, t=args.au_t, max_samples=args.au_max_samples)
+        features, t=args.au_t, max_samples=args.au_max_samples
+    )
     logger.info(f"  Uniformity: {uniformity:.6f}")
 
     # ── 5. Save results ──
@@ -403,21 +463,34 @@ def main():
     with open(csv_path, "a", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         if write_header:
-            writer.writerow([
-                "seed", "layer", "l2_norm",
-                "linear_acc", "macro_f1",
-                "alignment", "uniformity",
-                "n_total", "n_train", "n_test",
-            ])
-        writer.writerow([
-            args.seed_name, args.layer_name,
-            "Y" if args.gap_l2_norm else "N",
-            f"{lp_result['accuracy']:.4f}",
-            f"{lp_result['macro_f1']:.4f}",
-            f"{alignment:.6f}",
-            f"{uniformity:.6f}",
-            len(features), len(X_train), len(X_test),
-        ])
+            writer.writerow(
+                [
+                    "seed",
+                    "layer",
+                    "l2_norm",
+                    "linear_acc",
+                    "macro_f1",
+                    "alignment",
+                    "uniformity",
+                    "n_total",
+                    "n_train",
+                    "n_test",
+                ]
+            )
+        writer.writerow(
+            [
+                args.seed_name,
+                args.layer_name,
+                "Y" if args.gap_l2_norm else "N",
+                f"{lp_result['accuracy']:.4f}",
+                f"{lp_result['macro_f1']:.4f}",
+                f"{alignment:.6f}",
+                f"{uniformity:.6f}",
+                len(features),
+                len(X_train),
+                len(X_test),
+            ]
+        )
     logger.info(f"  Appended to CSV: {csv_path}")
 
     # ── Summary ──

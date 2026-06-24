@@ -12,8 +12,7 @@ from torch.utils.data.dataloader import default_collate
 from torchvision import transforms
 from tqdm.auto import tqdm
 
-from sae_project.step02_logging_utils import get_logger, SUPERCLASS_MAP
-
+from sae_project.step02_logging_utils import SUPERCLASS_MAP, get_logger
 
 try:
     import tifffile
@@ -21,20 +20,16 @@ except Exception:
     raise RuntimeError("tifffile not installed. pip install tifffile")
 
 
-
-
-import os, io, time, random
-
+import io
+import json
+import os
+import random
+import time
 from collections import defaultdict, deque
-
-
-
-
 
 # tif decoder
 
 
-import json
 
 logger = get_logger("data_bank")
 
@@ -43,6 +38,7 @@ def seed_worker(worker_id: int):
     worker_seed = torch.initial_seed() % 2**32
     np.random.seed(worker_seed)
     import random
+
     random.seed(worker_seed)
 
 
@@ -56,7 +52,7 @@ def collate_skip_none(batch):
     batch = [b for b in batch if b is not None]
     if len(batch) == 0:
         return None
-    
+
     # Check if batch contains tuples with strings (from InMemorySixteenBitDataset)
     # Dataset returns: (x, y, plate, line, uid)
     first = batch[0]
@@ -66,27 +62,26 @@ def collate_skip_none(batch):
             # Separate tensor fields (x, y) from string fields (plate, line, uid)
             tensors = [(b[0], b[1]) for b in batch]  # (x, y)
             collated_tensors = default_collate(tensors)
-            
+
             # String fields as lists
             plates = [b[2] for b in batch]
             lines = [b[3] for b in batch]
             uids = [b[4] for b in batch]
-            
+
             return (*collated_tensors, plates, lines, uids)
-    
+
     # Default: standard collate for tensor-only batches
     return default_collate(batch)
 
 
-
-#클래스 라인별로 이미지 균형있게 뽑는 함수
-
+# 클래스 라인별로 이미지 균형있게 뽑는 함수
 
 
 class StrictPlateBalancedBatchSamplerOnBank(Sampler[List[int]]):
     """
     bank/dataset 인덱스(0..N-1)를 반환하는 strict plate-uniform sampler
     """
+
     def __init__(self, bank, batch_size: int, seed: int):
         self.bank = bank
         self.batch_size = int(batch_size)
@@ -104,7 +99,7 @@ class StrictPlateBalancedBatchSamplerOnBank(Sampler[List[int]]):
             self.orig[(sup, line, plate)].append(j)
 
         self.line_plates = defaultdict(list)
-        for (sup, line, plate) in self.orig.keys():
+        for sup, line, plate in self.orig.keys():
             self.line_plates[(sup, line)].append(plate)
         for k in self.line_plates:
             self.line_plates[k] = sorted(set(self.line_plates[k]))
@@ -148,7 +143,8 @@ class StrictPlateBalancedBatchSamplerOnBank(Sampler[List[int]]):
             rem = bs - per * 4
             targets = {"Control": per, "SNCA": per, "GBA": per, "LRRK2": per}
             for k in ["Control", "SNCA", "GBA", "LRRK2"]:
-                if rem <= 0: break
+                if rem <= 0:
+                    break
                 targets[k] += 1
                 rem -= 1
 
@@ -199,10 +195,7 @@ class StrictPlateBalancedBatchSamplerOnBank(Sampler[List[int]]):
             if len(batch) < self.batch_size:
                 break
 
-            yield batch[:self.batch_size]
-
-
-
+            yield batch[: self.batch_size]
 
 
 def validate_uint16_rgb_128(img: np.ndarray, img_size: int):
@@ -231,6 +224,7 @@ class InMemoryTarBank:
     """
     shared RAM bank: preload tar samples into memory as uint16 numpy arrays
     """
+
     def __init__(self, refs, ref_indices: List[int], img_size: int):
         self.refs = refs
         self.ref_indices = ref_indices
@@ -242,7 +236,9 @@ class InMemoryTarBank:
         self.lines: List[str] = [""] * len(ref_indices)
         self.uids: List[str] = [""] * len(ref_indices)
 
-        logger.info(f"⚡ Preloading {len(ref_indices)} images into RAM from tar shards...")
+        logger.info(
+            f"⚡ Preloading {len(ref_indices)} images into RAM from tar shards..."
+        )
 
         tar_to_fh = {}
 
@@ -278,11 +274,20 @@ class InMemoryTarBank:
             except Exception:
                 pass
 
-        logger.info(f"Preload done. bad={bad}/{len(ref_indices)} elapsed={(time.time()-t0)/60:.1f} min")
+        logger.info(
+            f"Preload done. bad={bad}/{len(ref_indices)} elapsed={(time.time()-t0)/60:.1f} min"
+        )
 
 
 class InMemorySixteenBitDataset(Dataset):
-    def __init__(self, bank: InMemoryTarBank, indices_in_bank: List[int], img_size: int, augment: bool, explicit_4x_augment: bool = False):
+    def __init__(
+        self,
+        bank: InMemoryTarBank,
+        indices_in_bank: List[int],
+        img_size: int,
+        augment: bool,
+        explicit_4x_augment: bool = False,
+    ):
         """
         Args:
             bank: InMemoryTarBank with preloaded images
@@ -302,7 +307,7 @@ class InMemorySixteenBitDataset(Dataset):
             # Explicit 4x: each image appears 4 times with k=0,1,2,3
             # __len__ returns 4x, __getitem__ handles rotation
             self._base_len = len(self.ib)
-        
+
         self.normalize = SafeInstanceNormalize(threshold=0.01)
 
     def __len__(self):
@@ -329,7 +334,7 @@ class InMemorySixteenBitDataset(Dataset):
         line = self.bank.lines[j]
         uid = self.bank.uids[j]
 
-        x = (img.astype(np.float32) / 65535.0)
+        x = img.astype(np.float32) / 65535.0
         x = torch.from_numpy(x).permute(2, 0, 1)  # C,H,W
 
         # Apply rotation

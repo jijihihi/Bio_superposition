@@ -18,16 +18,14 @@
 ## sclens 등 근거로 gap_l2_norm 등 하는데. l2 norm 이후로 min cv de filter 등 작동된다.
 
 
-
 # phate.py의 PAGA는 Leiden clustering 없이 superclass 기준으로 합니다: superclass 기준으로 control GBA가 연결되어 있는지 아닌지 등을 판단.
 
 
-
-
-import os
 import argparse
-import numpy as np
+import os
 from collections import defaultdict
+
+import numpy as np
 
 try:
     import torch
@@ -37,8 +35,10 @@ try:
 except ImportError:
     torch = None
 
-import matplotlib
 import sys
+
+import matplotlib
+
 _IN_COLAB = "google.colab" in sys.modules
 if not _IN_COLAB:
     matplotlib.use("Agg")
@@ -46,14 +46,15 @@ import matplotlib.pyplot as plt
 import phate
 import seaborn as sns
 
-from sae_project.step02_logging_utils import get_logger, SUPERCLASS_MAP
+from sae_project.step02_logging_utils import SUPERCLASS_MAP, get_logger
 
 logger = get_logger("phate_vis")
 
 
-plt.rcParams['svg.fonttype'] = 'none' 
-plt.rcParams['pdf.fonttype'] = 42      
+plt.rcParams["svg.fonttype"] = "none"
+plt.rcParams["pdf.fonttype"] = 42
 sns.set_style("ticks")
+
 
 # ==============================================================================
 # Argument Parser
@@ -62,91 +63,172 @@ def get_args():
     p = argparse.ArgumentParser(description="PHATE 2D visualization of SAE concepts")
 
     # --- Cache mode (recommended) ---
-    p.add_argument("--features_cache", type=str, default="",
-                   help="Path to features_cache.npz from extract_features.py. "
-                        "If given, skips encoder/SAE/shard loading entirely.")
+    p.add_argument(
+        "--features_cache",
+        type=str,
+        default="",
+        help="Path to features_cache.npz from extract_features.py. "
+        "If given, skips encoder/SAE/shard loading entirely.",
+    )
 
     # --- Encoder mode (legacy, only if --features_cache not given) ---
-    p.add_argument("--sae_ckpt", type=str, default="",
-                   help="Path to trained SAE checkpoint (.pt)")
-    p.add_argument("--save_dir", type=str, default="",
-                   help="Model output dir (contains train/val/test_split.csv)")
-    p.add_argument("--model_state_path", type=str, default="",
-                   help="Path to best_model.pt")
-    p.add_argument("--shard_root", type=str, default="",
-                   help="Path to wds_shards_tar")
+    p.add_argument(
+        "--sae_ckpt", type=str, default="", help="Path to trained SAE checkpoint (.pt)"
+    )
+    p.add_argument(
+        "--save_dir",
+        type=str,
+        default="",
+        help="Model output dir (contains train/val/test_split.csv)",
+    )
+    p.add_argument(
+        "--model_state_path", type=str, default="", help="Path to best_model.pt"
+    )
+    p.add_argument("--shard_root", type=str, default="", help="Path to wds_shards_tar")
 
     # Output
-    p.add_argument("--output_dir", type=str, default="",
-                   help="Directory to save PNG (default: same dir as cache/SAE)")
+    p.add_argument(
+        "--output_dir",
+        type=str,
+        default="",
+        help="Directory to save PNG (default: same dir as cache/SAE)",
+    )
 
     # Dead neuron
-    p.add_argument("--dead_threshold", type=float, default=1e-5,
-                   help="Neurons with usage_ema < this are dead")
-    p.add_argument("--gap_l2_norm", action="store_true",
-                   help="Apply L2 normalization to feature vectors (useful for GAP)")
+    p.add_argument(
+        "--dead_threshold",
+        type=float,
+        default=1e-5,
+        help="Neurons with usage_ema < this are dead",
+    )
+    p.add_argument(
+        "--gap_l2_norm",
+        action="store_true",
+        help="Apply L2 normalization to feature vectors (useful for GAP)",
+    )
 
     # Neuron filtering (can combine: --filter_mode cv de)
-    p.add_argument("--filter_mode", type=str, nargs="+", default=["none"],
-                   help="Neuron filtering, applied sequentially. "
-                        "e.g. '--filter_mode cv de' applies CV first, then DE")
-    p.add_argument("--max_gini", type=float, default=0.75,
-                   help="Max Gini impurity (only with --filter_mode gini)")
-    p.add_argument("--min_cv", type=float, default=0.0,
-                   help="Min CV to keep (only with --filter_mode cv)")
-    p.add_argument("--de_adj_p", type=float, default=0.05,
-                   help="BH-adjusted p-value threshold (--filter_mode de)")
-    p.add_argument("--de_min_log2fc", type=float, default=0.0,
-                   help="Min |log2FC| for DE fislter")
-    p.add_argument("--de_mutation", type=str, default="",
-                   help="Which mutation for DE filter (e.g. GBA). "
-                        "Required with --filter_mode de --de_mode per_mut")
-    p.add_argument("--de_mode", type=str, default="union",
-                   choices=["union", "per_mut"],
-                   help="DE mode: 'union' = same as dpt_kendall (all muts + Ctrl-high), "
-                        "'per_mut' = separate PHATE per mutation")
+    p.add_argument(
+        "--filter_mode",
+        type=str,
+        nargs="+",
+        default=["none"],
+        help="Neuron filtering, applied sequentially. "
+        "e.g. '--filter_mode cv de' applies CV first, then DE",
+    )
+    p.add_argument(
+        "--max_gini",
+        type=float,
+        default=0.75,
+        help="Max Gini impurity (only with --filter_mode gini)",
+    )
+    p.add_argument(
+        "--min_cv",
+        type=float,
+        default=0.0,
+        help="Min CV to keep (only with --filter_mode cv)",
+    )
+    p.add_argument(
+        "--de_adj_p",
+        type=float,
+        default=0.05,
+        help="BH-adjusted p-value threshold (--filter_mode de)",
+    )
+    p.add_argument(
+        "--de_min_log2fc", type=float, default=0.0, help="Min |log2FC| for DE fislter"
+    )
+    p.add_argument(
+        "--de_mutation",
+        type=str,
+        default="",
+        help="Which mutation for DE filter (e.g. GBA). "
+        "Required with --filter_mode de --de_mode per_mut",
+    )
+    p.add_argument(
+        "--de_mode",
+        type=str,
+        default="union",
+        choices=["union", "per_mut"],
+        help="DE mode: 'union' = same as dpt_kendall (all muts + Ctrl-high), "
+        "'per_mut' = separate PHATE per mutation",
+    )
 
     # PAGA
-    p.add_argument("--paga", action="store_true",
-                   help="Run PAGA connectivity analysis before PHATE")
-    p.add_argument("--paga_n_neighbors", type=int, default=30,
-                   help="n_neighbors for PAGA kNN graph")
-    p.add_argument("--paga_n_pcs", type=int, default=50,
-                   help="Number of PCs for PAGA")
+    p.add_argument(
+        "--paga",
+        action="store_true",
+        help="Run PAGA connectivity analysis before PHATE",
+    )
+    p.add_argument(
+        "--paga_n_neighbors",
+        type=int,
+        default=30,
+        help="n_neighbors for PAGA kNN graph",
+    )
+    p.add_argument("--paga_n_pcs", type=int, default=50, help="Number of PCs for PAGA")
 
     # Normalization (same as dpt_kendall.py)
-    p.add_argument("--norm", type=str, default="none",
-                   choices=["none", "log", "median", "std",
-                            "log_median", "log_std", "log_IQR", "IQR"],
-                   help="Feature normalization before PHATE")
+    p.add_argument(
+        "--norm",
+        type=str,
+        default="none",
+        choices=[
+            "none",
+            "log",
+            "median",
+            "std",
+            "log_median",
+            "log_std",
+            "log_IQR",
+            "IQR",
+        ],
+        help="Feature normalization before PHATE",
+    )
 
     # Feature extraction (encoder mode only)
-    p.add_argument("--restore_token_norm", action="store_true",
-                   help="Multiply SAE activations by original per-token L2 norms")
+    p.add_argument(
+        "--restore_token_norm",
+        action="store_true",
+        help="Multiply SAE activations by original per-token L2 norms",
+    )
 
     # Sampling
-    p.add_argument("--samples_per_class", type=int, default=10000,
-                   help="Max images to sample per class")
-    p.add_argument("--classes", type=str, nargs="+", default=[],
-                   help="Specific classes to plot (e.g. 'Control' 'GBA' or numbers depending on cache). Empty=all")
+    p.add_argument(
+        "--samples_per_class",
+        type=int,
+        default=10000,
+        help="Max images to sample per class",
+    )
+    p.add_argument(
+        "--classes",
+        type=str,
+        nargs="+",
+        default=[],
+        help="Specific classes to plot (e.g. 'Control' 'GBA' or numbers depending on cache). Empty=all",
+    )
     p.add_argument("--seed", type=int, default=42)
 
     # PHATE
-    p.add_argument("--knn", type=int, default=5,
-                   help="PHATE k-nearest neighbors")
-    p.add_argument("--t", type=str, default="auto",
-                   help="PHATE diffusion time. 'auto' uses von Neumann entropy.")
-    p.add_argument("--n_components", type=int, default=2,
-                   help="PHATE output dimensions")
-    p.add_argument("--decay", type=int, default=40,
-                   help="PHATE alpha decay parameter")
-    p.add_argument("--knn_dist", type=str, default="euclidean",
-                   choices=["cosine", "euclidean", "correlation"],
-                   help="Distance metric for PHATE kNN graph")
-    p.add_argument("--n_pca", type=int, default=100,
-                   help="PCA dimensions before PHATE")
-    p.add_argument("--n_jobs", type=int, default=-1,
-                   help="Parallel jobs for PHATE")
+    p.add_argument("--knn", type=int, default=5, help="PHATE k-nearest neighbors")
+    p.add_argument(
+        "--t",
+        type=str,
+        default="auto",
+        help="PHATE diffusion time. 'auto' uses von Neumann entropy.",
+    )
+    p.add_argument(
+        "--n_components", type=int, default=2, help="PHATE output dimensions"
+    )
+    p.add_argument("--decay", type=int, default=40, help="PHATE alpha decay parameter")
+    p.add_argument(
+        "--knn_dist",
+        type=str,
+        default="euclidean",
+        choices=["cosine", "euclidean", "correlation"],
+        help="Distance metric for PHATE kNN graph",
+    )
+    p.add_argument("--n_pca", type=int, default=100, help="PCA dimensions before PHATE")
+    p.add_argument("--n_jobs", type=int, default=-1, help="Parallel jobs for PHATE")
 
     # Encoder architecture (encoder mode only)
     p.add_argument("--blocks", type=str, default="2,2,2,3")
@@ -237,7 +319,9 @@ def extract_sae_gap_features(
         flat_tokens = flat_tokens - flat_tokens.mean(dim=0, keepdim=True)
 
         # Save per-token L2 norms before normalization
-        token_l2_norms = flat_tokens.norm(dim=1, keepdim=True).clamp_min(1e-12)  # (N_tokens, 1)
+        token_l2_norms = flat_tokens.norm(dim=1, keepdim=True).clamp_min(
+            1e-12
+        )  # (N_tokens, 1)
 
         flat_tokens = F.normalize(flat_tokens, dim=1, eps=1e-12)
 
@@ -287,10 +371,10 @@ def extract_sae_gap_features(
 # ==============================================================================
 def make_balanced_loader(args, refs, uid_to_refidx, samples_per_class: int, seed: int):
     """Load val+test, sample up to `samples_per_class` per class, return DataLoader."""
-    from sae_project.step04_data_bank import (
-        InMemoryTarBank, InMemorySixteenBitDataset, load_split_csv,
-        seed_worker, collate_skip_none,
-    )
+    from sae_project.step04_data_bank import (InMemorySixteenBitDataset,
+                                              InMemoryTarBank,
+                                              collate_skip_none,
+                                              load_split_csv, seed_worker)
 
     val_csv = os.path.join(args.save_dir, "val_split.csv")
     test_csv = os.path.join(args.save_dir, "test_split.csv")
@@ -357,13 +441,14 @@ def make_balanced_loader(args, refs, uid_to_refidx, samples_per_class: int, seed
 # Plot PHATE
 # ==============================================================================
 from sae_project.step02_logging_utils import CLASS_TO_LABEL
+
 LABEL_TO_CLASS = {v: k for k, v in CLASS_TO_LABEL.items()}
 
 SUPERCLASS_COLORS = {
     "Control": "#4C72B0",  # blue
-    "SNCA": "#DD8452",     # orange
-    "GBA": "#55A868",      # green
-    "LRRK2": "#C44E52",    # red
+    "SNCA": "#DD8452",  # orange
+    "GBA": "#55A868",  # green
+    "LRRK2": "#C44E52",  # red
 }
 CLASS_COLORS = {
     0: "#4C72B0",  # blue
@@ -414,33 +499,50 @@ def plot_phate(
 
     # Info text (easily removable in Illustrator as a text object)
     if info_text:
-        ax.text(0.02, 0.02, info_text, transform=ax.transAxes,
-                fontsize=8, verticalalignment="bottom", fontstyle="italic",
-                color="#555555",
-                bbox=dict(boxstyle="round,pad=0.3", facecolor="white",
-                          edgecolor="#cccccc", alpha=0.85))
+        ax.text(
+            0.02,
+            0.02,
+            info_text,
+            transform=ax.transAxes,
+            fontsize=8,
+            verticalalignment="bottom",
+            fontstyle="italic",
+            color="#555555",
+            bbox=dict(
+                boxstyle="round,pad=0.3",
+                facecolor="white",
+                edgecolor="#cccccc",
+                alpha=0.85,
+            ),
+        )
 
     # Legend
     leg = ax.legend(
-        loc="upper right", markerscale=4, fontsize=9,
-        frameon=True, framealpha=0.9, edgecolor="#cccccc",
-        handletextpad=0.3, borderpad=0.4,
+        loc="upper right",
+        markerscale=4,
+        fontsize=9,
+        frameon=True,
+        framealpha=0.9,
+        edgecolor="#cccccc",
+        handletextpad=0.3,
+        borderpad=0.4,
     )
     for lh in leg.legend_handles:
         lh.set_alpha(1.0)
 
     fig.tight_layout(pad=0.3)
     # Save PNG
-    fig.savefig(output_path, dpi=dpi, bbox_inches="tight",
-                facecolor="white", edgecolor="none")
+    fig.savefig(
+        output_path, dpi=dpi, bbox_inches="tight", facecolor="white", edgecolor="none"
+    )
     # Save PDF
     pdf_path = output_path.rsplit(".", 1)[0] + ".pdf"
-    fig.savefig(pdf_path, bbox_inches="tight",
-                facecolor="white", edgecolor="none")
+    fig.savefig(pdf_path, bbox_inches="tight", facecolor="white", edgecolor="none")
     # Save SVG (rasterized scatter for small file size)
     svg_path = output_path.rsplit(".", 1)[0] + ".svg"
-    fig.savefig(svg_path, format="svg", bbox_inches="tight",
-                facecolor="white", edgecolor="none")
+    fig.savefig(
+        svg_path, format="svg", bbox_inches="tight", facecolor="white", edgecolor="none"
+    )
     plt.close(fig)
     logger.info(f"  Saved PHATE PNG: {output_path}")
     logger.info(f"  Saved PHATE PDF: {pdf_path}")
@@ -464,20 +566,25 @@ def plot_phate_superclass(
     superclasses_arr = np.array(superclasses)
 
     import seaborn as sns
+
     # Plot order: Control first (background), then others
     unique_classes = sorted(np.unique(superclasses_arr))
     plot_order = ["Control"] + [c for c in unique_classes if c != "Control"]
-    
+
     # Assign dynamic colors for classes not in SUPERCLASS_COLORS
     palette = sns.color_palette("tab20", n_colors=max(20, len(unique_classes)))
-    dynamic_colors = {cls: palette[i % len(palette)] for i, cls in enumerate(unique_classes) if cls not in SUPERCLASS_COLORS}
-    
+    dynamic_colors = {
+        cls: palette[i % len(palette)]
+        for i, cls in enumerate(unique_classes)
+        if cls not in SUPERCLASS_COLORS
+    }
+
     for cls in plot_order:
         mask = superclasses_arr == cls
         if mask.sum() == 0:
             continue
         n = int(mask.sum())
-        
+
         color = SUPERCLASS_COLORS.get(cls, dynamic_colors.get(cls, "gray"))
         ax.scatter(
             phate_coords[mask, 0],
@@ -501,33 +608,50 @@ def plot_phate_superclass(
 
     # Info text (easily removable in Illustrator as a text object)
     if info_text:
-        ax.text(0.02, 0.02, info_text, transform=ax.transAxes,
-                fontsize=8, verticalalignment="bottom", fontstyle="italic",
-                color="#555555",
-                bbox=dict(boxstyle="round,pad=0.3", facecolor="white",
-                          edgecolor="#cccccc", alpha=0.85))
+        ax.text(
+            0.02,
+            0.02,
+            info_text,
+            transform=ax.transAxes,
+            fontsize=8,
+            verticalalignment="bottom",
+            fontstyle="italic",
+            color="#555555",
+            bbox=dict(
+                boxstyle="round,pad=0.3",
+                facecolor="white",
+                edgecolor="#cccccc",
+                alpha=0.85,
+            ),
+        )
 
     # Legend
     leg = ax.legend(
-        loc="upper right", markerscale=4, fontsize=9,
-        frameon=True, framealpha=0.9, edgecolor="#cccccc",
-        handletextpad=0.3, borderpad=0.4,
+        loc="upper right",
+        markerscale=4,
+        fontsize=9,
+        frameon=True,
+        framealpha=0.9,
+        edgecolor="#cccccc",
+        handletextpad=0.3,
+        borderpad=0.4,
     )
     for lh in leg.legend_handles:
         lh.set_alpha(1.0)
 
     fig.tight_layout(pad=0.3)
     # Save PNG
-    fig.savefig(output_path, dpi=dpi, bbox_inches="tight",
-                facecolor="white", edgecolor="none")
+    fig.savefig(
+        output_path, dpi=dpi, bbox_inches="tight", facecolor="white", edgecolor="none"
+    )
     # Save PDF
     pdf_path = output_path.rsplit(".", 1)[0] + ".pdf"
-    fig.savefig(pdf_path, bbox_inches="tight",
-                facecolor="white", edgecolor="none")
+    fig.savefig(pdf_path, bbox_inches="tight", facecolor="white", edgecolor="none")
     # Save SVG (rasterized scatter for small file size)
     svg_path = output_path.rsplit(".", 1)[0] + ".svg"
-    fig.savefig(svg_path, format="svg", bbox_inches="tight",
-                facecolor="white", edgecolor="none")
+    fig.savefig(
+        svg_path, format="svg", bbox_inches="tight", facecolor="white", edgecolor="none"
+    )
     plt.close(fig)
     logger.info(f"  Saved PHATE PNG: {output_path}")
     logger.info(f"  Saved PHATE PDF: {pdf_path}")
@@ -547,7 +671,8 @@ def main():
     # Mode A: Load from features_cache.npz (no GPU needed)
     # ══════════════════════════════════════════════════════════════════════
     if args.features_cache:
-        from kendall_correlation_coefficient.dpt_kendall import load_features_cache
+        from kendall_correlation_coefficient.dpt_kendall import \
+            load_features_cache
 
         logger.info(f"\n{'='*60}")
         logger.info("Mode: features_cache (no GPU/encoder needed)")
@@ -560,8 +685,16 @@ def main():
 
         if "X_gap" in data:
             X = data["X_gap"]
-            lines = data["lines"].astype(str) if data["lines"].dtype.kind != 'U' else data["lines"]
-            uids = data["uids"].astype(str) if data["uids"].dtype.kind != 'U' else data["uids"]
+            lines = (
+                data["lines"].astype(str)
+                if data["lines"].dtype.kind != "U"
+                else data["lines"]
+            )
+            uids = (
+                data["uids"].astype(str)
+                if data["uids"].dtype.kind != "U"
+                else data["uids"]
+            )
             which_layer = str(data["which_layer"])
             alive_info = f"GAP raw {X.shape}"
             logger.info(f"  Detected CNN GAP cache: {X.shape}")
@@ -597,14 +730,18 @@ def main():
             n_before = X.shape[1]
 
             if fm == "gini":
-                from kendall_correlation_coefficient.dpt_kendall import compute_gini_impurity
+                from kendall_correlation_coefficient.dpt_kendall import \
+                    compute_gini_impurity
+
                 gini = compute_gini_impurity(X, superclasses)
                 mask = gini <= args.max_gini
                 X = X[:, mask]
                 step_info = f"gini≤{args.max_gini:.2f}: {n_before}→{X.shape[1]}"
 
             elif fm == "cv":
-                from kendall_correlation_coefficient.dpt_kendall import compute_cv_per_neuron
+                from kendall_correlation_coefficient.dpt_kendall import \
+                    compute_cv_per_neuron
+
                 cv = compute_cv_per_neuron(X, superclasses)
                 mask = cv >= args.min_cv
                 X = X[:, mask]
@@ -626,7 +763,7 @@ def main():
             logger.info("  Filter: none")
 
         n_alive = X.shape[1]  # update after filtering
-        
+
         # ── Filter by specific classes ───────────────────────────────────
         if args.classes:
             # Map "0", "1", "10" etc. to their string names using LABEL_TO_CLASS
@@ -636,7 +773,7 @@ def main():
                     mapped_classes.append(LABEL_TO_CLASS[int(c)])
                 else:
                     mapped_classes.append(c)
-                    
+
             keep_indices = []
             for i, sc in enumerate(superclasses):
                 # Try to match string representation
@@ -644,7 +781,9 @@ def main():
                     keep_indices.append(i)
             X = X[keep_indices]
             superclasses = [superclasses[i] for i in keep_indices]
-            logger.info(f"  After class filtering {mapped_classes}: {X.shape[0]} samples")
+            logger.info(
+                f"  After class filtering {mapped_classes}: {X.shape[0]} samples"
+            )
 
         # ── Subsample per class (AFTER neuron filtering) ─────────────────
         spc = args.samples_per_class
@@ -673,18 +812,24 @@ def main():
         # ── PAGA connectivity analysis ───────────────────────────────────
         if args.paga:
             import scanpy as sc
+
             logger.info(f"\n{'='*60}")
-            logger.info(f"PAGA connectivity (n_neighbors={args.paga_n_neighbors}, "
-                         f"n_pcs={args.paga_n_pcs})")
+            logger.info(
+                f"PAGA connectivity (n_neighbors={args.paga_n_neighbors}, "
+                f"n_pcs={args.paga_n_pcs})"
+            )
 
             adata_paga = sc.AnnData(X.astype(np.float32))
             adata_paga.obs["superclass"] = superclasses
-            adata_paga.obs["superclass"] = adata_paga.obs["superclass"].astype("category")
+            adata_paga.obs["superclass"] = adata_paga.obs["superclass"].astype(
+                "category"
+            )
 
             n_pcs_paga = min(args.paga_n_pcs, X.shape[1] - 1)
             sc.pp.pca(adata_paga, n_comps=n_pcs_paga)
-            sc.pp.neighbors(adata_paga, n_neighbors=args.paga_n_neighbors,
-                           n_pcs=n_pcs_paga)
+            sc.pp.neighbors(
+                adata_paga, n_neighbors=args.paga_n_neighbors, n_pcs=n_pcs_paga
+            )
             sc.tl.paga(adata_paga, groups="superclass")
 
             # Log connectivity matrix
@@ -713,11 +858,21 @@ def main():
                 spine.set_visible(False)
             fig_paga.tight_layout(pad=0.3)
             paga_png = os.path.join(output_dir, "paga_connectivity.png")
-            fig_paga.savefig(paga_png, dpi=args.dpi, bbox_inches="tight",
-                             facecolor="white", edgecolor="none")
+            fig_paga.savefig(
+                paga_png,
+                dpi=args.dpi,
+                bbox_inches="tight",
+                facecolor="white",
+                edgecolor="none",
+            )
             paga_svg = paga_png.rsplit(".", 1)[0] + ".svg"
-            fig_paga.savefig(paga_svg, format="svg", bbox_inches="tight",
-                             facecolor="white", edgecolor="none")
+            fig_paga.savefig(
+                paga_svg,
+                format="svg",
+                bbox_inches="tight",
+                facecolor="white",
+                edgecolor="none",
+            )
             logger.info(f"  Saved PAGA PNG: {paga_png}")
             logger.info(f"  Saved PAGA SVG: {paga_svg}")
             if _IN_COLAB:
@@ -726,8 +881,6 @@ def main():
 
             del adata_paga
             logger.info("  PAGA analysis complete")
-
-
 
     # ══════════════════════════════════════════════════════════════════════
     # Mode B: Encoder + SAE extraction (legacy)
@@ -739,15 +892,16 @@ def main():
         import torch
         import torch.nn.functional as F
         from torch.utils.data import DataLoader
-        from sae_project.step03_data_shards import load_all_sample_refs, build_uid_to_refidx
-        from sae_project.step04_data_bank import (
-            InMemoryTarBank, InMemorySixteenBitDataset, load_split_csv,
-            seed_worker, collate_skip_none,
-        )
+
+        from sae_project.step03_data_shards import (build_uid_to_refidx,
+                                                    load_all_sample_refs)
+        from sae_project.step04_data_bank import (InMemorySixteenBitDataset,
+                                                  InMemoryTarBank,
+                                                  collate_skip_none,
+                                                  load_split_csv, seed_worker)
         from sae_project.step05_model_encoder import (
             SupMoCoModel, parse_int_list, renorm_unit_per_out_channel_,
-            robust_load_state_dict,
-        )
+            robust_load_state_dict)
         from sae_project.step06_gated_sae import GatedSAE
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -779,10 +933,15 @@ def main():
         blocks = parse_int_list(args.blocks, 4)
         dilations = parse_int_list(args.dilations, 4)
         model = SupMoCoModel(
-            embed_dim=args.embed_dim, blocks=blocks, dilations=dilations,
-            refine_blocks=args.refine_blocks, ckpt_segments=args.ckpt_segments,
-            proj_layers=args.proj_layers, proj_hidden=args.proj_hidden,
-            proj_bn=args.proj_bn, proj_dropout=args.proj_dropout,
+            embed_dim=args.embed_dim,
+            blocks=blocks,
+            dilations=dilations,
+            refine_blocks=args.refine_blocks,
+            ckpt_segments=args.ckpt_segments,
+            proj_layers=args.proj_layers,
+            proj_hidden=args.proj_hidden,
+            proj_bn=args.proj_bn,
+            proj_dropout=args.proj_dropout,
         )
         sd = torch.load(args.model_state_path, map_location="cpu", weights_only=False)
         robust_load_state_dict(model, sd, strict=True)
@@ -795,13 +954,21 @@ def main():
         refs = load_all_sample_refs(args.shard_root)
         uid_to_refidx = build_uid_to_refidx(refs)
         loader = make_balanced_loader(
-            args, refs, uid_to_refidx,
-            samples_per_class=args.samples_per_class, seed=args.seed,
+            args,
+            refs,
+            uid_to_refidx,
+            samples_per_class=args.samples_per_class,
+            seed=args.seed,
         )
 
         # Extract features
         X, y = extract_sae_gap_features(
-            encoder, sae, loader, device, which_layer, alive_mask,
+            encoder,
+            sae,
+            loader,
+            device,
+            which_layer,
+            alive_mask,
             restore_token_norm=args.restore_token_norm,
         )
         superclasses = [CLASS_NAMES.get(int(yi), str(yi)) for yi in y]
@@ -822,7 +989,9 @@ def main():
     # ── Normalization (for non-DE mode; DE normalizes per-subset) ────────
     has_de = "de" in args.filter_mode
     if not has_de and args.norm != "none":
-        from kendall_correlation_coefficient.dpt_kendall import apply_normalization
+        from kendall_correlation_coefficient.dpt_kendall import \
+            apply_normalization
+
         logger.info(f"  Normalization: {args.norm}")
         X = apply_normalization(X, args.norm)
     elif not has_de:
@@ -838,8 +1007,10 @@ def main():
         t_value = args.t if args.t == "auto" else int(args.t)
 
         logger.info(f"\n{'='*60}")
-        logger.info(f"PHATE{suffix}: knn={args.knn}, t={args.t}, "
-                     f"dist={args.knn_dist}, norm={args.norm}, n_pca={n_pca}")
+        logger.info(
+            f"PHATE{suffix}: knn={args.knn}, t={args.t}, "
+            f"dist={args.knn_dist}, norm={args.norm}, n_pca={n_pca}"
+        )
         logger.info(f"Input: {X_in.shape[0]} samples × {X_in.shape[1]} features")
 
         phate_op = phate.PHATE(
@@ -865,15 +1036,20 @@ def main():
         output_path = os.path.join(output_dir, png_name)
 
         # Build info text for quick identification (removable in Illustrator)
-        info = (f"n={X_in.shape[0]:,}  dim={X_in.shape[1]}\n"
-                f"knn={args.knn}  t={actual_t}  {args.knn_dist}")
+        info = (
+            f"n={X_in.shape[0]:,}  dim={X_in.shape[1]}\n"
+            f"knn={args.knn}  t={actual_t}  {args.knn_dist}"
+        )
         if extra_info:
             info = extra_info + info
 
         plot_phate_superclass(
-            X_phate, superclasses_in,
+            X_phate,
+            superclasses_in,
             output_path=output_path,
-            point_size=args.point_size, alpha=args.alpha, dpi=args.dpi,
+            point_size=args.point_size,
+            alpha=args.alpha,
+            dpi=args.dpi,
             info_text=info,
         )
 
@@ -893,8 +1069,8 @@ def main():
     # ══════════════════════════════════════════════════════════════════════
     if has_de:
         from kendall_correlation_coefficient.dpt_kendall import (
-            compute_de_neurons, apply_normalization,
-        )
+            apply_normalization, compute_de_neurons)
+
         superclasses_arr = np.array(superclasses)
         mutations = ["SNCA", "GBA", "LRRK2"]
         de_mode = getattr(args, "de_mode", "union")
@@ -909,7 +1085,9 @@ def main():
             # Per-mutation DE (both directions)
             for mut in mutations:
                 de_result = compute_de_neurons(
-                    X, superclasses, mut,
+                    X,
+                    superclasses,
+                    mut,
                     adj_p_threshold=args.de_adj_p,
                     min_log2fc=args.de_min_log2fc,
                 )
@@ -917,15 +1095,21 @@ def main():
                 logger.info(f"    {mut}: {de_result['n_selected']} DE neurons")
 
             # Control vs AllMut — Control-high (log2fc < 0)
-            sc_allm = [("AllMut" if s != "Control" else "Control") for s in superclasses]
+            sc_allm = [
+                ("AllMut" if s != "Control" else "Control") for s in superclasses
+            ]
             de_ctrl = compute_de_neurons(
-                X, sc_allm, "AllMut",
+                X,
+                sc_allm,
+                "AllMut",
                 adj_p_threshold=args.de_adj_p,
                 min_log2fc=args.de_min_log2fc,
             )
             ctrl_high_mask = de_ctrl["mask"] & (de_ctrl["log2fc"] < 0)
             de_masks.append(ctrl_high_mask)
-            logger.info(f"    Ctrl-high (vs AllMut): {int(ctrl_high_mask.sum())} neurons")
+            logger.info(
+                f"    Ctrl-high (vs AllMut): {int(ctrl_high_mask.sum())} neurons"
+            )
 
             # Union
             union_mask = np.zeros(X.shape[1], dtype=bool)
@@ -946,7 +1130,8 @@ def main():
 
                 extra = f"DE union: {n_union} neurons\n"
                 _run_phate_and_plot(
-                    X_de, superclasses,
+                    X_de,
+                    superclasses,
                     suffix=f"_DE_union",
                     extra_info=extra,
                 )
@@ -959,7 +1144,9 @@ def main():
                 logger.info("=" * 60)
 
                 de_result = compute_de_neurons(
-                    X, superclasses, mut,
+                    X,
+                    superclasses,
+                    mut,
                     adj_p_threshold=args.de_adj_p,
                     min_log2fc=args.de_min_log2fc,
                 )
@@ -977,7 +1164,8 @@ def main():
 
                 extra = f"DE neurons: {n_de}\n"
                 _run_phate_and_plot(
-                    X_sub, sc_sub,
+                    X_sub,
+                    sc_sub,
                     suffix=f"_DE_{mut}",
                     extra_info=extra,
                 )
@@ -995,4 +1183,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

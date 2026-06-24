@@ -36,29 +36,25 @@
 # from sae_project.step16_volcano_plot import main
 # main()
 
+import argparse
 import os
 import sys
-import argparse
-import numpy as np
 
 import matplotlib
+import numpy as np
+
 _IN_COLAB = "google.colab" in sys.modules
 if not _IN_COLAB:
     matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
-
 from scipy.stats import mannwhitneyu
 from statsmodels.stats.multitest import multipletests
 
-from sae_project.step02_logging_utils import get_logger, SUPERCLASS_MAP
-
 # ── step14에서 import (일관성 유지) ──
 from concept_visulaize.step14_visualize_concept_activations import (
-    load_gap_csv,
-    compute_gini_impurity,
-    select_concepts_by_gap_csv_de,
-)
+    compute_gini_impurity, load_gap_csv, select_concepts_by_gap_csv_de)
+from sae_project.step02_logging_utils import SUPERCLASS_MAP, get_logger
 
 logger = get_logger("volcano_plot")
 
@@ -157,8 +153,10 @@ def select_cnn_de_like_step14(X, superclasses, min_log2fc, max_gini, mut_only):
             new_label = "_".join(sorted(muts))
             filtered.append((cid, new_label, fc, direction))
         n_dropped = len(selected) - len(filtered)
-        logger.info(f"    mut_only: {n_dropped} Control-only dropped, "
-                    f"{len(filtered)} remaining")
+        logger.info(
+            f"    mut_only: {n_dropped} Control-only dropped, "
+            f"{len(filtered)} remaining"
+        )
         selected = filtered
 
     # Per-mutation DE results for volcano plots
@@ -184,7 +182,7 @@ def select_cnn_de_like_step14(X, superclasses, min_log2fc, max_gini, mut_only):
 def plot_volcano(
     de_result,
     title,
-    feature_type,   # "CNN GAP Channel" or "SAE Neuron"
+    feature_type,  # "CNN GAP Channel" or "SAE Neuron"
     output_path,
     adj_p_threshold=0.05,
     min_log2fc=0.0,
@@ -198,7 +196,9 @@ def plot_volcano(
         # Add jitter to capped points so they form a band, not a line
         capped = neg_log10p >= max_neg_log10p
         if capped.any():
-            jitter = np.random.RandomState(42).uniform(-max_neg_log10p*0.05, 0, size=capped.sum())
+            jitter = np.random.RandomState(42).uniform(
+                -max_neg_log10p * 0.05, 0, size=capped.sum()
+            )
             neg_log10p[capped] = max_neg_log10p + jitter
         neg_log10p = np.clip(neg_log10p, 0, max_neg_log10p)
     sig_mask = de_result["mask"]
@@ -207,24 +207,48 @@ def plot_volcano(
 
     # Non-significant
     ns_mask = ~sig_mask
-    ax.scatter(log2fc[ns_mask], neg_log10p[ns_mask],
-               s=8, alpha=0.3, c="#AAAAAA", edgecolors="none", label="NS")
+    ax.scatter(
+        log2fc[ns_mask],
+        neg_log10p[ns_mask],
+        s=8,
+        alpha=0.3,
+        c="#AAAAAA",
+        edgecolors="none",
+        label="NS",
+    )
 
     # Significant UP (mutation > control)
     up_mask = sig_mask & (log2fc > 0)
-    ax.scatter(log2fc[up_mask], neg_log10p[up_mask],
-               s=12, alpha=0.6, c="#E24A33", edgecolors="none",
-               label=f"Up ({int(up_mask.sum())})")
+    ax.scatter(
+        log2fc[up_mask],
+        neg_log10p[up_mask],
+        s=12,
+        alpha=0.6,
+        c="#E24A33",
+        edgecolors="none",
+        label=f"Up ({int(up_mask.sum())})",
+    )
 
     # Significant DOWN (mutation < control)
     down_mask = sig_mask & (log2fc < 0)
-    ax.scatter(log2fc[down_mask], neg_log10p[down_mask],
-               s=12, alpha=0.6, c="#348ABD", edgecolors="none",
-               label=f"Down ({int(down_mask.sum())})")
+    ax.scatter(
+        log2fc[down_mask],
+        neg_log10p[down_mask],
+        s=12,
+        alpha=0.6,
+        c="#348ABD",
+        edgecolors="none",
+        label=f"Down ({int(down_mask.sum())})",
+    )
 
     # Threshold lines
-    ax.axhline(-np.log10(adj_p_threshold), color="gray", linestyle="--",
-               linewidth=0.8, alpha=0.5)
+    ax.axhline(
+        -np.log10(adj_p_threshold),
+        color="gray",
+        linestyle="--",
+        linewidth=0.8,
+        alpha=0.5,
+    )
     if min_log2fc > 0:
         ax.axvline(-min_log2fc, color="gray", linestyle="--", linewidth=0.8, alpha=0.5)
         ax.axvline(min_log2fc, color="gray", linestyle="--", linewidth=0.8, alpha=0.5)
@@ -239,12 +263,17 @@ def plot_volcano(
     n_sig = de_result["n_sig"]
     n_total = de_result["n_total"]
     pct = 100 * n_sig / max(n_total, 1)
-    ax.text(0.02, 0.98,
-            f"Total {feature_type}s: {n_total}\n"
-            f"DE {feature_type}s: {n_sig} ({pct:.1f}%)\n"
-            f"Up: {de_result['n_up']} | Down: {de_result['n_down']}",
-            transform=ax.transAxes, fontsize=9, va="top",
-            bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.85))
+    ax.text(
+        0.02,
+        0.98,
+        f"Total {feature_type}s: {n_total}\n"
+        f"DE {feature_type}s: {n_sig} ({pct:.1f}%)\n"
+        f"Up: {de_result['n_up']} | Down: {de_result['n_down']}",
+        transform=ax.transAxes,
+        fontsize=9,
+        va="top",
+        bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.85),
+    )
 
     fig.tight_layout()
     fig.savefig(output_path, dpi=dpi, bbox_inches="tight")
@@ -257,8 +286,14 @@ def plot_volcano(
 # Side-by-side comparison plot
 # ==============================================================================
 def plot_volcano_comparison(
-    de_cnn, de_sae, mutation,
-    output_path, adj_p_threshold=0.05, min_log2fc=0.0, max_neg_log10p=50, dpi=300,
+    de_cnn,
+    de_sae,
+    mutation,
+    output_path,
+    adj_p_threshold=0.05,
+    min_log2fc=0.0,
+    max_neg_log10p=50,
+    dpi=300,
 ):
     """CNN GAP vs SAE side-by-side volcano plots."""
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
@@ -272,58 +307,98 @@ def plot_volcano_comparison(
         if max_neg_log10p > 0:
             capped = neg_log10p >= max_neg_log10p
             if capped.any():
-                jitter = np.random.RandomState(42).uniform(-max_neg_log10p*0.05, 0, size=capped.sum())
+                jitter = np.random.RandomState(42).uniform(
+                    -max_neg_log10p * 0.05, 0, size=capped.sum()
+                )
                 neg_log10p[capped] = max_neg_log10p + jitter
             neg_log10p = np.clip(neg_log10p, 0, max_neg_log10p)
         sig_mask = de_result["mask"]
 
         # Non-significant
         ns = ~sig_mask
-        ax.scatter(log2fc[ns], neg_log10p[ns], s=6, alpha=0.2,
-                   c="#CCCCCC", edgecolors="none")
+        ax.scatter(
+            log2fc[ns], neg_log10p[ns], s=6, alpha=0.2, c="#CCCCCC", edgecolors="none"
+        )
 
         # Up & Down
         up = sig_mask & (log2fc > 0)
         dn = sig_mask & (log2fc < 0)
-        ax.scatter(log2fc[up], neg_log10p[up], s=10, alpha=0.5,
-                   c=color_up, edgecolors="none")
-        ax.scatter(log2fc[dn], neg_log10p[dn], s=10, alpha=0.5,
-                   c=color_dn, edgecolors="none")
+        ax.scatter(
+            log2fc[up], neg_log10p[up], s=10, alpha=0.5, c=color_up, edgecolors="none"
+        )
+        ax.scatter(
+            log2fc[dn], neg_log10p[dn], s=10, alpha=0.5, c=color_dn, edgecolors="none"
+        )
 
         # Threshold
-        ax.axhline(-np.log10(adj_p_threshold), color="gray",
-                   linestyle="--", linewidth=0.8, alpha=0.5)
+        ax.axhline(
+            -np.log10(adj_p_threshold),
+            color="gray",
+            linestyle="--",
+            linewidth=0.8,
+            alpha=0.5,
+        )
         if min_log2fc > 0:
-            ax.axvline(-min_log2fc, color="gray", linestyle="--",
-                       linewidth=0.8, alpha=0.5)
-            ax.axvline(min_log2fc, color="gray", linestyle="--",
-                       linewidth=0.8, alpha=0.5)
+            ax.axvline(
+                -min_log2fc, color="gray", linestyle="--", linewidth=0.8, alpha=0.5
+            )
+            ax.axvline(
+                min_log2fc, color="gray", linestyle="--", linewidth=0.8, alpha=0.5
+            )
 
         n_sig = de_result["n_sig"]
         n_total = de_result["n_total"]
         pct = 100 * n_sig / max(n_total, 1)
 
         source = "CNN GAP" if feat_type == "Channel" else "SAE"
-        ax.set_title(f"{source} — {mutation} vs Control\n"
-                     f"DE {feat_type}s: {n_sig}/{n_total} ({pct:.1f}%)",
-                     fontsize=12, fontweight="bold")
+        ax.set_title(
+            f"{source} — {mutation} vs Control\n"
+            f"DE {feat_type}s: {n_sig}/{n_total} ({pct:.1f}%)",
+            fontsize=12,
+            fontweight="bold",
+        )
         ax.set_xlabel("log₂ FC", fontsize=11)
         ax.set_ylabel("−log₁₀(adj p)", fontsize=11)
         ax.grid(True, alpha=0.15)
 
         # Legend
         legend_elements = [
-            Line2D([0], [0], marker='o', color='w', markerfacecolor=color_up,
-                   markersize=7, label=f'Up ({int(up.sum())})'),
-            Line2D([0], [0], marker='o', color='w', markerfacecolor=color_dn,
-                   markersize=7, label=f'Down ({int(dn.sum())})'),
-            Line2D([0], [0], marker='o', color='w', markerfacecolor='#CCCCCC',
-                   markersize=7, label=f'NS ({int(ns.sum())})'),
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="w",
+                markerfacecolor=color_up,
+                markersize=7,
+                label=f"Up ({int(up.sum())})",
+            ),
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="w",
+                markerfacecolor=color_dn,
+                markersize=7,
+                label=f"Down ({int(dn.sum())})",
+            ),
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="w",
+                markerfacecolor="#CCCCCC",
+                markersize=7,
+                label=f"NS ({int(ns.sum())})",
+            ),
         ]
         ax.legend(handles=legend_elements, fontsize=8, loc="upper right")
 
-    fig.suptitle(f"Differential Feature Analysis: CNN GAP Channels vs SAE Neurons",
-                 fontsize=14, fontweight="bold", y=1.02)
+    fig.suptitle(
+        f"Differential Feature Analysis: CNN GAP Channels vs SAE Neurons",
+        fontsize=14,
+        fontweight="bold",
+        y=1.02,
+    )
     fig.tight_layout()
     fig.savefig(output_path, dpi=dpi, bbox_inches="tight")
     plt.show()
@@ -334,10 +409,12 @@ def plot_volcano_comparison(
 # ==============================================================================
 # Summary bar chart: absolute count of class-specific features
 # ==============================================================================
-def plot_de_summary_bar(de_results_cnn, de_results_sae, mutations,
-                        output_path, dpi=300):
+def plot_de_summary_bar(
+    de_results_cnn, de_results_sae, mutations, output_path, dpi=300
+):
     """Bar chart comparing COUNT of DE features for CNN vs SAE across mutations.
-    Absolute count matters more than % — more class-specific features = more interpretable."""
+    Absolute count matters more than % — more class-specific features = more interpretable.
+    """
     fig, ax = plt.subplots(figsize=(10, 5))
 
     x = np.arange(len(mutations))
@@ -349,12 +426,24 @@ def plot_de_summary_bar(de_results_cnn, de_results_sae, mutations,
         counts_cnn.append(de_results_cnn[mut]["n_sig"])
         counts_sae.append(de_results_sae[mut]["n_sig"])
 
-    bars_cnn = ax.bar(x - width/2, counts_cnn, width,
-                      label=f"CNN GAP ({de_results_cnn[mutations[0]]['n_total']} channels)",
-                      color="#5B9BD5", alpha=0.85, edgecolor="white")
-    bars_sae = ax.bar(x + width/2, counts_sae, width,
-                      label=f"SAE ({de_results_sae[mutations[0]]['n_total']} alive neurons)",
-                      color="#ED7D31", alpha=0.85, edgecolor="white")
+    bars_cnn = ax.bar(
+        x - width / 2,
+        counts_cnn,
+        width,
+        label=f"CNN GAP ({de_results_cnn[mutations[0]]['n_total']} channels)",
+        color="#5B9BD5",
+        alpha=0.85,
+        edgecolor="white",
+    )
+    bars_sae = ax.bar(
+        x + width / 2,
+        counts_sae,
+        width,
+        label=f"SAE ({de_results_sae[mutations[0]]['n_total']} alive neurons)",
+        color="#ED7D31",
+        alpha=0.85,
+        edgecolor="white",
+    )
 
     # Count + percentage labels on top
     for bars, counts, de_results in [
@@ -364,27 +453,53 @@ def plot_de_summary_bar(de_results_cnn, de_results_sae, mutations,
         for bar, count, mut in zip(bars, counts, mutations):
             n_total = de_results[mut]["n_total"]
             pct = 100 * count / max(n_total, 1)
-            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1,
-                    f"{count}", ha="center", va="bottom", fontsize=11,
-                    fontweight="bold")
-            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() - max(bar.get_height()*0.1, 2),
-                    f"({pct:.1f}%)", ha="center", va="top", fontsize=8,
-                    color="white", fontweight="bold")
+            ax.text(
+                bar.get_x() + bar.get_width() / 2,
+                bar.get_height() + 1,
+                f"{count}",
+                ha="center",
+                va="bottom",
+                fontsize=11,
+                fontweight="bold",
+            )
+            ax.text(
+                bar.get_x() + bar.get_width() / 2,
+                bar.get_height() - max(bar.get_height() * 0.1, 2),
+                f"({pct:.1f}%)",
+                ha="center",
+                va="top",
+                fontsize=8,
+                color="white",
+                fontweight="bold",
+            )
 
     # Up/Down breakdown below
     for i, mut in enumerate(mutations):
         cnn = de_results_cnn[mut]
         sae = de_results_sae[mut]
-        ax.text(x[i] - width/2, -max(max(counts_cnn + counts_sae) * 0.06, 3),
-                f"↑{cnn['n_up']} ↓{cnn['n_down']}", ha="center",
-                fontsize=8, color="#5B9BD5")
-        ax.text(x[i] + width/2, -max(max(counts_cnn + counts_sae) * 0.06, 3),
-                f"↑{sae['n_up']} ↓{sae['n_down']}", ha="center",
-                fontsize=8, color="#ED7D31")
+        ax.text(
+            x[i] - width / 2,
+            -max(max(counts_cnn + counts_sae) * 0.06, 3),
+            f"↑{cnn['n_up']} ↓{cnn['n_down']}",
+            ha="center",
+            fontsize=8,
+            color="#5B9BD5",
+        )
+        ax.text(
+            x[i] + width / 2,
+            -max(max(counts_cnn + counts_sae) * 0.06, 3),
+            f"↑{sae['n_up']} ↓{sae['n_down']}",
+            ha="center",
+            fontsize=8,
+            color="#ED7D31",
+        )
 
     ax.set_ylabel("Number of Class-Specific Features (DE)", fontsize=12)
-    ax.set_title("Class-Specific Feature Discovery:\nCNN GAP Channels vs SAE Neurons",
-                 fontsize=13, fontweight="bold")
+    ax.set_title(
+        "Class-Specific Feature Discovery:\nCNN GAP Channels vs SAE Neurons",
+        fontsize=13,
+        fontweight="bold",
+    )
     ax.set_xticks(x)
     ax.set_xticklabels([f"{m} vs Control" for m in mutations], fontsize=11)
     ax.legend(fontsize=10)
@@ -409,13 +524,17 @@ def load_features(cache_path, apply_l2_norm=False, dead_threshold=1e-5):
 
     if "X_gap" in data:
         X = data["X_gap"]
-        lines = data["lines"].astype(str) if data["lines"].dtype.kind != 'U' else data["lines"]
+        lines = (
+            data["lines"].astype(str)
+            if data["lines"].dtype.kind != "U"
+            else data["lines"]
+        )
         feature_type = "Channel"
         logger.info(f"  CNN GAP cache: {X.shape}")
     elif "X_all" in data:
         X = data["X_all"]
         lines = data["lines"] if "lines" in data else data["y"]
-        if lines.dtype.kind != 'U':
+        if lines.dtype.kind != "U":
             lines = lines.astype(str)
         # Remove dead neurons
         if "usage_ema" in data:
@@ -445,25 +564,59 @@ def main():
     parser = argparse.ArgumentParser(
         description="Volcano plot: CNN GAP channels vs SAE neurons (step14-consistent DE)"
     )
-    parser.add_argument("--cnn_gap_cache", type=str, required=True,
-                        help="Path to CNN GAP .npz cache (per-image values)")
-    parser.add_argument("--sae_cache", type=str, required=True,
-                        help="Path to SAE per-image .npz cache (with usage_ema)")
+    parser.add_argument(
+        "--cnn_gap_cache",
+        type=str,
+        required=True,
+        help="Path to CNN GAP .npz cache (per-image values)",
+    )
+    parser.add_argument(
+        "--sae_cache",
+        type=str,
+        required=True,
+        help="Path to SAE per-image .npz cache (with usage_ema)",
+    )
     parser.add_argument("--output_dir", type=str, required=True)
-    parser.add_argument("--gap_l2_norm", action="store_true",
-                        help="L2 normalize CNN GAP features before DE")
-    parser.add_argument("--min_log2fc", type=float, default=0.58,
-                        help="Min |log2FC| for DE (step14 default=0.58)")
-    parser.add_argument("--max_gini", type=float, default=0.75,
-                        help="Max Gini impurity for class-specificity")
-    parser.add_argument("--mut_only", action="store_true",
-                        help="Only keep mutation-high features (drop Control-only)")
-    parser.add_argument("--dead_threshold", type=float, default=5e-4,
-                        help="usage_ema threshold for dead SAE neurons (default=5e-4, same as step09)")
-    parser.add_argument("--adj_p", type=float, default=1e-10,
-                        help="Adjusted p-value threshold line for CNN volcano plot")
-    parser.add_argument("--max_neg_log10p", type=float, default=50,
-                        help="Cap -log10(p) for CNN volcano display")
+    parser.add_argument(
+        "--gap_l2_norm",
+        action="store_true",
+        help="L2 normalize CNN GAP features before DE",
+    )
+    parser.add_argument(
+        "--min_log2fc",
+        type=float,
+        default=0.58,
+        help="Min |log2FC| for DE (step14 default=0.58)",
+    )
+    parser.add_argument(
+        "--max_gini",
+        type=float,
+        default=0.75,
+        help="Max Gini impurity for class-specificity",
+    )
+    parser.add_argument(
+        "--mut_only",
+        action="store_true",
+        help="Only keep mutation-high features (drop Control-only)",
+    )
+    parser.add_argument(
+        "--dead_threshold",
+        type=float,
+        default=5e-4,
+        help="usage_ema threshold for dead SAE neurons (default=5e-4, same as step09)",
+    )
+    parser.add_argument(
+        "--adj_p",
+        type=float,
+        default=1e-10,
+        help="Adjusted p-value threshold line for CNN volcano plot",
+    )
+    parser.add_argument(
+        "--max_neg_log10p",
+        type=float,
+        default=50,
+        help="Cap -log10(p) for CNN volcano display",
+    )
     parser.add_argument("--dpi", type=int, default=300)
     args = parser.parse_args()
 
@@ -479,7 +632,7 @@ def main():
     sae_data = np.load(args.sae_cache, allow_pickle=True)
     X_sae = sae_data["X_all"]
     sae_lines = sae_data["lines"] if "lines" in sae_data else sae_data["y"]
-    if sae_lines.dtype.kind != 'U':
+    if sae_lines.dtype.kind != "U":
         sae_lines = sae_lines.astype(str)
     sc_sae = [SUPERCLASS_MAP.get(ln, ln) for ln in sae_lines]
 
@@ -491,8 +644,10 @@ def main():
         alive_indices = np.where(alive_mask)[0]
         X_sae_alive = X_sae[:, alive_mask]
         n_alive_sae = int(alive_mask.sum())
-        logger.info(f"  SAE: {n_total_sae} total, {n_alive_sae} alive "
-                    f"(usage_ema > {args.dead_threshold})")
+        logger.info(
+            f"  SAE: {n_total_sae} total, {n_alive_sae} alive "
+            f"(usage_ema > {args.dead_threshold})"
+        )
     else:
         alive_indices = np.arange(n_total_sae)
         X_sae_alive = X_sae
@@ -534,10 +689,14 @@ def main():
             filtered.append((cid, new_label, fc, direction))
         n_dropped = len(sae_selected) - len(filtered)
         sae_selected = filtered
-        logger.info(f"  mut_only: {n_dropped} Control-only dropped, "
-                    f"{len(sae_selected)} remaining")
+        logger.info(
+            f"  mut_only: {n_dropped} Control-only dropped, "
+            f"{len(sae_selected)} remaining"
+        )
 
-    logger.info(f"  SAE: {n_alive_sae} alive → {len(sae_selected)} DE concepts (deduped)")
+    logger.info(
+        f"  SAE: {n_alive_sae} alive → {len(sae_selected)} DE concepts (deduped)"
+    )
 
     # Count per-mutation for SAE
     sae_per_mut = {mut: 0 for mut in mutations}
@@ -551,14 +710,15 @@ def main():
     # ==========================================================================
     logger.info(f"\n{'='*60}")
     logger.info("CNN GAP: Loading cache and running step14-style DE filter")
-    X_cnn, sc_cnn, _ = load_features(
-        args.cnn_gap_cache, apply_l2_norm=args.gap_l2_norm)
+    X_cnn, sc_cnn, _ = load_features(args.cnn_gap_cache, apply_l2_norm=args.gap_l2_norm)
     logger.info(f"  CNN GAP: {X_cnn.shape[1]} channels, {X_cnn.shape[0]} images")
 
     cnn_selected, cnn_per_mut_de = select_cnn_de_like_step14(
         X_cnn, sc_cnn, args.min_log2fc, args.max_gini, args.mut_only
     )
-    logger.info(f"  CNN: {X_cnn.shape[1]} channels → {len(cnn_selected)} DE channels (deduped)")
+    logger.info(
+        f"  CNN: {X_cnn.shape[1]} channels → {len(cnn_selected)} DE channels (deduped)"
+    )
 
     # Count per-mutation for CNN
     cnn_per_mut = {mut: 0 for mut in mutations}
@@ -603,7 +763,9 @@ def main():
         }
 
     plot_de_summary_bar(
-        de_cnn_summary, de_sae_summary, mutations,
+        de_cnn_summary,
+        de_sae_summary,
+        mutations,
         os.path.join(args.output_dir, "de_summary_bar.png"),
         dpi=args.dpi,
     )
@@ -615,22 +777,30 @@ def main():
     logger.info("SUMMARY: CNN GAP Channels vs SAE Neurons")
     logger.info(f"  Method: per-image class-mean log2FC (step14 consistent)")
     logger.info(f"  Method: per-image class-mean log2FC (step14 consistent)")
-    logger.info(f"  min_log2fc={args.min_log2fc}, max_gini={args.max_gini}, "
-                f"mut_only={args.mut_only}, dead_threshold={args.dead_threshold}")
+    logger.info(
+        f"  min_log2fc={args.min_log2fc}, max_gini={args.max_gini}, "
+        f"mut_only={args.mut_only}, dead_threshold={args.dead_threshold}"
+    )
     logger.info("=" * 60)
     logger.info(f"  {'':15s} {'CNN (dedup)':>15s} {'SAE (dedup)':>15s}")
-    logger.info(f"  {'':15s} {'('+str(X_cnn.shape[1])+' ch)':>15s} "
-                f"{'('+str(n_alive_sae)+' alive)':>15s}")
+    logger.info(
+        f"  {'':15s} {'('+str(X_cnn.shape[1])+' ch)':>15s} "
+        f"{'('+str(n_alive_sae)+' alive)':>15s}"
+    )
     logger.info("  " + "-" * 46)
 
     for mut in mutations:
-        logger.info(f"  {mut+' vs Ctrl':15s} "
-                     f"{cnn_per_mut[mut]:>6d}         "
-                     f"{sae_per_mut[mut]:>6d}")
+        logger.info(
+            f"  {mut+' vs Ctrl':15s} "
+            f"{cnn_per_mut[mut]:>6d}         "
+            f"{sae_per_mut[mut]:>6d}"
+        )
 
-    logger.info(f"  {'TOTAL (dedup)':15s} "
-                 f"{len(cnn_selected):>6d}         "
-                 f"{len(sae_selected):>6d}")
+    logger.info(
+        f"  {'TOTAL (dedup)':15s} "
+        f"{len(cnn_selected):>6d}         "
+        f"{len(sae_selected):>6d}"
+    )
 
     logger.info(f"\n  Output: {args.output_dir}")
     logger.info("=" * 60)

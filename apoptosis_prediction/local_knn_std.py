@@ -24,35 +24,36 @@
 
 # min cv 할때 전체 클래스 기준으로 cv 높은거만 남긴다.
 
+import argparse
+import json
 import os
 import sys
-import json
-import argparse
-import numpy as np
 
 import matplotlib
+import numpy as np
+
 _IN_COLAB = "google.colab" in sys.modules
 if not _IN_COLAB:
     matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import seaborn as sns
-
-from sklearn.neighbors import NearestNeighbors
 from scipy import stats
+from sklearn.neighbors import NearestNeighbors
 
-from sae_project.step02_logging_utils import get_logger, SUPERCLASS_MAP
+from sae_project.step02_logging_utils import SUPERCLASS_MAP, get_logger
 
 logger = get_logger("local_knn_std")
 
-plt.rcParams['svg.fonttype'] = 'none'
-plt.rcParams['pdf.fonttype'] = 42
+plt.rcParams["svg.fonttype"] = "none"
+plt.rcParams["pdf.fonttype"] = 42
 sns.set_style("ticks")
 
 
-# KNN은 valid_mask로 필터된 셀들만으로 피팅됩니다. 
-# 즉, 세포사멸 정보가 없는 이미지는 KNN 이웃 탐색 대상 자체에서 제외되어 있으므로, 
+# KNN은 valid_mask로 필터된 셀들만으로 피팅됩니다.
+# 즉, 세포사멸 정보가 없는 이미지는 KNN 이웃 탐색 대상 자체에서 제외되어 있으므로,
 # 이웃의 apoptosis rate를 구할 때 NaN이 나올 일이 없습니다.
+
 
 # ==============================================================================
 # Argument Parser
@@ -61,67 +62,135 @@ def get_args():
     p = argparse.ArgumentParser(
         description="Local linearity verification: KNN apoptosis rate std vs class global std"
     )
-    p.add_argument("--cnn_cache", type=str, default="",
-                   help="Path to CNN GAP .npz cache (X_gap)")
-    p.add_argument("--sae_cache", type=str, default="",
-                   help="Path to SAE .npz cache (X_all + usage_ema)")
+    p.add_argument(
+        "--cnn_cache", type=str, default="", help="Path to CNN GAP .npz cache (X_gap)"
+    )
+    p.add_argument(
+        "--sae_cache",
+        type=str,
+        default="",
+        help="Path to SAE .npz cache (X_all + usage_ema)",
+    )
     p.add_argument("--apoptosis_csv", type=str, required=True)
     p.add_argument("--dead_threshold", type=float, default=1e-5)
-    p.add_argument("--gap_l2_norm", action="store_true",
-                   help="Apply L2 normalization to feature vectors (useful for GAP)")
-    p.add_argument("--pre_l2_norm", action="store_true",
-                   help="Apply per-image L2 normalization BEFORE any other processing "
-                        "(divide_hw, gap_l2_norm, feature norm). "
-                        "Matches old F.normalize(pooled) in extract_features.py.")
-    p.add_argument("--divide_hw", type=int, default=0,
-                   help="Divide features by H*W to convert sum→mean (e.g. 256 for 16x16). "
-                        "Applied before any normalization.")
+    p.add_argument(
+        "--gap_l2_norm",
+        action="store_true",
+        help="Apply L2 normalization to feature vectors (useful for GAP)",
+    )
+    p.add_argument(
+        "--pre_l2_norm",
+        action="store_true",
+        help="Apply per-image L2 normalization BEFORE any other processing "
+        "(divide_hw, gap_l2_norm, feature norm). "
+        "Matches old F.normalize(pooled) in extract_features.py.",
+    )
+    p.add_argument(
+        "--divide_hw",
+        type=int,
+        default=0,
+        help="Divide features by H*W to convert sum→mean (e.g. 256 for 16x16). "
+        "Applied before any normalization.",
+    )
 
     # Normalization (applied AFTER DE filtering)
-    p.add_argument("--norm", type=str, default="",
-                   help="Feature normalization: '', 'log', 'std', 'log_std'. "
-                        "Applied AFTER DE filtering. Default: '' (none).")
+    p.add_argument(
+        "--norm",
+        type=str,
+        default="",
+        help="Feature normalization: '', 'log', 'std', 'log_std'. "
+        "Applied AFTER DE filtering. Default: '' (none).",
+    )
 
     # DE / CV neuron filtering
-    p.add_argument("--filter_mode", type=str, nargs="+", default=["none"],
-                   help="Sequential filter: 'cv', 'de', 'none'. "
-                        "e.g. '--filter_mode cv de'")
-    p.add_argument("--min_cv", type=float, default=0.0,
-                   help="Min CV threshold for cv filter (default: 0.0)")
-    p.add_argument("--de_adj_p", type=float, default=0.05,
-                   help="Adjusted p-value threshold for DE filter (default: 0.05)")
-    p.add_argument("--de_min_log2fc", type=float, default=1.0,
-                   help="Min |log2FC| for DE filter (default: 1.0)")
-    p.add_argument("--de_top_k", type=int, default=0,
-                   help="Max DE neurons per mutation (by |log2FC| rank). "
-                        "0 = keep all significant.")
-    p.add_argument("--de_mode", type=str, default="union",
-                   choices=["union", "per_mut"],
-                   help="'union' (default, DPT-style): DE union of 3 mutations + CtrlHigh, "
-                        "applied globally. 'per_mut': DE per-mutation inside loop.")
-    p.add_argument("--de_eval_split", type=float, default=0.5,
-                   help="Fraction of data held out for evaluation (0 = no split, "
-                        "0.5 = 50%% for eval). DE uses the rest.")
+    p.add_argument(
+        "--filter_mode",
+        type=str,
+        nargs="+",
+        default=["none"],
+        help="Sequential filter: 'cv', 'de', 'none'. " "e.g. '--filter_mode cv de'",
+    )
+    p.add_argument(
+        "--min_cv",
+        type=float,
+        default=0.0,
+        help="Min CV threshold for cv filter (default: 0.0)",
+    )
+    p.add_argument(
+        "--de_adj_p",
+        type=float,
+        default=0.05,
+        help="Adjusted p-value threshold for DE filter (default: 0.05)",
+    )
+    p.add_argument(
+        "--de_min_log2fc",
+        type=float,
+        default=1.0,
+        help="Min |log2FC| for DE filter (default: 1.0)",
+    )
+    p.add_argument(
+        "--de_top_k",
+        type=int,
+        default=0,
+        help="Max DE neurons per mutation (by |log2FC| rank). "
+        "0 = keep all significant.",
+    )
+    p.add_argument(
+        "--de_mode",
+        type=str,
+        default="union",
+        choices=["union", "per_mut"],
+        help="'union' (default, DPT-style): DE union of 3 mutations + CtrlHigh, "
+        "applied globally. 'per_mut': DE per-mutation inside loop.",
+    )
+    p.add_argument(
+        "--de_eval_split",
+        type=float,
+        default=0.5,
+        help="Fraction of data held out for evaluation (0 = no split, "
+        "0.5 = 50%% for eval). DE uses the rest.",
+    )
 
     # PCA (applied AFTER normalization, BEFORE KNN — matches dpt_kendall.py)
-    p.add_argument("--pca_dim", type=int, default=0,
-                   help="PCA dimensions after norm, before KNN. "
-                        "0 = no PCA (default). Set to 50 to match DPT pipeline.")
+    p.add_argument(
+        "--pca_dim",
+        type=int,
+        default=0,
+        help="PCA dimensions after norm, before KNN. "
+        "0 = no PCA (default). Set to 50 to match DPT pipeline.",
+    )
 
-    p.add_argument("--k_neighbors", type=int, nargs="+", default=[10, 20, 50],
-                   help="K values for KNN (multiple for sweep). Default: 10 20 50")
-    p.add_argument("--n_permutations", type=int, default=0,
-                   help="Number of permutations for null distribution (default: 1000)")
+    p.add_argument(
+        "--k_neighbors",
+        type=int,
+        nargs="+",
+        default=[10, 20, 50],
+        help="K values for KNN (multiple for sweep). Default: 10 20 50",
+    )
+    p.add_argument(
+        "--n_permutations",
+        type=int,
+        default=0,
+        help="Number of permutations for null distribution (default: 1000)",
+    )
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--output_dir", type=str, default="")
     p.add_argument("--dpi", type=int, default=200)
-    p.add_argument("--n_bootstrap", type=int, default=0,
-                   help="Bootstrap iterations for Moran's I CNN vs SAE comparison. "
-                        "0 = skip. 999 = standard. Default: 0")
-    p.add_argument("--samples_per_class", type=int, default=0,
-                   help="Max samples per class (0 = use ALL). "
-                        "Prioritizes samples with valid apoptosis. "
-                        "Set to 5000 to match dpt_kendall.py default.")
+    p.add_argument(
+        "--n_bootstrap",
+        type=int,
+        default=0,
+        help="Bootstrap iterations for Moran's I CNN vs SAE comparison. "
+        "0 = skip. 999 = standard. Default: 0",
+    )
+    p.add_argument(
+        "--samples_per_class",
+        type=int,
+        default=0,
+        help="Max samples per class (0 = use ALL). "
+        "Prioritizes samples with valid apoptosis. "
+        "Set to 5000 to match dpt_kendall.py default.",
+    )
 
     return p.parse_args()
 
@@ -139,8 +208,14 @@ def load_cache(cache_path, dead_threshold):
 
     if "X_gap" in data:
         X = data["X_gap"]
-        lines = data["lines"].astype(str) if data["lines"].dtype.kind != 'U' else data["lines"]
-        uids = data["uids"].astype(str) if data["uids"].dtype.kind != 'U' else data["uids"]
+        lines = (
+            data["lines"].astype(str)
+            if data["lines"].dtype.kind != "U"
+            else data["lines"]
+        )
+        uids = (
+            data["uids"].astype(str) if data["uids"].dtype.kind != "U" else data["uids"]
+        )
         label = "CNN"
         logger.info(f"  Detected CNN GAP cache: {X.shape}")
     elif "X_all" in data:
@@ -188,7 +263,7 @@ def compute_local_std_ratios(X, apoptosis, k):
 
     # Compute local std for each sample's neighbors
     neighbor_apoptosis = apoptosis[neighbor_indices]  # (N, k_actual)
-    local_stds = np.std(neighbor_apoptosis, axis=1)   # (N,)
+    local_stds = np.std(neighbor_apoptosis, axis=1)  # (N,)
 
     global_std = np.std(apoptosis)
     ratios = local_stds / max(global_std, 1e-12)
@@ -226,7 +301,7 @@ def compute_global_morans_i(X, apoptosis, k):
 
     xbar = np.mean(apoptosis)
     z_vals = apoptosis - xbar  # deviations
-    denom = np.sum(z_vals ** 2)
+    denom = np.sum(z_vals**2)
 
     if denom < 1e-15:
         return np.nan, np.nan, np.nan, np.nan
@@ -248,9 +323,12 @@ def compute_global_morans_i(X, apoptosis, k):
     S1 = 2 * W  # sum of (w_ij + w_ji)^2 — for binary symmetric approx
     S2 = n * (2 * k_actual) ** 2  # (sum_j w_ij + sum_i w_ij)^2 per node
     # Simplified variance formula
-    var_I = (n * ((n**2 - 3*n + 3) * S1 - n * S2 + 3 * W**2)
-             - (n**2 - n) * S1 + 2 * n * S2 - 6 * W**2) / (
-                (n - 1) * (n - 2) * (n - 3) * W**2 + 1e-15)
+    var_I = (
+        n * ((n**2 - 3 * n + 3) * S1 - n * S2 + 3 * W**2)
+        - (n**2 - n) * S1
+        + 2 * n * S2
+        - 6 * W**2
+    ) / ((n - 1) * (n - 2) * (n - 3) * W**2 + 1e-15)
     # Use simpler approximation for large n
     var_I_simple = (1.0 / (n - 1)) * (1 - expected**2) if n > 30 else max(var_I, 1e-12)
     var_I_simple = max(var_I_simple, 1e-12)
@@ -264,8 +342,7 @@ def compute_global_morans_i(X, apoptosis, k):
 # ==============================================================================
 # Bootstrap paired test: Moran's I difference (CNN vs SAE)
 # ==============================================================================
-def bootstrap_morans_i_diff(X_a, X_b, apoptosis, k,
-                            n_boot=999, seed=42, ci_alpha=0.05):
+def bootstrap_morans_i_diff(X_a, X_b, apoptosis, k, n_boot=999, seed=42, ci_alpha=0.05):
     """Bootstrap test for ΔI = I(B) - I(A) using paired resampling.
 
     Same images, different feature spaces → paired bootstrap.
@@ -351,41 +428,59 @@ def plot_ratio_comparison(results_by_source, mutation, k, output_path, dpi=200):
     colors = {"CNN": "#4C72B0", "SAE": "#DD8452"}
     box_colors = [colors.get(lbl, "gray") for lbl in labels]
 
-    parts = ax.violinplot(plot_data, positions=range(len(labels)),
-                          showmeans=False, showmedians=False, showextrema=False)
-    for pc, c in zip(parts['bodies'], box_colors):
+    parts = ax.violinplot(
+        plot_data,
+        positions=range(len(labels)),
+        showmeans=False,
+        showmedians=False,
+        showextrema=False,
+    )
+    for pc, c in zip(parts["bodies"], box_colors):
         pc.set_facecolor(c)
         pc.set_alpha(0.3)
 
-    bp = ax.boxplot(plot_data, positions=range(len(labels)),
-                    widths=0.3, patch_artist=True,
-                    showfliers=False, zorder=3)
-    for patch, c in zip(bp['boxes'], box_colors):
+    bp = ax.boxplot(
+        plot_data,
+        positions=range(len(labels)),
+        widths=0.3,
+        patch_artist=True,
+        showfliers=False,
+        zorder=3,
+    )
+    for patch, c in zip(bp["boxes"], box_colors):
         patch.set_facecolor(c)
         patch.set_alpha(0.6)
-    for element in ['whiskers', 'caps', 'medians']:
+    for element in ["whiskers", "caps", "medians"]:
         for line in bp[element]:
-            line.set_color('black')
+            line.set_color("black")
             line.set_linewidth(1.0)
 
     # Reference line at 1.0 (no improvement over global)
-    ax.axhline(1.0, color="red", linewidth=1.5, linestyle="--", alpha=0.7,
-               label="Global std")
+    ax.axhline(
+        1.0, color="red", linewidth=1.5, linestyle="--", alpha=0.7, label="Global std"
+    )
 
     # Annotations
     for i, (lbl, res) in enumerate(results_by_source.items()):
         mean_r = res["mean_ratio"]
         pval = res.get("perm_pval", None)
         pval_str = f"p={pval:.4f}" if pval is not None else ""
-        ax.text(i, ax.get_ylim()[1] * 0.95,
-                f"mean={mean_r:.3f}\n{pval_str}",
-                ha="center", va="top", fontsize=8,
-                bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.8))
+        ax.text(
+            i,
+            ax.get_ylim()[1] * 0.95,
+            f"mean={mean_r:.3f}\n{pval_str}",
+            ha="center",
+            va="top",
+            fontsize=8,
+            bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.8),
+        )
 
     ax.set_xticks(range(len(labels)))
     ax.set_xticklabels(labels, fontsize=12)
     ax.set_ylabel("Local Std / Global Std", fontsize=11)
-    ax.set_title(f"{mutation} — Local Linearity (k={k})", fontsize=13, fontweight="bold")
+    ax.set_title(
+        f"{mutation} — Local Linearity (k={k})", fontsize=13, fontweight="bold"
+    )
     ax.legend(fontsize=9, loc="upper right")
     ax.grid(True, alpha=0.2, axis="y")
 
@@ -402,20 +497,35 @@ def plot_ratio_comparison(results_by_source, mutation, k, output_path, dpi=200):
 # ==============================================================================
 # Plot 2: Permutation null distribution
 # ==============================================================================
-def plot_permutation_null(real_ratio, null_ratios, source_label, mutation, k,
-                          pval, output_path, dpi=200):
+def plot_permutation_null(
+    real_ratio, null_ratios, source_label, mutation, k, pval, output_path, dpi=200
+):
     """Histogram of permutation null mean-ratio with real marked."""
     fig, ax = plt.subplots(figsize=(7, 4))
 
-    ax.hist(null_ratios, bins=50, color="#888888", alpha=0.7, edgecolor="white",
-            label=f"Null (n={len(null_ratios)})")
-    ax.axvline(real_ratio, color="red", linewidth=2, linestyle="--",
-               label=f"Real mean ratio={real_ratio:.4f}")
+    ax.hist(
+        null_ratios,
+        bins=50,
+        color="#888888",
+        alpha=0.7,
+        edgecolor="white",
+        label=f"Null (n={len(null_ratios)})",
+    )
+    ax.axvline(
+        real_ratio,
+        color="red",
+        linewidth=2,
+        linestyle="--",
+        label=f"Real mean ratio={real_ratio:.4f}",
+    )
 
     ax.set_xlabel("Mean(Local Std / Global Std)", fontsize=11)
     ax.set_ylabel("Count", fontsize=11)
-    ax.set_title(f"{source_label} — {mutation} — Permutation (k={k}, p={pval:.4f})",
-                 fontsize=12, fontweight="bold")
+    ax.set_title(
+        f"{source_label} — {mutation} — Permutation (k={k}, p={pval:.4f})",
+        fontsize=12,
+        fontweight="bold",
+    )
     ax.legend(fontsize=9)
     ax.grid(True, alpha=0.2, axis="y")
 
@@ -443,18 +553,43 @@ def plot_k_sweep(sweep_results, mutation, output_path, dpi=200):
         means = [r[1] for r in kv_list]
         pvals = [r[2] for r in kv_list]
         c = colors.get(source_label, "gray")
-        ax.plot(ks, means, "o-", color=c, linewidth=2, markersize=6,
-                label=source_label, alpha=0.9)
+        ax.plot(
+            ks,
+            means,
+            "o-",
+            color=c,
+            linewidth=2,
+            markersize=6,
+            label=source_label,
+            alpha=0.9,
+        )
 
         # Annotate p-values
         for k_val, m, p in zip(ks, means, pvals):
             if p is not None:
-                star = "***" if p < 0.001 else "**" if p < 0.01 else "*" if p < 0.05 else "n.s."
-                ax.annotate(star, (k_val, m), textcoords="offset points",
-                            xytext=(0, 8), ha="center", fontsize=8, color=c)
+                star = (
+                    "***"
+                    if p < 0.001
+                    else "**" if p < 0.01 else "*" if p < 0.05 else "n.s."
+                )
+                ax.annotate(
+                    star,
+                    (k_val, m),
+                    textcoords="offset points",
+                    xytext=(0, 8),
+                    ha="center",
+                    fontsize=8,
+                    color=c,
+                )
 
-    ax.axhline(1.0, color="red", linewidth=1.2, linestyle="--", alpha=0.6,
-               label="Random (ratio=1)")
+    ax.axhline(
+        1.0,
+        color="red",
+        linewidth=1.2,
+        linestyle="--",
+        alpha=0.6,
+        label="Random (ratio=1)",
+    )
     ax.set_xlabel("k (number of neighbors)", fontsize=11)
     ax.set_ylabel("Mean(Local Std / Global Std)", fontsize=11)
     ax.set_title(f"{mutation} — Local Linearity vs k", fontsize=13, fontweight="bold")
@@ -488,22 +623,44 @@ def plot_morans_k_sweep(morans_data, mutation, output_path, dpi=200):
         morans_vals = [r[1] for r in kv_list]
         pvals = [r[3] for r in kv_list]
         c = colors.get(source_label, "gray")
-        ax.plot(ks, morans_vals, "o-", color=c, linewidth=2, markersize=7,
-                label=source_label, alpha=0.9)
+        ax.plot(
+            ks,
+            morans_vals,
+            "o-",
+            color=c,
+            linewidth=2,
+            markersize=7,
+            label=source_label,
+            alpha=0.9,
+        )
 
         # Annotate significance
         for k_val, m_i, p in zip(ks, morans_vals, pvals):
             if p is not None and not np.isnan(p):
-                star = "***" if p < 0.001 else "**" if p < 0.01 else "*" if p < 0.05 else "n.s."
-                ax.annotate(star, (k_val, m_i), textcoords="offset points",
-                            xytext=(0, 10), ha="center", fontsize=9, color=c,
-                            fontweight="bold")
+                star = (
+                    "***"
+                    if p < 0.001
+                    else "**" if p < 0.01 else "*" if p < 0.05 else "n.s."
+                )
+                ax.annotate(
+                    star,
+                    (k_val, m_i),
+                    textcoords="offset points",
+                    xytext=(0, 10),
+                    ha="center",
+                    fontsize=9,
+                    color=c,
+                    fontweight="bold",
+                )
 
     ax.axhline(0, color="gray", linewidth=1, linestyle=":", alpha=0.5)
     ax.set_xlabel("k (number of neighbors)", fontsize=11)
     ax.set_ylabel("Global Moran's I", fontsize=11)
-    ax.set_title(f"{mutation} — Spatial Autocorrelation (Moran's I)",
-                 fontsize=13, fontweight="bold")
+    ax.set_title(
+        f"{mutation} — Spatial Autocorrelation (Moran's I)",
+        fontsize=13,
+        fontweight="bold",
+    )
     ax.legend(fontsize=10)
     ax.grid(True, alpha=0.2)
     ax.xaxis.set_major_locator(mticker.MaxNLocator(integer=True))
@@ -517,7 +674,6 @@ def plot_morans_k_sweep(morans_data, mutation, output_path, dpi=200):
     plt.close(fig)
 
 
-
 # ==============================================================================
 # Main
 # ==============================================================================
@@ -525,11 +681,11 @@ def main():
     args = get_args()
     np.random.seed(args.seed)
 
-    from kendall_correlation_coefficient.dpt_kendall import (
-        load_and_match_apoptosis, apply_normalization,
-        compute_cv_per_neuron, compute_de_neurons,
-    )
     from sklearn.decomposition import PCA
+
+    from kendall_correlation_coefficient.dpt_kendall import (
+        apply_normalization, compute_cv_per_neuron, compute_de_neurons,
+        load_and_match_apoptosis)
 
     if not args.cnn_cache and not args.sae_cache:
         raise ValueError("At least one of --cnn_cache or --sae_cache must be provided")
@@ -615,17 +771,25 @@ def main():
                 ordered = np.concatenate([valid_idx, invalid_idx])
                 n_take = min(spc, len(ordered))
                 chosen = rng_sub.choice(
-                    ordered[:max(n_take, len(valid_idx))],
-                    size=min(n_take, len(ordered)), replace=False)
+                    ordered[: max(n_take, len(valid_idx))],
+                    size=min(n_take, len(ordered)),
+                    replace=False,
+                )
                 keep_indices.extend(chosen.tolist())
-                logger.info(f"    Subsample {cls}: {len(cls_idx)} → {len(chosen)} "
-                            f"(valid apop: {valid_mask_cls.sum()})")
+                logger.info(
+                    f"    Subsample {cls}: {len(cls_idx)} → {len(chosen)} "
+                    f"(valid apop: {valid_mask_cls.sum()})"
+                )
             keep_indices = sorted(keep_indices)
             X_raw = X_raw[keep_indices]
             superclasses = [superclasses[i] for i in keep_indices]
             superclasses_arr = np.array(superclasses)
             apoptosis = apoptosis[keep_indices]
-            uids = [uids[i] for i in keep_indices] if isinstance(uids, list) else uids[keep_indices]
+            uids = (
+                [uids[i] for i in keep_indices]
+                if isinstance(uids, list)
+                else uids[keep_indices]
+            )
             logger.info(f"    After subsampling: {X_raw.shape[0]} samples")
 
         X = X_raw.copy()  # Don't modify original
@@ -651,7 +815,7 @@ def main():
             logger.info(f"  Filter [{fm}]: {step}")
 
         # ── DE/Eval split (avoid circular analysis) ────────────────
-        de_eval_split = getattr(args, 'de_eval_split', 0.0)
+        de_eval_split = getattr(args, "de_eval_split", 0.0)
         if de_eval_split > 0 and has_de:
             rng_split = np.random.RandomState(args.seed)
             n_total = len(superclasses_arr)
@@ -665,8 +829,10 @@ def main():
             de_mask_global = ~eval_mask  # True = DE set
             n_de = int(de_mask_global.sum())
             n_eval_count = int(eval_mask.sum())
-            logger.info(f"  DE/Eval split: DE={n_de}, Eval={n_eval_count} "
-                        f"(split={de_eval_split:.0%})")
+            logger.info(
+                f"  DE/Eval split: DE={n_de}, Eval={n_eval_count} "
+                f"(split={de_eval_split:.0%})"
+            )
         else:
             eval_mask = np.ones(len(superclasses_arr), dtype=bool)  # all = eval
             de_mask_global = np.ones(len(superclasses_arr), dtype=bool)  # all = DE
@@ -680,7 +846,9 @@ def main():
             sc_de = list(superclasses_arr[de_mask_global])
             for m in ["SNCA", "GBA", "LRRK2"]:
                 de_result = compute_de_neurons(
-                    X_de, sc_de, m,
+                    X_de,
+                    sc_de,
+                    m,
                     adj_p_threshold=args.de_adj_p,
                     min_log2fc=args.de_min_log2fc,
                 )
@@ -688,24 +856,29 @@ def main():
                 if args.de_top_k > 0 and mask.sum() > args.de_top_k:
                     sig_indices = np.where(mask)[0]
                     abs_fc = np.abs(de_result["log2fc"][sig_indices])
-                    top_k_idx = sig_indices[np.argsort(abs_fc)[::-1][:args.de_top_k]]
+                    top_k_idx = sig_indices[np.argsort(abs_fc)[::-1][: args.de_top_k]]
                     mask = np.zeros_like(mask)
                     mask[top_k_idx] = True
                 de_masks.append(mask)
 
             # Control vs AllMut — Control-high direction only (log2fc < 0)
-            superclasses_allm = [("AllMut" if s != "Control" else "Control")
-                                 for s in sc_de]
+            superclasses_allm = [
+                ("AllMut" if s != "Control" else "Control") for s in sc_de
+            ]
             de_ctrl = compute_de_neurons(
-                X_de, superclasses_allm, "AllMut",
+                X_de,
+                superclasses_allm,
+                "AllMut",
                 adj_p_threshold=args.de_adj_p,
                 min_log2fc=args.de_min_log2fc,
             )
             ctrl_high_mask = de_ctrl["mask"] & (de_ctrl["log2fc"] < 0)
             n_ctrl_high = int(ctrl_high_mask.sum())
             n_mut_high = int((de_ctrl["mask"] & (de_ctrl["log2fc"] > 0)).sum())
-            logger.info(f"    DE(Ctrl vs AllMut): {int(de_ctrl['mask'].sum())} total → "
-                        f"Control-high: {n_ctrl_high}, Mut-high: {n_mut_high} (kept: Ctrl-high only)")
+            logger.info(
+                f"    DE(Ctrl vs AllMut): {int(de_ctrl['mask'].sum())} total → "
+                f"Control-high: {n_ctrl_high}, Mut-high: {n_mut_high} (kept: Ctrl-high only)"
+            )
             de_masks.append(ctrl_high_mask)
 
             union_mask = de_masks[0] | de_masks[1] | de_masks[2] | de_masks[3]
@@ -735,14 +908,18 @@ def main():
             n_valid = int(valid_mask.sum())
 
             if n_valid < 10:
-                logger.warning(f"    Too few valid samples for {mut} ({n_valid}), skipping")
+                logger.warning(
+                    f"    Too few valid samples for {mut} ({n_valid}), skipping"
+                )
                 continue
 
             # ── Per-mutation DE (if de_mode=per_mut) ──
             X_use = X
             if has_de and de_mode == "per_mut":
                 de_result = compute_de_neurons(
-                    X[de_mask_global], list(superclasses_arr[de_mask_global]), mut,
+                    X[de_mask_global],
+                    list(superclasses_arr[de_mask_global]),
+                    mut,
                     adj_p_threshold=args.de_adj_p,
                     min_log2fc=args.de_min_log2fc,
                 )
@@ -750,7 +927,7 @@ def main():
                 if args.de_top_k > 0 and de_mask.sum() > args.de_top_k:
                     sig_idx = np.where(de_mask)[0]
                     abs_fc = np.abs(de_result["log2fc"][sig_idx])
-                    top_k_idx = sig_idx[np.argsort(abs_fc)[::-1][:args.de_top_k]]
+                    top_k_idx = sig_idx[np.argsort(abs_fc)[::-1][: args.de_top_k]]
                     de_mask = np.zeros_like(de_mask)
                     de_mask[top_k_idx] = True
                 n_de_feat = int(de_mask.sum())
@@ -777,37 +954,62 @@ def main():
 
                 var_ratios = pca.explained_variance_ratio_
                 cum_var = np.cumsum(var_ratios)
-                logger.info(f"    PCA: {pca.n_features_in_}D → {n_pca}D "
-                            f"(total explained var: {cum_var[n_pca-1]:.1%})")
+                logger.info(
+                    f"    PCA: {pca.n_features_in_}D → {n_pca}D "
+                    f"(total explained var: {cum_var[n_pca-1]:.1%})"
+                )
                 for i in range(n_fit):
                     marker = " ◀ cutoff" if i == n_pca - 1 else ""
-                    logger.info(f"      PC{i+1:3d}: {var_ratios[i]:.4f}  "
-                                f"(cumulative: {cum_var[i]:.4f}){marker}")
+                    logger.info(
+                        f"      PC{i+1:3d}: {var_ratios[i]:.4f}  "
+                        f"(cumulative: {cum_var[i]:.4f}){marker}"
+                    )
 
                 # Scree plot — save + show in Colab
                 fig_sc, ax_sc = plt.subplots(figsize=(8, 4))
                 x_pos = np.arange(1, n_fit + 1)
-                ax_sc.bar(x_pos, var_ratios, color="#5B9BD5", alpha=0.7,
-                          edgecolor="white", label="Individual")
-                ax_sc.plot(x_pos, cum_var, "o-", color="#ED7D31", linewidth=2,
-                           markersize=4, label="Cumulative")
-                ax_sc.axvline(n_pca + 0.5, color="red", linestyle="--",
-                              linewidth=1.5, alpha=0.7,
-                              label=f"Cutoff (n={n_pca})")
+                ax_sc.bar(
+                    x_pos,
+                    var_ratios,
+                    color="#5B9BD5",
+                    alpha=0.7,
+                    edgecolor="white",
+                    label="Individual",
+                )
+                ax_sc.plot(
+                    x_pos,
+                    cum_var,
+                    "o-",
+                    color="#ED7D31",
+                    linewidth=2,
+                    markersize=4,
+                    label="Cumulative",
+                )
+                ax_sc.axvline(
+                    n_pca + 0.5,
+                    color="red",
+                    linestyle="--",
+                    linewidth=1.5,
+                    alpha=0.7,
+                    label=f"Cutoff (n={n_pca})",
+                )
                 ax_sc.set_xlabel("Principal Component", fontsize=11)
                 ax_sc.set_ylabel("Explained Variance Ratio", fontsize=11)
-                ax_sc.set_title(f"PCA Scree — {source_label} / {mut} "
-                                f"(using {n_pca}/{n_fit} PCs, "
-                                f"kept var={cum_var[n_pca-1]:.1%})",
-                                fontsize=12, fontweight="bold")
+                ax_sc.set_title(
+                    f"PCA Scree — {source_label} / {mut} "
+                    f"(using {n_pca}/{n_fit} PCs, "
+                    f"kept var={cum_var[n_pca-1]:.1%})",
+                    fontsize=12,
+                    fontweight="bold",
+                )
                 ax_sc.legend(fontsize=9)
                 ax_sc.set_ylim(0, max(var_ratios[0] * 1.15, cum_var[-1] * 1.05))
                 ax_sc.grid(True, alpha=0.2, axis="y")
                 sns.despine()
                 fig_sc.tight_layout()
                 scree_path = os.path.join(
-                    out_dir,
-                    f"pca_scree_{source_label}_{mut}.png")
+                    out_dir, f"pca_scree_{source_label}_{mut}.png"
+                )
                 fig_sc.savefig(scree_path, dpi=args.dpi, bbox_inches="tight")
                 svg_path = scree_path.replace(".png", ".svg")
                 fig_sc.savefig(svg_path, format="svg", bbox_inches="tight")
@@ -819,7 +1021,9 @@ def main():
             X_mut = X_use[valid_mask]
             apop_mut = apoptosis[valid_mask]
             global_std = np.std(apop_mut)
-            logger.info(f"    n={n_valid}, features={X_mut.shape[1]}, global_std={global_std:.6f}")
+            logger.info(
+                f"    n={n_valid}, features={X_mut.shape[1]}, global_std={global_std:.6f}"
+            )
 
             # Store for paired bootstrap comparison
             feature_cache[(source_label, mut)] = (X_mut, apop_mut)
@@ -840,10 +1044,13 @@ def main():
 
                 # ── Global Moran's I ──
                 morans_I, morans_z, morans_p, morans_exp = compute_global_morans_i(
-                    X_mut, apop_mut, k)
-                logger.info(f"      Moran's I = {morans_I:.4f} "
-                            f"(z={morans_z:.2f}, p={morans_p:.2e}, "
-                            f"E[I]={morans_exp:.4f})")
+                    X_mut, apop_mut, k
+                )
+                logger.info(
+                    f"      Moran's I = {morans_I:.4f} "
+                    f"(z={morans_z:.2f}, p={morans_p:.2e}, "
+                    f"E[I]={morans_exp:.4f})"
+                )
                 morans_for_source.append((k, morans_I, morans_z, morans_p))
 
                 # One-sample Wilcoxon signed-rank test: ratio < 1.0?
@@ -851,9 +1058,12 @@ def main():
                 if len(valid_ratios) > 10:
                     try:
                         wilcox_stat, wilcox_p = stats.wilcoxon(
-                            valid_ratios - 1.0, alternative="less")
-                        logger.info(f"      Wilcoxon (ratio < 1): stat={wilcox_stat:.2f}, "
-                                    f"p={wilcox_p:.2e}")
+                            valid_ratios - 1.0, alternative="less"
+                        )
+                        logger.info(
+                            f"      Wilcoxon (ratio < 1): stat={wilcox_stat:.2f}, "
+                            f"p={wilcox_p:.2e}"
+                        )
                     except Exception:
                         wilcox_p = np.nan
                 else:
@@ -863,12 +1073,17 @@ def main():
                 perm_pval = None
                 null_ratios = np.array([])
                 if args.n_permutations > 0:
-                    logger.info(f"      Permutation test ({args.n_permutations} perms)...")
+                    logger.info(
+                        f"      Permutation test ({args.n_permutations} perms)..."
+                    )
                     real_mr, null_ratios, perm_pval = permutation_test_ratio(
-                        X_mut, apop_mut, k, args.n_permutations, args.seed)
-                    logger.info(f"      Perm p={perm_pval:.4f} "
-                                f"(null mean={np.mean(null_ratios):.4f}, "
-                                f"real={real_mr:.4f})")
+                        X_mut, apop_mut, k, args.n_permutations, args.seed
+                    )
+                    logger.info(
+                        f"      Perm p={perm_pval:.4f} "
+                        f"(null mean={np.mean(null_ratios):.4f}, "
+                        f"real={real_mr:.4f})"
+                    )
 
                 result = {
                     "ratios": ratios,
@@ -891,9 +1106,15 @@ def main():
                 # Plot permutation null for each (source, mutation, k)
                 if args.n_permutations > 0 and len(null_ratios) > 0:
                     plot_permutation_null(
-                        mean_ratio, null_ratios, source_label, mut, k, perm_pval,
-                        os.path.join(out_dir,
-                                     f"perm_null_{source_label}_{mut}_k{k}.png"),
+                        mean_ratio,
+                        null_ratios,
+                        source_label,
+                        mut,
+                        k,
+                        perm_pval,
+                        os.path.join(
+                            out_dir, f"perm_null_{source_label}_{mut}_k{k}.png"
+                        ),
                         dpi=args.dpi,
                     )
 
@@ -913,7 +1134,9 @@ def main():
 
             if len(results_by_source) > 0:
                 plot_ratio_comparison(
-                    results_by_source, mut, k,
+                    results_by_source,
+                    mut,
+                    k,
                     os.path.join(out_dir, f"ratio_comparison_{mut}_k{k}.png"),
                     dpi=args.dpi,
                 )
@@ -921,7 +1144,8 @@ def main():
         # ── K sweep plot per mutation ──
         if k_sweep_data.get(mut):
             plot_k_sweep(
-                k_sweep_data[mut], mut,
+                k_sweep_data[mut],
+                mut,
                 os.path.join(out_dir, f"k_sweep_{mut}.png"),
                 dpi=args.dpi,
             )
@@ -929,7 +1153,8 @@ def main():
         # ── Moran's I K sweep plot per mutation ──
         if morans_sweep_data.get(mut):
             plot_morans_k_sweep(
-                morans_sweep_data[mut], mut,
+                morans_sweep_data[mut],
+                mut,
                 os.path.join(out_dir, f"morans_I_k_sweep_{mut}.png"),
                 dpi=args.dpi,
             )
@@ -938,7 +1163,9 @@ def main():
     bootstrap_results = {}  # (mutation, k) → {delta, ci_lo, ci_hi, p}
     if args.n_bootstrap > 0 and "CNN" in sources and "SAE" in sources:
         logger.info(f"\n{'='*60}")
-        logger.info(f"  Bootstrap Moran's I: CNN vs SAE ({args.n_bootstrap} iterations)")
+        logger.info(
+            f"  Bootstrap Moran's I: CNN vs SAE ({args.n_bootstrap} iterations)"
+        )
         logger.info(f"{'='*60}")
 
         for mut in mutations:
@@ -966,15 +1193,23 @@ def main():
             for k in args.k_neighbors:
                 logger.info(f"\n    {mut} k={k}: bootstrapping...")
                 delta, ci_lo, ci_hi, p_boot, _ = bootstrap_morans_i_diff(
-                    X_c, X_s, apop, k,
-                    n_boot=args.n_bootstrap, seed=args.seed)
+                    X_c, X_s, apop, k, n_boot=args.n_bootstrap, seed=args.seed
+                )
 
-                star = "***" if p_boot < 0.001 else "**" if p_boot < 0.01 else "*" if p_boot < 0.05 else "n.s."
-                logger.info(f"      ΔI(SAE-CNN) = {delta:.4f}  "
-                            f"95%% CI [{ci_lo:.4f}, {ci_hi:.4f}]  "
-                            f"p = {p_boot:.4f} {star}")
+                star = (
+                    "***"
+                    if p_boot < 0.001
+                    else "**" if p_boot < 0.01 else "*" if p_boot < 0.05 else "n.s."
+                )
+                logger.info(
+                    f"      ΔI(SAE-CNN) = {delta:.4f}  "
+                    f"95%% CI [{ci_lo:.4f}, {ci_hi:.4f}]  "
+                    f"p = {p_boot:.4f} {star}"
+                )
                 bootstrap_results[(mut, k)] = {
-                    "delta": delta, "ci_lo": ci_lo, "ci_hi": ci_hi,
+                    "delta": delta,
+                    "ci_lo": ci_lo,
+                    "ci_hi": ci_hi,
                     "p_boot": p_boot,
                 }
 
@@ -982,72 +1217,111 @@ def main():
     logger.info(f"\n{'='*80}")
     logger.info("SUMMARY — Local Linearity Verification")
     logger.info(f"{'='*80}")
-    logger.info(f"  {'Source':6s} {'Mutation':8s} {'k':>4s} {'n':>6s} "
-                f"{'MeanRatio':>10s} {'MedRatio':>10s} {'WilcoxP':>10s} {'PermP':>10s} "
-                f"{'MoranI':>8s} {'MoranZ':>8s} {'MoranP':>10s}")
+    logger.info(
+        f"  {'Source':6s} {'Mutation':8s} {'k':>4s} {'n':>6s} "
+        f"{'MeanRatio':>10s} {'MedRatio':>10s} {'WilcoxP':>10s} {'PermP':>10s} "
+        f"{'MoranI':>8s} {'MoranZ':>8s} {'MoranP':>10s}"
+    )
     logger.info("  " + "-" * 100)
 
     for (source, mut, k), res in sorted(all_results.items()):
-        wilcox_str = f"{res['wilcoxon_p']:.2e}" if not np.isnan(res.get('wilcoxon_p', np.nan)) else "N/A"
-        perm_str = f"{res['perm_pval']:.4f}" if res.get('perm_pval') is not None else "N/A"
-        mi = res.get('morans_I', np.nan)
-        mz = res.get('morans_z', np.nan)
-        mp = res.get('morans_p', np.nan)
+        wilcox_str = (
+            f"{res['wilcoxon_p']:.2e}"
+            if not np.isnan(res.get("wilcoxon_p", np.nan))
+            else "N/A"
+        )
+        perm_str = (
+            f"{res['perm_pval']:.4f}" if res.get("perm_pval") is not None else "N/A"
+        )
+        mi = res.get("morans_I", np.nan)
+        mz = res.get("morans_z", np.nan)
+        mp = res.get("morans_p", np.nan)
         mi_str = f"{mi:.4f}" if not np.isnan(mi) else "N/A"
         mz_str = f"{mz:.2f}" if not np.isnan(mz) else "N/A"
         mp_str = f"{mp:.2e}" if not np.isnan(mp) else "N/A"
-        logger.info(f"  {source:6s} {mut:8s} {k:4d} {res['n']:6d} "
-                    f"{res['mean_ratio']:10.4f} {res['median_ratio']:10.4f} "
-                    f"{wilcox_str:>10s} {perm_str:>10s} "
-                    f"{mi_str:>8s} {mz_str:>8s} {mp_str:>10s}")
+        logger.info(
+            f"  {source:6s} {mut:8s} {k:4d} {res['n']:6d} "
+            f"{res['mean_ratio']:10.4f} {res['median_ratio']:10.4f} "
+            f"{wilcox_str:>10s} {perm_str:>10s} "
+            f"{mi_str:>8s} {mz_str:>8s} {mp_str:>10s}"
+        )
 
     # ── Save JSON & Arrays ──
     json_results = []
     for (source, mut, k), res in sorted(all_results.items()):
-        
+
         # Save per-sample local_stds and ratios for later MWU
         # CNN seeds / SAE seeds 각각 NPZ 모아서 pool → per-(mutation, k) MWU
         npz_filename = os.path.join(out_dir, f"ratios_{source}_{mut}_k{k}.npz")
         np.savez_compressed(
             npz_filename,
-            local_stds=res["local_stds"],   # raw std (N,) — MWU용 핵심
-            ratios=res["ratios"],            # local_std / global_std (N,)
+            local_stds=res["local_stds"],  # raw std (N,) — MWU용 핵심
+            ratios=res["ratios"],  # local_std / global_std (N,)
             global_std=np.array([res["global_std"]]),  # scalar를 배열로
         )
-        
-        json_results.append({
-            "source": source,
-            "mutation": mut,
-            "k": k,
-            "n": res["n"],
-            "mean_ratio": float(res["mean_ratio"]),
-            "median_ratio": float(res["median_ratio"]),
-            "global_std": float(res["global_std"]),
-            "wilcoxon_p": float(res["wilcoxon_p"]) if not np.isnan(res.get("wilcoxon_p", np.nan)) else None,
-            "perm_pval": float(res["perm_pval"]) if res.get("perm_pval") is not None else None,
-            "morans_I": float(res.get("morans_I", np.nan)) if not np.isnan(res.get("morans_I", np.nan)) else None,
-            "morans_z": float(res.get("morans_z", np.nan)) if not np.isnan(res.get("morans_z", np.nan)) else None,
-            "morans_p": float(res.get("morans_p", np.nan)) if not np.isnan(res.get("morans_p", np.nan)) else None,
-        })
+
+        json_results.append(
+            {
+                "source": source,
+                "mutation": mut,
+                "k": k,
+                "n": res["n"],
+                "mean_ratio": float(res["mean_ratio"]),
+                "median_ratio": float(res["median_ratio"]),
+                "global_std": float(res["global_std"]),
+                "wilcoxon_p": (
+                    float(res["wilcoxon_p"])
+                    if not np.isnan(res.get("wilcoxon_p", np.nan))
+                    else None
+                ),
+                "perm_pval": (
+                    float(res["perm_pval"])
+                    if res.get("perm_pval") is not None
+                    else None
+                ),
+                "morans_I": (
+                    float(res.get("morans_I", np.nan))
+                    if not np.isnan(res.get("morans_I", np.nan))
+                    else None
+                ),
+                "morans_z": (
+                    float(res.get("morans_z", np.nan))
+                    if not np.isnan(res.get("morans_z", np.nan))
+                    else None
+                ),
+                "morans_p": (
+                    float(res.get("morans_p", np.nan))
+                    if not np.isnan(res.get("morans_p", np.nan))
+                    else None
+                ),
+            }
+        )
 
     # Bootstrap comparison results
     boot_json = []
     for (mut, k), bres in sorted(bootstrap_results.items()):
-        boot_json.append({
-            "mutation": mut, "k": k,
-            "delta_I_SAE_minus_CNN": float(bres["delta"]),
-            "ci_lo_95": float(bres["ci_lo"]),
-            "ci_hi_95": float(bres["ci_hi"]),
-            "p_bootstrap": float(bres["p_boot"]),
-        })
+        boot_json.append(
+            {
+                "mutation": mut,
+                "k": k,
+                "delta_I_SAE_minus_CNN": float(bres["delta"]),
+                "ci_lo_95": float(bres["ci_lo"]),
+                "ci_hi_95": float(bres["ci_hi"]),
+                "p_bootstrap": float(bres["p_boot"]),
+            }
+        )
 
     json_path = os.path.join(out_dir, "local_linearity_results.json")
     with open(json_path, "w") as f:
-        json.dump({
-            "args": vars(args),
-            "results": json_results,
-            "bootstrap_morans_comparison": boot_json,
-        }, f, indent=2)
+        json.dump(
+            {
+                "args": vars(args),
+                "results": json_results,
+                "bootstrap_morans_comparison": boot_json,
+            },
+            f,
+            indent=2,
+        )
     logger.info(f"\n  Saved JSON: {json_path}")
     logger.info(f"  Output: {out_dir}")
     logger.info(f"{'='*80}")

@@ -22,25 +22,26 @@
 #       --output_dir "/content/drive/.../local_linearity/plots"
 # ==============================================================================
 
+import argparse
+import glob
+import json
 import os
 import re
 import sys
-import json
-import argparse
-import glob
-import numpy as np
 from collections import defaultdict
 
 import matplotlib
+import numpy as np
+
 _IN_COLAB = "google.colab" in sys.modules
 if not _IN_COLAB:
     matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-plt.rcParams['svg.fonttype'] = 'none'
-plt.rcParams['pdf.fonttype'] = 42
-plt.rcParams['font.family'] = 'sans-serif'
+plt.rcParams["svg.fonttype"] = "none"
+plt.rcParams["pdf.fonttype"] = 42
+plt.rcParams["font.family"] = "sans-serif"
 sns.set_style("ticks")
 
 import scipy.stats as stats
@@ -51,18 +52,39 @@ MARKERS = {"CNN": "s", "SAE": "o"}
 
 def get_args():
     p = argparse.ArgumentParser(
-        description="Plot KNN std ratio trend from local_linearity sweep results")
-    p.add_argument("--base_dir", type=str, required=True,
-                   help="Base directory containing sweep results (e.g., .../local_linearity/raw)")
-    p.add_argument("--experiment", type=str, default="raw",
-                   choices=["raw", "dpt_matched", "de_sweep"],
-                   help="Experiment type: 'raw', 'dpt_matched', or 'de_sweep'")
-    p.add_argument("--fixed_k", type=int, default=0,
-                   help="For de_sweep: which K to plot (required for de_sweep)")
-    p.add_argument("--fixed_log2fc", type=float, default=-1,
-                   help="For dpt_matched: filter by log2fc dir (e.g., 1.0)")
-    p.add_argument("--output_dir", type=str, default="",
-                   help="Output directory for plots (default: base_dir/plots)")
+        description="Plot KNN std ratio trend from local_linearity sweep results"
+    )
+    p.add_argument(
+        "--base_dir",
+        type=str,
+        required=True,
+        help="Base directory containing sweep results (e.g., .../local_linearity/raw)",
+    )
+    p.add_argument(
+        "--experiment",
+        type=str,
+        default="raw",
+        choices=["raw", "dpt_matched", "de_sweep"],
+        help="Experiment type: 'raw', 'dpt_matched', or 'de_sweep'",
+    )
+    p.add_argument(
+        "--fixed_k",
+        type=int,
+        default=0,
+        help="For de_sweep: which K to plot (required for de_sweep)",
+    )
+    p.add_argument(
+        "--fixed_log2fc",
+        type=float,
+        default=-1,
+        help="For dpt_matched: filter by log2fc dir (e.g., 1.0)",
+    )
+    p.add_argument(
+        "--output_dir",
+        type=str,
+        default="",
+        help="Output directory for plots (default: base_dir/plots)",
+    )
     p.add_argument("--dpi", type=int, default=200)
     return p.parse_args()
 
@@ -183,8 +205,10 @@ def load_npz_pooled_stds(base_dir, fixed_log2fc=-1):
         for mut in pooled[source]:
             for k, arrays in pooled[source][mut].items():
                 result[source][mut][k] = np.concatenate(arrays)
-                print(f"  NPZ pool  {source:3s} / {mut:6s} / k={k:3d}: "
-                      f"{len(arrays)} seeds, N={result[source][mut][k].shape[0]}")
+                print(
+                    f"  NPZ pool  {source:3s} / {mut:6s} / k={k:3d}: "
+                    f"{len(arrays)} seeds, N={result[source][mut][k].shape[0]}"
+                )
     return result
 
 
@@ -238,7 +262,7 @@ def load_morans_i_from_jsons(json_files):
             if source is None or entry.get("morans_I") is None:
                 continue
             mut = entry["mutation"]
-            k   = entry["k"]
+            k = entry["k"]
             morans_data[source][mut][k].append(entry["morans_I"])
     return morans_data
 
@@ -268,9 +292,9 @@ def permutation_test_morans_i(cnn_vals, sae_vals, n_perm=0, seed=42):
 
     cnn = np.array(cnn_vals, dtype=float)
     sae = np.array(sae_vals, dtype=float)
-    n1, n2   = len(cnn), len(sae)
-    n_total  = n1 + n2
-    pooled   = np.concatenate([cnn, sae])
+    n1, n2 = len(cnn), len(sae)
+    n_total = n1 + n2
+    pooled = np.concatenate([cnn, sae])
     observed_delta = np.mean(sae) - np.mean(cnn)
 
     if n_perm == 0:
@@ -295,7 +319,9 @@ def permutation_test_morans_i(cnn_vals, sae_vals, n_perm=0, seed=42):
     return observed_delta, p_value, len(deltas), deltas
 
 
-def plot_trend(data_dict, metric_name, mutations, output_dir, dpi, experiment, mwu_pvals=None):
+def plot_trend(
+    data_dict, metric_name, mutations, output_dir, dpi, experiment, mwu_pvals=None
+):
     """
     Plot K vs ratio trend for CNN & SAE, one subplot per mutation.
     data_dict: {source: {mutation: {k: [values]}}}
@@ -333,23 +359,45 @@ def plot_trend(data_dict, metric_name, mutations, output_dir, dpi, experiment, m
             k_span = (max(k_vals) - min(k_vals)) if len(k_vals) > 1 else 1
             jitter_x = k_span * 0.025
             jitter_sign = -1 if source == "CNN" else 1
-            k_jittered = (np.array(all_k_scatter, dtype=float)
-                          + jitter_sign * jitter_x
-                          + rng.uniform(-jitter_x * 0.4, jitter_x * 0.4,
-                                        len(all_k_scatter)))
-            ax.scatter(k_jittered, all_v_scatter,
-                       color=COLORS[source], alpha=0.45, s=30,
-                       marker=MARKERS[source],
-                       edgecolors=COLORS[source], linewidths=0.5,
-                       zorder=2)
+            k_jittered = (
+                np.array(all_k_scatter, dtype=float)
+                + jitter_sign * jitter_x
+                + rng.uniform(-jitter_x * 0.4, jitter_x * 0.4, len(all_k_scatter))
+            )
+            ax.scatter(
+                k_jittered,
+                all_v_scatter,
+                color=COLORS[source],
+                alpha=0.45,
+                s=30,
+                marker=MARKERS[source],
+                edgecolors=COLORS[source],
+                linewidths=0.5,
+                zorder=2,
+            )
 
             # Mean trend line on top
-            ax.plot(k_vals, means, "-",
-                    color=COLORS[source], marker=MARKERS[source],
-                    markersize=7, linewidth=2.5, label=source,
-                    markeredgecolor="white", markeredgewidth=0.8, zorder=3)
-            ax.fill_between(k_vals, means - sems, means + sems,
-                            color=COLORS[source], alpha=0.15, zorder=1)
+            ax.plot(
+                k_vals,
+                means,
+                "-",
+                color=COLORS[source],
+                marker=MARKERS[source],
+                markersize=7,
+                linewidth=2.5,
+                label=source,
+                markeredgecolor="white",
+                markeredgewidth=0.8,
+                zorder=3,
+            )
+            ax.fill_between(
+                k_vals,
+                means - sems,
+                means + sems,
+                color=COLORS[source],
+                alpha=0.15,
+                zorder=1,
+            )
 
         # Annotate statistical significance if available
         if mwu_pvals and mut in mwu_pvals:
@@ -361,10 +409,21 @@ def plot_trend(data_dict, metric_name, mutations, output_dir, dpi, experiment, m
                             h_sae = np.mean(data_dict["SAE"][mut][k_val])
                             h_cnn = np.mean(data_dict["CNN"][mut][k_val])
                             h_max = max(h_sae, h_cnn)
-                            star = "***" if p_val < 0.001 else "**" if p_val < 0.01 else "*"
-                            ax.annotate(star, (k_val, h_max), 
-                                        textcoords="offset points", xytext=(0, 5), 
-                                        ha='center', fontsize=12, fontweight='bold', color='black')
+                            star = (
+                                "***"
+                                if p_val < 0.001
+                                else "**" if p_val < 0.01 else "*"
+                            )
+                            ax.annotate(
+                                star,
+                                (k_val, h_max),
+                                textcoords="offset points",
+                                xytext=(0, 5),
+                                ha="center",
+                                fontsize=12,
+                                fontweight="bold",
+                                color="black",
+                            )
                         except Exception:
                             pass
 
@@ -379,14 +438,17 @@ def plot_trend(data_dict, metric_name, mutations, output_dir, dpi, experiment, m
         ax.set_ylim(bottom=0)
 
     sns.despine()
-    fig.suptitle(f"KNN Apoptosis Std Ratio — {metric_name} ({experiment})",
-                 fontsize=15, fontweight="bold", y=1.02)
+    fig.suptitle(
+        f"KNN Apoptosis Std Ratio — {metric_name} ({experiment})",
+        fontsize=15,
+        fontweight="bold",
+        y=1.02,
+    )
     fig.tight_layout()
 
     fname = f"knn_std_{metric_name.lower()}_{experiment}"
     for ext in [".png", ".svg"]:
-        fig.savefig(os.path.join(output_dir, fname + ext),
-                    dpi=dpi, bbox_inches="tight")
+        fig.savefig(os.path.join(output_dir, fname + ext), dpi=dpi, bbox_inches="tight")
     print(f"  Saved: {fname}.png/.svg")
 
     if _IN_COLAB:
@@ -394,7 +456,9 @@ def plot_trend(data_dict, metric_name, mutations, output_dir, dpi, experiment, m
     plt.close(fig)
 
 
-def plot_morans_i_trend(morans_data, mutations, perm_pvals, output_dir, dpi, experiment):
+def plot_morans_i_trend(
+    morans_data, mutations, perm_pvals, output_dir, dpi, experiment
+):
     """
     K vs Global Moran's I trend plot.
     morans_data : {source: {mut: {k: [I_seed1, I_seed2, ...]}}}
@@ -431,41 +495,74 @@ def plot_morans_i_trend(morans_data, mutations, perm_pvals, output_dir, dpi, exp
                     y_all.append(v)
 
             means = np.array(means)
-            sems  = np.array(sems)
+            sems = np.array(sems)
 
             # Jittered seed dots
             rng = np.random.RandomState(42)
             k_span = (max(k_vals) - min(k_vals)) if len(k_vals) > 1 else 1
-            jitter_x   = k_span * 0.025
+            jitter_x = k_span * 0.025
             jitter_sign = -1 if source == "CNN" else 1
-            k_jit = (np.array(all_k_sc, dtype=float)
-                     + jitter_sign * jitter_x
-                     + rng.uniform(-jitter_x * 0.4, jitter_x * 0.4, len(all_k_sc)))
-            ax.scatter(k_jit, all_v_sc,
-                       color=COLORS[source], alpha=0.45, s=30,
-                       marker=MARKERS[source],
-                       edgecolors=COLORS[source], linewidths=0.5, zorder=2)
+            k_jit = (
+                np.array(all_k_sc, dtype=float)
+                + jitter_sign * jitter_x
+                + rng.uniform(-jitter_x * 0.4, jitter_x * 0.4, len(all_k_sc))
+            )
+            ax.scatter(
+                k_jit,
+                all_v_sc,
+                color=COLORS[source],
+                alpha=0.45,
+                s=30,
+                marker=MARKERS[source],
+                edgecolors=COLORS[source],
+                linewidths=0.5,
+                zorder=2,
+            )
 
             # Mean trend
-            ax.plot(k_vals, means, "-",
-                    color=COLORS[source], marker=MARKERS[source],
-                    markersize=7, linewidth=2.5, label=source,
-                    markeredgecolor="white", markeredgewidth=0.8, zorder=3)
-            ax.fill_between(k_vals, means - sems, means + sems,
-                            color=COLORS[source], alpha=0.15, zorder=1)
+            ax.plot(
+                k_vals,
+                means,
+                "-",
+                color=COLORS[source],
+                marker=MARKERS[source],
+                markersize=7,
+                linewidth=2.5,
+                label=source,
+                markeredgecolor="white",
+                markeredgewidth=0.8,
+                zorder=3,
+            )
+            ax.fill_between(
+                k_vals,
+                means - sems,
+                means + sems,
+                color=COLORS[source],
+                alpha=0.15,
+                zorder=1,
+            )
 
         # Star annotations (exact permutation p-values)
         if perm_pvals and mut in perm_pvals:
             y_top = max(y_all) if y_all else 0.5
             ann_y = y_top * 1.04
             for k_val, p_val in sorted(perm_pvals[mut].items()):
-                star = ("***" if p_val < 0.001 else "**" if p_val < 0.01
-                        else "*" if p_val < 0.05 else None)
+                star = (
+                    "***"
+                    if p_val < 0.001
+                    else "**" if p_val < 0.01 else "*" if p_val < 0.05 else None
+                )
                 if star:
-                    ax.annotate(star, (k_val, ann_y),
-                                textcoords="offset points", xytext=(0, 2),
-                                ha="center", fontsize=13, fontweight="bold",
-                                color="black")
+                    ax.annotate(
+                        star,
+                        (k_val, ann_y),
+                        textcoords="offset points",
+                        xytext=(0, 2),
+                        ha="center",
+                        fontsize=13,
+                        fontweight="bold",
+                        color="black",
+                    )
 
         # y=0 reference: Moran's I ~ 0 는 무작위 수체와 동일
         ax.axhline(0, color="gray", linestyle=":", linewidth=1, alpha=0.5)
@@ -478,14 +575,17 @@ def plot_morans_i_trend(morans_data, mutations, perm_pvals, output_dir, dpi, exp
         ax.grid(True, alpha=0.15)
 
     sns.despine()
-    fig.suptitle(f"Moran's I vs K — Spatial Autocorrelation ({experiment})",
-                 fontsize=15, fontweight="bold", y=1.02)
+    fig.suptitle(
+        f"Moran's I vs K — Spatial Autocorrelation ({experiment})",
+        fontsize=15,
+        fontweight="bold",
+        y=1.02,
+    )
     fig.tight_layout()
 
     fname = f"morans_I_trend_{experiment}"
     for ext in [".png", ".svg"]:
-        fig.savefig(os.path.join(output_dir, fname + ext),
-                    dpi=dpi, bbox_inches="tight")
+        fig.savefig(os.path.join(output_dir, fname + ext), dpi=dpi, bbox_inches="tight")
     print(f"  Saved: {fname}.png/.svg")
 
     if _IN_COLAB:
@@ -545,8 +645,7 @@ def load_de_sweep_results(de_json_files, fixed_k):
     return mean_data, median_data
 
 
-def plot_de_sweep_trend(data_dict, metric_name, mutations, fixed_k,
-                        output_dir, dpi):
+def plot_de_sweep_trend(data_dict, metric_name, mutations, fixed_k, output_dir, dpi):
     """
     Plot x=log2FC threshold, y=ratio for each mutation.
     """
@@ -581,19 +680,38 @@ def plot_de_sweep_trend(data_dict, metric_name, mutations, fixed_k,
         rng = np.random.RandomState(42)
         x_span = (max(log2fc_vals) - min(log2fc_vals)) if len(log2fc_vals) > 1 else 0.1
         jitter_x = x_span * 0.02
-        x_jittered = (np.array(all_x_scatter, dtype=float)
-                      + rng.uniform(-jitter_x, jitter_x, len(all_x_scatter)))
-        ax.scatter(x_jittered, all_y_scatter,
-                   color=color, alpha=0.4, s=30, marker="s",
-                   edgecolors=color, linewidths=0.5, zorder=2)
+        x_jittered = np.array(all_x_scatter, dtype=float) + rng.uniform(
+            -jitter_x, jitter_x, len(all_x_scatter)
+        )
+        ax.scatter(
+            x_jittered,
+            all_y_scatter,
+            color=color,
+            alpha=0.4,
+            s=30,
+            marker="s",
+            edgecolors=color,
+            linewidths=0.5,
+            zorder=2,
+        )
 
         # Mean trend
-        ax.plot(log2fc_vals, means, "-",
-                color=color, marker="s", markersize=7, linewidth=2.5,
-                markeredgecolor="white", markeredgewidth=0.8, zorder=3,
-                label="CNN")
-        ax.fill_between(log2fc_vals, means - sems, means + sems,
-                        color=color, alpha=0.15, zorder=1)
+        ax.plot(
+            log2fc_vals,
+            means,
+            "-",
+            color=color,
+            marker="s",
+            markersize=7,
+            linewidth=2.5,
+            markeredgecolor="white",
+            markeredgewidth=0.8,
+            zorder=3,
+            label="CNN",
+        )
+        ax.fill_between(
+            log2fc_vals, means - sems, means + sems, color=color, alpha=0.15, zorder=1
+        )
 
         ax.axhline(1.0, color="gray", linestyle="--", linewidth=1, alpha=0.5)
         ax.set_xlabel("DE log₂FC threshold", fontsize=12)
@@ -605,14 +723,17 @@ def plot_de_sweep_trend(data_dict, metric_name, mutations, fixed_k,
         ax.set_ylim(bottom=0)
 
     sns.despine()
-    fig.suptitle(f"CNN DE Sweep — {metric_name} Ratio at K={fixed_k}",
-                 fontsize=15, fontweight="bold", y=1.02)
+    fig.suptitle(
+        f"CNN DE Sweep — {metric_name} Ratio at K={fixed_k}",
+        fontsize=15,
+        fontweight="bold",
+        y=1.02,
+    )
     fig.tight_layout()
 
     fname = f"de_sweep_{metric_name.lower()}_k{fixed_k}"
     for ext in [".png", ".svg"]:
-        fig.savefig(os.path.join(output_dir, fname + ext),
-                    dpi=dpi, bbox_inches="tight")
+        fig.savefig(os.path.join(output_dir, fname + ext), dpi=dpi, bbox_inches="tight")
     print(f"  Saved: {fname}.png/.svg")
 
     if _IN_COLAB:
@@ -646,29 +767,40 @@ def main():
         print(f"  log2FC values: {log2fc_set}")
 
         mean_data, median_data = load_de_sweep_results(de_jsons, args.fixed_k)
-        mutations = sorted(mean_data.keys(),
-                           key=lambda x: ["SNCA", "GBA", "LRRK2"].index(x)
-                           if x in ["SNCA", "GBA", "LRRK2"] else 99)
+        mutations = sorted(
+            mean_data.keys(),
+            key=lambda x: (
+                ["SNCA", "GBA", "LRRK2"].index(x)
+                if x in ["SNCA", "GBA", "LRRK2"]
+                else 99
+            ),
+        )
 
         print(f"  Mutations: {mutations}")
 
         # Summary table
-        print(f"\n{'Mutation':8s}  {'log2FC':>7s}  {'Mean±SEM':>14s}  "
-              f"{'Median±SEM':>14s}  {'N seeds':>7s}")
+        print(
+            f"\n{'Mutation':8s}  {'log2FC':>7s}  {'Mean±SEM':>14s}  "
+            f"{'Median±SEM':>14s}  {'N seeds':>7s}"
+        )
         print("-" * 60)
         for mut in mutations:
             for lfc in sorted(mean_data[mut].keys()):
                 mv = np.array(mean_data[mut][lfc])
                 md = np.array(median_data[mut][lfc])
-                print(f"{mut:8s}  {lfc:7.2f}  "
-                      f"{mv.mean():6.4f}±{mv.std()/max(np.sqrt(len(mv)),1):.4f}  "
-                      f"{md.mean():6.4f}±{md.std()/max(np.sqrt(len(md)),1):.4f}  "
-                      f"{len(mv):7d}")
+                print(
+                    f"{mut:8s}  {lfc:7.2f}  "
+                    f"{mv.mean():6.4f}±{mv.std()/max(np.sqrt(len(mv)),1):.4f}  "
+                    f"{md.mean():6.4f}±{md.std()/max(np.sqrt(len(md)),1):.4f}  "
+                    f"{len(mv):7d}"
+                )
 
-        plot_de_sweep_trend(mean_data, "Mean", mutations, args.fixed_k,
-                            out_dir, args.dpi)
-        plot_de_sweep_trend(median_data, "Median", mutations, args.fixed_k,
-                            out_dir, args.dpi)
+        plot_de_sweep_trend(
+            mean_data, "Mean", mutations, args.fixed_k, out_dir, args.dpi
+        )
+        plot_de_sweep_trend(
+            median_data, "Median", mutations, args.fixed_k, out_dir, args.dpi
+        )
 
     else:
         # ── K-sweep mode (raw / dpt_matched) ──
@@ -676,8 +808,9 @@ def main():
         print(f"Scanning: {args.base_dir}")
         if log2fc_filter >= 0:
             print(f"  Filtering by log2fc = {log2fc_filter}")
-        json_files = find_json_files(args.base_dir, args.experiment,
-                                     fixed_log2fc=log2fc_filter)
+        json_files = find_json_files(
+            args.base_dir, args.experiment, fixed_log2fc=log2fc_filter
+        )
         print(f"  Found {len(json_files)} JSON files")
 
         if not json_files:
@@ -689,26 +822,33 @@ def main():
         all_muts = set()
         for source in mean_data:
             all_muts.update(mean_data[source].keys())
-        mutations = sorted(all_muts, key=lambda x: ["SNCA", "GBA", "LRRK2"].index(x)
-                           if x in ["SNCA", "GBA", "LRRK2"] else 99)
+        mutations = sorted(
+            all_muts,
+            key=lambda x: (
+                ["SNCA", "GBA", "LRRK2"].index(x)
+                if x in ["SNCA", "GBA", "LRRK2"]
+                else 99
+            ),
+        )
 
         print(f"  Sources: {list(mean_data.keys())}")
         print(f"  Mutations: {mutations}")
 
         # ── Per-sample pooled MWU (각 seed 의 local_stds 배열을 concat하여 MWU) ──
         print(f"\nLoading per-sample NPZ arrays for pooled MWU...")
-        pooled_stds = load_npz_pooled_stds(args.base_dir,
-                                           fixed_log2fc=log2fc_filter)
+        pooled_stds = load_npz_pooled_stds(args.base_dir, fixed_log2fc=log2fc_filter)
         mwu_pooled = compute_mwu_from_pooled(pooled_stds, mutations)
 
         # Summary table
-        hdr = (f"{'Mutation':8s}  {'K':>4s} | {'CNN seeds Mean±SEM':>22s} | "
-               f"{'SAE seeds Mean±SEM':>22s} | {'MWU p (pooled)':>16s} | "
-               f"{'r_rb':>6s} | {'n_CNN':>8s} | {'n_SAE':>8s}")
+        hdr = (
+            f"{'Mutation':8s}  {'K':>4s} | {'CNN seeds Mean±SEM':>22s} | "
+            f"{'SAE seeds Mean±SEM':>22s} | {'MWU p (pooled)':>16s} | "
+            f"{'r_rb':>6s} | {'n_CNN':>8s} | {'n_SAE':>8s}"
+        )
         print(f"\n{hdr}")
         print("-" * len(hdr))
 
-        mwu_pvals_for_plot = defaultdict(dict)   # star 어노테이션용
+        mwu_pvals_for_plot = defaultdict(dict)  # star 어노테이션용
 
         for mut in mutations:
             ks = set()
@@ -721,19 +861,28 @@ def main():
                 cnn_m = np.array(mean_data.get("CNN", {}).get(mut, {}).get(k, []))
                 sae_m = np.array(mean_data.get("SAE", {}).get(mut, {}).get(k, []))
 
-                cnn_str = (f"{cnn_m.mean():.4f}±{cnn_m.std()/max(np.sqrt(len(cnn_m)),1):.4f}"
-                           if len(cnn_m) > 0 else "N/A")
-                sae_str = (f"{sae_m.mean():.4f}±{sae_m.std()/max(np.sqrt(len(sae_m)),1):.4f}"
-                           if len(sae_m) > 0 else "N/A")
+                cnn_str = (
+                    f"{cnn_m.mean():.4f}±{cnn_m.std()/max(np.sqrt(len(cnn_m)),1):.4f}"
+                    if len(cnn_m) > 0
+                    else "N/A"
+                )
+                sae_str = (
+                    f"{sae_m.mean():.4f}±{sae_m.std()/max(np.sqrt(len(sae_m)),1):.4f}"
+                    if len(sae_m) > 0
+                    else "N/A"
+                )
 
                 mwu_entry = mwu_pooled.get(mut, {}).get(k)
                 if mwu_entry:
-                    p     = mwu_entry["p"]
-                    r_rb  = mwu_entry["r_rb"]
+                    p = mwu_entry["p"]
+                    r_rb = mwu_entry["r_rb"]
                     n_cnn = mwu_entry["n_cnn"]
                     n_sae = mwu_entry["n_sae"]
-                    star  = ("***" if p < 0.001 else "**" if p < 0.01
-                             else "*" if p < 0.05 else "n.s.")
+                    star = (
+                        "***"
+                        if p < 0.001
+                        else "**" if p < 0.01 else "*" if p < 0.05 else "n.s."
+                    )
                     p_str = f"{p:.2e} {star}"
                     mwu_pvals_for_plot[mut][k] = p
                 else:
@@ -741,8 +890,10 @@ def main():
                     r_rb = float("nan")
                     n_cnn = n_sae = 0
 
-                print(f"{mut:8s}  {k:4d} | {cnn_str:>22s} | {sae_str:>22s} | "
-                      f"{p_str:>16s} | {r_rb:>6.3f} | {n_cnn:>8d} | {n_sae:>8d}")
+                print(
+                    f"{mut:8s}  {k:4d} | {cnn_str:>22s} | {sae_str:>22s} | "
+                    f"{p_str:>16s} | {r_rb:>6.3f} | {n_cnn:>8d} | {n_sae:>8d}"
+                )
 
         # ── Moran's I: Exact permutation test (seed-level scalar) ──
         # 각 seed마다 Moran's I scalar 1개 → CNN 4값 vs SAE 4값
@@ -751,23 +902,35 @@ def main():
 
         # n_total 확인: 반복 가능 요소 수 여부 판단
         sample_n_cnn = max(
-            (len(v) for mut in morans_data.get("CNN", {}).values() for v in mut.values()),
-            default=0)
+            (
+                len(v)
+                for mut in morans_data.get("CNN", {}).values()
+                for v in mut.values()
+            ),
+            default=0,
+        )
         sample_n_sae = max(
-            (len(v) for mut in morans_data.get("SAE", {}).values() for v in mut.values()),
-            default=0)
+            (
+                len(v)
+                for mut in morans_data.get("SAE", {}).values()
+                for v in mut.values()
+            ),
+            default=0,
+        )
         n_total_perm = sample_n_cnn + sample_n_sae
 
         # C(12,6)=924 이하면 exhaustive, 초과시 9999 random
         use_exhaustive = n_total_perm <= 12
-        n_perm_moran  = 0 if use_exhaustive else 9999
-        perm_label    = "exhaustive" if use_exhaustive else f"n_perm={n_perm_moran}"
+        n_perm_moran = 0 if use_exhaustive else 9999
+        perm_label = "exhaustive" if use_exhaustive else f"n_perm={n_perm_moran}"
 
-        moran_hdr = (f"\n\u2500\u2500 Moran's I Permutation Test ({perm_label}: "
-                     f"min p={'1/70≈0.014' if use_exhaustive else '~0.000'}) \u2500\u2500\n"
-                     f"{'Mutation':8s}  {'K':>4s} | {'mean(SAE I)':>12s} | "
-                     f"{'mean(CNN I)':>12s} | {'\u0394I(SAE-CNN)':>12s} | "
-                     f"{'perm p':>10s} | {'n_perm':>8s}")
+        moran_hdr = (
+            f"\n\u2500\u2500 Moran's I Permutation Test ({perm_label}: "
+            f"min p={'1/70≈0.014' if use_exhaustive else '~0.000'}) \u2500\u2500\n"
+            f"{'Mutation':8s}  {'K':>4s} | {'mean(SAE I)':>12s} | "
+            f"{'mean(CNN I)':>12s} | {'\u0394I(SAE-CNN)':>12s} | "
+            f"{'perm p':>10s} | {'n_perm':>8s}"
+        )
         print(moran_hdr)
         print("-" * 80)
 
@@ -781,17 +944,25 @@ def main():
                 cnn_I = cnn_morans.get(k, [])
                 sae_I = sae_morans.get(k, [])
                 if len(cnn_I) < 2 or len(sae_I) < 2:
-                    print(f"{mut:8s}  {k:4d} | not enough data "
-                          f"(n_CNN={len(cnn_I)}, n_SAE={len(sae_I)})")
+                    print(
+                        f"{mut:8s}  {k:4d} | not enough data "
+                        f"(n_CNN={len(cnn_I)}, n_SAE={len(sae_I)})"
+                    )
                     continue
                 delta, p, n_act, _ = permutation_test_morans_i(
-                    cnn_I, sae_I, n_perm=n_perm_moran)
-                star = ("***" if p < 0.001 else "**" if p < 0.01
-                        else "*"  if p < 0.05 else "n.s.")
+                    cnn_I, sae_I, n_perm=n_perm_moran
+                )
+                star = (
+                    "***"
+                    if p < 0.001
+                    else "**" if p < 0.01 else "*" if p < 0.05 else "n.s."
+                )
                 morans_pvals_for_plot[mut][k] = p
-                print(f"{mut:8s}  {k:4d} | {np.mean(sae_I):12.4f} | "
-                      f"{np.mean(cnn_I):12.4f} | {delta:12.4f} | "
-                      f"{p:.4f} {star:5s} | {n_act:8d}")
+                print(
+                    f"{mut:8s}  {k:4d} | {np.mean(sae_I):12.4f} | "
+                    f"{np.mean(cnn_I):12.4f} | {delta:12.4f} | "
+                    f"{p:.4f} {star:5s} | {n_act:8d}"
+                )
 
         # ── label (모든 plot 공통으로 사용) ──
         exp_label = args.experiment
@@ -800,17 +971,32 @@ def main():
 
         # Moran's I trend plot (K vs I per mutation, CNN vs SAE)
         plot_morans_i_trend(
-            morans_data, mutations,
+            morans_data,
+            mutations,
             perm_pvals=morans_pvals_for_plot,
             output_dir=out_dir,
             dpi=args.dpi,
             experiment=exp_label,
         )
 
-        plot_trend(mean_data, "Mean", mutations, out_dir, args.dpi,
-                   exp_label, mwu_pvals=mwu_pvals_for_plot)
-        plot_trend(median_data, "Median", mutations, out_dir, args.dpi,
-                   exp_label, mwu_pvals=mwu_pvals_for_plot)
+        plot_trend(
+            mean_data,
+            "Mean",
+            mutations,
+            out_dir,
+            args.dpi,
+            exp_label,
+            mwu_pvals=mwu_pvals_for_plot,
+        )
+        plot_trend(
+            median_data,
+            "Median",
+            mutations,
+            out_dir,
+            args.dpi,
+            exp_label,
+            mwu_pvals=mwu_pvals_for_plot,
+        )
 
     print(f"\n  Output: {out_dir}")
 

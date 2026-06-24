@@ -30,28 +30,27 @@
 #       --output_path /path/to/output.npz
 # ==============================================================================
 
-import os
 import argparse
+import gc
+import os
 import random
-import numpy as np
 from collections import defaultdict
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
-import gc
 
-from sae_project.step02_logging_utils import get_logger, SUPERCLASS_MAP
-from sae_project.step03_data_shards import load_all_sample_refs, build_uid_to_refidx
-from sae_project.step04_data_bank import (
-    InMemoryTarBank, InMemorySixteenBitDataset, load_split_csv,
-    seed_worker, collate_skip_none,
-)
-from sae_project.step05_model_encoder import (
-    SupMoCoModel, parse_int_list, renorm_unit_per_out_channel_,
-    robust_load_state_dict,
-)
+from sae_project.step02_logging_utils import SUPERCLASS_MAP, get_logger
+from sae_project.step03_data_shards import (build_uid_to_refidx,
+                                            load_all_sample_refs)
+from sae_project.step04_data_bank import (InMemorySixteenBitDataset,
+                                          InMemoryTarBank, collate_skip_none,
+                                          load_split_csv, seed_worker)
+from sae_project.step05_model_encoder import (SupMoCoModel, parse_int_list,
+                                              renorm_unit_per_out_channel_,
+                                              robust_load_state_dict)
 from sae_project.step06_gated_sae import GatedSAE
 
 logger = get_logger("extract_features_per_image")
@@ -67,25 +66,43 @@ def get_args():
 
     # SAE / Model
     p.add_argument("--sae_ckpt", type=str, required=True)
-    p.add_argument("--save_dir", type=str, required=True,
-                   help="Model output dir (contains train/val/test_split.csv)")
+    p.add_argument(
+        "--save_dir",
+        type=str,
+        required=True,
+        help="Model output dir (contains train/val/test_split.csv)",
+    )
     p.add_argument("--model_state_path", type=str, required=True)
     p.add_argument("--shard_root", type=str, required=True)
 
     # Output
-    p.add_argument("--output_path", type=str, default="",
-                   help="Path for .npz cache file (default: next to SAE ckpt)")
+    p.add_argument(
+        "--output_path",
+        type=str,
+        default="",
+        help="Path for .npz cache file (default: next to SAE ckpt)",
+    )
 
     # Feature extraction
-    p.add_argument("--which_layer", type=str, default="",
-                   help="Encoder layer to extract (default: from SAE ckpt)")
-    p.add_argument("--restore_token_norm", action="store_true",
-                   help="Multiply SAE activations by original per-token L2 norms "
-                        "before pooling")
+    p.add_argument(
+        "--which_layer",
+        type=str,
+        default="",
+        help="Encoder layer to extract (default: from SAE ckpt)",
+    )
+    p.add_argument(
+        "--restore_token_norm",
+        action="store_true",
+        help="Multiply SAE activations by original per-token L2 norms "
+        "before pooling",
+    )
 
     # Sampling
-    p.add_argument("--use_all_data", action="store_true",
-                   help="Load train+val+test (default: val+test only)")
+    p.add_argument(
+        "--use_all_data",
+        action="store_true",
+        help="Load train+val+test (default: val+test only)",
+    )
     p.add_argument("--seed", type=int, default=42)
 
     # Encoder architecture
@@ -167,15 +184,11 @@ def extract_all_sae_features(
             fmap = encoder.forward_feature_maps(x, which=which_layer)
 
         # ── GAP-scalar normalization (same as step09 training) ──
-        gap = fmap.mean(dim=(2, 3))                      # (B, C)
-        gap_norm = (
-            gap.norm(dim=1, keepdim=True)
-            .view(curr_bs, 1, 1, 1)
-            .clamp_min(1e-12)
-        )
-        fmap = fmap / gap_norm                            # (B, C, H, W)
+        gap = fmap.mean(dim=(2, 3))  # (B, C)
+        gap_norm = gap.norm(dim=1, keepdim=True).view(curr_bs, 1, 1, 1).clamp_min(1e-12)
+        fmap = fmap / gap_norm  # (B, C, H, W)
 
-        fmap = fmap.permute(0, 2, 3, 1).contiguous()     # (B, H, W, C)
+        fmap = fmap.permute(0, 2, 3, 1).contiguous()  # (B, H, W, C)
         C = fmap.shape[-1]
         H = fmap.shape[1]
         W = fmap.shape[2]
@@ -184,23 +197,23 @@ def extract_all_sae_features(
         # ── Per-image centering ──
         #   tokens: (B, H*W, C)
         #   Subtract each image's own spatial mean (dim=1)
-        tokens = fmap.view(curr_bs, H_W, C)               # (B, H*W, C)
-        tokens = tokens - tokens.mean(dim=1, keepdim=True) # per-image centering
+        tokens = fmap.view(curr_bs, H_W, C)  # (B, H*W, C)
+        tokens = tokens - tokens.mean(dim=1, keepdim=True)  # per-image centering
 
         # ── Per-token L2 norms (before unit normalization) ──
         token_l2_norms = tokens.norm(dim=2, keepdim=True).clamp_min(1e-12)
         #   token_l2_norms: (B, H*W, 1)
 
         # ── Token L2 normalization (same as step09 training) ──
-        tokens = F.normalize(tokens, dim=2, eps=1e-12)    # (B, H*W, C)
+        tokens = F.normalize(tokens, dim=2, eps=1e-12)  # (B, H*W, C)
 
         # ── SAE forward per image (batch-independent) ──
         #   Process each image's tokens through SAE, then MEAN pool
         pooled_list = []
 
         for i in range(curr_bs):
-            img_tokens = tokens[i]                         # (H*W, C)
-            img_l2 = token_l2_norms[i]                     # (H*W, 1)
+            img_tokens = tokens[i]  # (H*W, C)
+            img_l2 = token_l2_norms[i]  # (H*W, 1)
 
             # SAE forward in chunks (OOM protection for large d_sae)
             token_batch_size = 8192
@@ -213,20 +226,20 @@ def extract_all_sae_features(
 
                 with torch.amp.autocast(**autocast_kwargs):
                     _, chunk_acts, _, _, _ = sae(chunk)
-                chunk_acts = chunk_acts.float()             # (chunk_len, d_sae)
+                chunk_acts = chunk_acts.float()  # (chunk_len, d_sae)
 
                 # Optionally restore per-token L2 norms
                 if restore_token_norm:
-                    chunk_acts = chunk_acts * img_l2[s:e]   # (chunk_len, d_sae)
+                    chunk_acts = chunk_acts * img_l2[s:e]  # (chunk_len, d_sae)
 
                 act_sum += chunk_acts.sum(dim=0)
                 del chunk_acts
 
             # MEAN pooling (GAP over spatial positions)
-            pooled = act_sum / H_W                         # (d_sae,)
+            pooled = act_sum / H_W  # (d_sae,)
             pooled_list.append(pooled)
 
-        pooled_batch = torch.stack(pooled_list, dim=0)     # (B, d_sae)
+        pooled_batch = torch.stack(pooled_list, dim=0)  # (B, d_sae)
 
         # Save ALL neurons (no alive_mask filtering!)
         X_list.append(pooled_batch.cpu().numpy())
@@ -287,9 +300,16 @@ def make_simple_loader(args, refs, uid_to_refidx, include_train=False):
     def uid_to_relative(uid: str) -> str:
         for root in KNOWN_ROOTS:
             if uid.startswith(root):
-                return uid[len(root):]
-        for cls_prefix in ["Control/", "SNCA/", "GBA/", "LRRK2/",
-                           "Control_C4/", "Control_C18/", "Control_C19/"]:
+                return uid[len(root) :]
+        for cls_prefix in [
+            "Control/",
+            "SNCA/",
+            "GBA/",
+            "LRRK2/",
+            "Control_C4/",
+            "Control_C18/",
+            "Control_C19/",
+        ]:
             idx = uid.find(cls_prefix)
             if idx >= 0:
                 return uid[idx:]
@@ -371,7 +391,9 @@ def main():
     usage_ema = sae.usage_ema.cpu().numpy()
 
     if args.which_layer and args.which_layer != which_layer_ckpt:
-        logger.warning(f"Overriding SAE ckpt layer '{which_layer_ckpt}' → '{which_layer}'")
+        logger.warning(
+            f"Overriding SAE ckpt layer '{which_layer_ckpt}' → '{which_layer}'"
+        )
     logger.info(f"SAE: d_sae={d_sae}, layer={which_layer}")
 
     # ── 2. Load encoder ──────────────────────────────────────────────────
@@ -382,10 +404,15 @@ def main():
     dilations = parse_int_list(args.dilations, 4)
 
     model = SupMoCoModel(
-        embed_dim=args.embed_dim, blocks=blocks, dilations=dilations,
-        refine_blocks=args.refine_blocks, ckpt_segments=args.ckpt_segments,
-        proj_layers=args.proj_layers, proj_hidden=args.proj_hidden,
-        proj_bn=args.proj_bn, proj_dropout=args.proj_dropout,
+        embed_dim=args.embed_dim,
+        blocks=blocks,
+        dilations=dilations,
+        refine_blocks=args.refine_blocks,
+        ckpt_segments=args.ckpt_segments,
+        proj_layers=args.proj_layers,
+        proj_hidden=args.proj_hidden,
+        proj_bn=args.proj_bn,
+        proj_dropout=args.proj_dropout,
     )
     sd = torch.load(args.model_state_path, map_location="cpu", weights_only=False)
     robust_load_state_dict(model, sd, strict=True)
@@ -403,13 +430,17 @@ def main():
 
     use_all = args.use_all_data
     splits_label = "train+val+test" if use_all else "val+test"
-    logger.info(f"Loading data ({splits_label}) — per-image centering (batch-independent)")
+    logger.info(
+        f"Loading data ({splits_label}) — per-image centering (batch-independent)"
+    )
 
     refs = load_all_sample_refs(args.shard_root)
     uid_to_refidx = build_uid_to_refidx(refs)
 
     loader = make_simple_loader(
-        args, refs, uid_to_refidx,
+        args,
+        refs,
+        uid_to_refidx,
         include_train=use_all,
     )
 
@@ -419,7 +450,11 @@ def main():
     logger.info(f"  ALL {d_sae} neurons, restore_token_norm={args.restore_token_norm}")
 
     X_all, y, lines, uids = extract_all_sae_features(
-        encoder, sae, loader, device, which_layer,
+        encoder,
+        sae,
+        loader,
+        device,
+        which_layer,
         restore_token_norm=args.restore_token_norm,
     )
     logger.info(f"Features: {X_all.shape}")
@@ -432,7 +467,7 @@ def main():
         all_tag = "_all" if use_all else ""
         out_path = os.path.join(
             os.path.dirname(args.sae_ckpt),
-            f"features_cache_{which_layer}{suffix}{all_tag}_per_image.npz"
+            f"features_cache_{which_layer}{suffix}{all_tag}_per_image.npz",
         )
 
     os.makedirs(os.path.dirname(out_path), exist_ok=True)

@@ -33,10 +33,10 @@ for SEED in "${SEEDS[@]}"; do
         --n_neighbors $K \
         --pca_dim $PCA \
         --seed $SEED \
-        --filter_mode "de" \
-        --min_cv 0.1 \
-        --de_adj_p 0.05 \
-        --de_min_log2fc 1.0 \
+        --filter_mode "none" \
+        --min_cv 0.0 \
+        --de_adj_p 1.0 \
+        --de_min_log2fc 0.0 \
         --dead_threshold 1e-5 \
         --norm "log_std" \
         --gap_l2_norm \
@@ -44,6 +44,7 @@ for SEED in "${SEEDS[@]}"; do
         --gam_splines 8 \
         --gam_trim_pctl 5 95 \
         --de_eval_split 0.5 \
+        --gpu \
         --no_plot
         
     done

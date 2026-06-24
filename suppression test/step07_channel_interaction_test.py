@@ -37,7 +37,7 @@
 
 ## lr swep.
 
-'''
+"""
   python -m suppression_test.step07_channel_interaction_test \
       --model_state_path /home/ubuntu/model-east3/outputs/MoCo_seed87/best_model.pt \
       --sae_ckpt /home/ubuntu/model-east3/outputs/MoCo_seed87/SAE/stage5_out_d4096_gated_sp3200.0_aux0.03125_tied_ep008.pt \
@@ -46,9 +46,9 @@
       --samples_per_class 500 \
       --seam_margin 5
 
-'''
+"""
 
-'''
+"""
    --model_state_path /home/ubuntu/model-east3/outputs/MoCo_seed87/best_model.pt \
     --sae_ckpt /home/ubuntu/model-east3/outputs/MoCo_seed87/SAE/stage5_out_d4096_gated_sp3200.0_aux0.03125_tied_ep008.pt  \
     --save_dir /home/ubuntu/model-east3/outputs/MoCo_seed87 \
@@ -57,17 +57,18 @@
     --seam_margin 4 \
     --pool_size 64
 
-'''
+"""
 
 
-import os
-import sys
-import csv
-import random
 import argparse
-from typing import List, Tuple, Dict
+import csv
+import os
+import random
+import sys
 from collections import defaultdict
+from typing import Dict, List, Tuple
 
+import matplotlib
 import numpy as np
 import torch
 import torch.nn as nn
@@ -75,22 +76,21 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
-import matplotlib
 _IN_COLAB = "google.colab" in sys.modules
 if not _IN_COLAB:
     matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from sae_project.step02_logging_utils import get_logger, OUT_DIM
-from sae_project.step03_data_shards import load_all_sample_refs, build_uid_to_refidx
-from sae_project.step04_data_bank import (
-    InMemoryTarBank, InMemorySixteenBitDataset,
-    seed_worker, collate_skip_none,
-)
-from sae_project.step05_model_encoder import (
-    Encoder, SupMoCoModel, parse_int_list,
-    renorm_unit_per_out_channel_, robust_load_state_dict,
-)
+from sae_project.step02_logging_utils import OUT_DIM, get_logger
+from sae_project.step03_data_shards import (build_uid_to_refidx,
+                                            load_all_sample_refs)
+from sae_project.step04_data_bank import (InMemorySixteenBitDataset,
+                                          InMemoryTarBank, collate_skip_none,
+                                          seed_worker)
+from sae_project.step05_model_encoder import (Encoder, SupMoCoModel,
+                                              parse_int_list,
+                                              renorm_unit_per_out_channel_,
+                                              robust_load_state_dict)
 from sae_project.step06_gated_sae import GatedSAE
 
 logger = get_logger("channel_interaction")
@@ -109,23 +109,27 @@ def lr_swap_single_channel(x: torch.Tensor, channel: int) -> torch.Tensor:
     B, C, H, W = x.shape
     w2 = W // 2
     # Swap left/right for specified channel only
-    out[:, channel, :, :] = torch.cat([x[:, channel, :, w2:], x[:, channel, :, :w2]], dim=2)
+    out[:, channel, :, :] = torch.cat(
+        [x[:, channel, :, w2:], x[:, channel, :, :w2]], dim=2
+    )
     return out
 
 
 # ==============================================================================
 # Build seam mask for lr_swap (same as step06)
 # ==============================================================================
-def build_lr_seam_mask(H: int, W: int, margin: int, device: torch.device) -> torch.Tensor:
+def build_lr_seam_mask(
+    H: int, W: int, margin: int, device: torch.device
+) -> torch.Tensor:
     """
     Build spatial mask for lr_swap: mask center ±margin and edges ±margin.
     Returns: (1, 1, H, W) binary mask.
     """
     mask_w = torch.ones(W, device=device)
     center = W // 2
-    mask_w[max(0, center - margin):min(W, center + margin)] = 0
+    mask_w[max(0, center - margin) : min(W, center + margin)] = 0
     mask_w[:margin] = 0
-    mask_w[W - margin:] = 0
+    mask_w[W - margin :] = 0
     return mask_w.view(1, 1, 1, W).expand(1, 1, H, W)
 
 
@@ -146,8 +150,10 @@ def unshuffle_lr(act_map: torch.Tensor) -> torch.Tensor:
 # ==============================================================================
 @torch.no_grad()
 def get_sae_activation_maps(
-    encoder: Encoder, sae: GatedSAE,
-    x: torch.Tensor, which_layer: str,
+    encoder: Encoder,
+    sae: GatedSAE,
+    x: torch.Tensor,
+    which_layer: str,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Returns:
@@ -197,7 +203,7 @@ KNOWN_SHARD_ROOTS = [
 def remap_uid(uid: str, new_shard_root: str) -> str:
     for old_root in KNOWN_SHARD_ROOTS:
         if uid.startswith(old_root):
-            return new_shard_root + uid[len(old_root):]
+            return new_shard_root + uid[len(old_root) :]
     return uid
 
 
@@ -216,24 +222,41 @@ def load_split_csv(csv_path: str, shard_root: str = None) -> List[str]:
 # ==============================================================================
 # Plotting
 # ==============================================================================
-def plot_histogram(values: np.ndarray, title: str, xlabel: str,
-                   output_path: str, alive_mask: np.ndarray = None,
-                   vline: float = None, dpi: int = 200):
+def plot_histogram(
+    values: np.ndarray,
+    title: str,
+    xlabel: str,
+    output_path: str,
+    alive_mask: np.ndarray = None,
+    vline: float = None,
+    dpi: int = 200,
+):
     if alive_mask is not None:
         values = values[alive_mask]
     fig, ax = plt.subplots(figsize=(10, 5))
-    ax.hist(values[np.isfinite(values)], bins=100, alpha=0.7,
-            color="#4C72B0", edgecolor="black", linewidth=0.3)
+    ax.hist(
+        values[np.isfinite(values)],
+        bins=100,
+        alpha=0.7,
+        color="#4C72B0",
+        edgecolor="black",
+        linewidth=0.3,
+    )
     if vline is not None:
-        ax.axvline(vline, color="red", linestyle="--", linewidth=1.5,
-                   label=f"={vline}")
+        ax.axvline(vline, color="red", linestyle="--", linewidth=1.5, label=f"={vline}")
     ax.set_xlabel(xlabel, fontsize=12)
     ax.set_ylabel("Count (neurons)", fontsize=12)
     ax.set_title(title, fontsize=13, fontweight="bold")
-    ax.text(0.98, 0.95,
-            f"n={len(values)}\nmean={np.nanmean(values):.6f}\nstd={np.nanstd(values):.6f}",
-            transform=ax.transAxes, fontsize=9, va="top", ha="right",
-            bbox=dict(boxstyle="round", facecolor="white", alpha=0.8))
+    ax.text(
+        0.98,
+        0.95,
+        f"n={len(values)}\nmean={np.nanmean(values):.6f}\nstd={np.nanstd(values):.6f}",
+        transform=ax.transAxes,
+        fontsize=9,
+        va="top",
+        ha="right",
+        bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
+    )
     if vline is not None:
         ax.legend()
     ax.grid(True, alpha=0.2)
@@ -313,10 +336,13 @@ def main():
     blocks = parse_int_list(args.blocks, 4)
     dilations = parse_int_list(args.dilations, 4)
     model = SupMoCoModel(
-        embed_dim=512, blocks=blocks, dilations=dilations,
+        embed_dim=512,
+        blocks=blocks,
+        dilations=dilations,
         refine_blocks=args.refine_blocks,
         ckpt_segments=args.ckpt_segments,
-        proj_layers=2, proj_hidden=2048,
+        proj_layers=2,
+        proj_hidden=2048,
     )
     ckpt = torch.load(args.model_state_path, map_location="cpu", weights_only=False)
     robust_load_state_dict(model, ckpt, strict=False)
@@ -355,7 +381,7 @@ def main():
         for cls in sorted(class_to_idx.keys()):
             idxs = class_to_idx[cls]
             rng.shuffle(idxs)
-            sampled.extend(idxs[:min(spc, len(idxs))])
+            sampled.extend(idxs[: min(spc, len(idxs))])
         ref_indices = sampled
 
     logger.info(f"Samples: {len(ref_indices)}")
@@ -364,9 +390,14 @@ def main():
     ib = list(range(len(ref_indices)))
     ds = InMemorySixteenBitDataset(bank, ib, args.img_size, augment=False)
     loader = DataLoader(
-        ds, batch_size=args.batch_size, shuffle=False,
-        num_workers=args.num_workers, pin_memory=True,
-        worker_init_fn=seed_worker, collate_fn=collate_skip_none)
+        ds,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=True,
+        worker_init_fn=seed_worker,
+        collate_fn=collate_skip_none,
+    )
 
     # ── Output dir ──
     if args.output_dir:
@@ -395,10 +426,10 @@ def main():
     all_gap_orig = []  # for top-K selection
 
     # Per-image per-neuron scalars
-    all_norm2_diff = {ch: [] for ch in "RGB"}           # ||diff_ch||²
-    all_dot_rg = []   # diff_r · diff_g  ≈ ||deltaRG||²
-    all_dot_rb = []   # diff_r · diff_b  ≈ ||deltaRB||²
-    all_dot_gb = []   # diff_g · diff_b  ≈ ||deltaGB||²
+    all_norm2_diff = {ch: [] for ch in "RGB"}  # ||diff_ch||²
+    all_dot_rg = []  # diff_r · diff_g  ≈ ||deltaRG||²
+    all_dot_rb = []  # diff_r · diff_b  ≈ ||deltaRB||²
+    all_dot_gb = []  # diff_g · diff_b  ≈ ||deltaGB||²
 
     all_norm2_alg_RG = []  # ||deltaRG_alg||²
     all_norm2_alg_RB = []  # ||deltaRB_alg||²
@@ -418,12 +449,14 @@ def main():
             continue
 
         x_orig = x.to(device, non_blocking=True).contiguous(
-            memory_format=torch.channels_last)
+            memory_format=torch.channels_last
+        )
         B_cur = x_orig.shape[0]
 
         with torch.amp.autocast(**autocast_kwargs):
             act_orig, gap_orig = get_sae_activation_maps(
-                encoder, sae, x_orig, which_layer)
+                encoder, sae, x_orig, which_layer
+            )
 
         _, _, H_act, W_act = act_orig.shape
 
@@ -431,9 +464,11 @@ def main():
         if seam_mask is None:
             seam_mask = build_lr_seam_mask(H_act, W_act, args.seam_margin, device)
             n_valid = seam_mask.sum().item()
-            logger.info(f"  Activation map: {H_act}x{W_act}, "
-                        f"seam_margin={args.seam_margin}, "
-                        f"valid pixels={int(n_valid)}/{H_act*W_act}")
+            logger.info(
+                f"  Activation map: {H_act}x{W_act}, "
+                f"seam_margin={args.seam_margin}, "
+                f"valid pixels={int(n_valid)}/{H_act*W_act}"
+            )
 
         all_gap_orig.append(gap_orig.cpu().float().numpy())
 
@@ -445,7 +480,8 @@ def main():
 
             with torch.amp.autocast(**autocast_kwargs):
                 act_ch, _ = get_sae_activation_maps(
-                    encoder, sae, x_ch_swap, which_layer)
+                    encoder, sae, x_ch_swap, which_layer
+                )
 
             # Unshuffle the swapped channel's activation map
             act_ch_unshuf = unshuffle_lr(act_ch)
@@ -462,9 +498,9 @@ def main():
         diff_b = diffs["B"].view(B_cur, -1, H_act * W_act)
 
         # ||diff||² per neuron: (B, d_sae)
-        all_norm2_diff["R"].append((diff_r ** 2).sum(dim=2).cpu().float().numpy())
-        all_norm2_diff["G"].append((diff_g ** 2).sum(dim=2).cpu().float().numpy())
-        all_norm2_diff["B"].append((diff_b ** 2).sum(dim=2).cpu().float().numpy())
+        all_norm2_diff["R"].append((diff_r**2).sum(dim=2).cpu().float().numpy())
+        all_norm2_diff["G"].append((diff_g**2).sum(dim=2).cpu().float().numpy())
+        all_norm2_diff["B"].append((diff_b**2).sum(dim=2).cpu().float().numpy())
 
         # Inner products (high-dim orthogonality verification)
         # diff_r · diff_g ≈ ||deltaRG||²
@@ -481,9 +517,9 @@ def main():
         delta_RB = (diff_r + diff_b - diff_g) / 2.0
         delta_GB = (diff_g + diff_b - diff_r) / 2.0
 
-        all_norm2_alg_RG.append((delta_RG ** 2).sum(dim=2).cpu().float().numpy())
-        all_norm2_alg_RB.append((delta_RB ** 2).sum(dim=2).cpu().float().numpy())
-        all_norm2_alg_GB.append((delta_GB ** 2).sum(dim=2).cpu().float().numpy())
+        all_norm2_alg_RG.append((delta_RG**2).sum(dim=2).cpu().float().numpy())
+        all_norm2_alg_RB.append((delta_RB**2).sum(dim=2).cpu().float().numpy())
+        all_norm2_alg_GB.append((delta_GB**2).sum(dim=2).cpu().float().numpy())
 
         # Free memory
         del diffs, diff_r, diff_g, diff_b, delta_RG, delta_RB, delta_GB
@@ -547,13 +583,19 @@ def main():
     logger.info(f"Results ({n_alive} alive neurons, top-{k_actual} images)")
     logger.info(f"{'='*60}")
 
-    for name, cons in [("RG", consistency_RG), ("RB", consistency_RB), ("GB", consistency_GB)]:
+    for name, cons in [
+        ("RG", consistency_RG),
+        ("RB", consistency_RB),
+        ("GB", consistency_GB),
+    ]:
         vals = cons[alive_mask]
         logger.info(f"\n  Consistency delta{name}:")
         logger.info(f"    mean={vals.mean():.6f}, std={vals.std():.6f}")
         logger.info(f"    median={np.median(vals):.6f}")
-        logger.info(f"    [0.8-1.2] range: {((vals > 0.8) & (vals < 1.2)).sum()}/{n_alive} "
-                    f"({((vals > 0.8) & (vals < 1.2)).sum()/n_alive*100:.1f}%)")
+        logger.info(
+            f"    [0.8-1.2] range: {((vals > 0.8) & (vals < 1.2)).sum()}/{n_alive} "
+            f"({((vals > 0.8) & (vals < 1.2)).sum()/n_alive*100:.1f}%)"
+        )
 
     logger.info(f"\n  Interaction magnitudes (fraction of total):")
     for name, mag in [("RG", magnitude_RG), ("RB", magnitude_RB), ("GB", magnitude_GB)]:
@@ -562,26 +604,36 @@ def main():
 
     # ── Save ──
     npz_path = os.path.join(out_dir, "channel_interaction_results.npz")
-    np.savez_compressed(npz_path,
-                        consistency_RG=consistency_RG,
-                        consistency_RB=consistency_RB,
-                        consistency_GB=consistency_GB,
-                        magnitude_RG=magnitude_RG,
-                        magnitude_RB=magnitude_RB,
-                        magnitude_GB=magnitude_GB,
-                        alive_mask=alive_mask,
-                        usage_ema=usage_ema,
-                        top_k=k_actual,
-                        seam_margin=args.seam_margin)
+    np.savez_compressed(
+        npz_path,
+        consistency_RG=consistency_RG,
+        consistency_RB=consistency_RB,
+        consistency_GB=consistency_GB,
+        magnitude_RG=magnitude_RG,
+        magnitude_RB=magnitude_RB,
+        magnitude_GB=magnitude_GB,
+        alive_mask=alive_mask,
+        usage_ema=usage_ema,
+        top_k=k_actual,
+        seam_margin=args.seam_margin,
+    )
     logger.info(f"\nSaved: {npz_path}")
 
     # ── Plots ──
-    for name, cons in [("RG", consistency_RG), ("RB", consistency_RB), ("GB", consistency_GB)]:
+    for name, cons in [
+        ("RG", consistency_RG),
+        ("RB", consistency_RB),
+        ("GB", consistency_GB),
+    ]:
         plot_histogram(
-            cons, f"Consistency ratio – delta{name}",
+            cons,
+            f"Consistency ratio – delta{name}",
             f"inner_product / algebraic (1.0 = perfect)",
             os.path.join(out_dir, f"hist_consistency_{name}.png"),
-            alive_mask=alive_mask, vline=1.0, dpi=args.dpi)
+            alive_mask=alive_mask,
+            vline=1.0,
+            dpi=args.dpi,
+        )
 
     # Stacked bar: interaction magnitudes
     fig, ax = plt.subplots(figsize=(10, 5))
@@ -592,20 +644,38 @@ def main():
     sort_idx = np.argsort(mag_RG_a)
     x_pos = np.arange(n_alive)
     ax.bar(x_pos, mag_RG_a[sort_idx], label="deltaRG", color="#E74C3C", alpha=0.8)
-    ax.bar(x_pos, mag_RB_a[sort_idx], bottom=mag_RG_a[sort_idx],
-           label="deltaRB", color="#3498DB", alpha=0.8)
-    ax.bar(x_pos, mag_GB_a[sort_idx],
-           bottom=mag_RG_a[sort_idx] + mag_RB_a[sort_idx],
-           label="deltaGB", color="#2ECC71", alpha=0.8)
+    ax.bar(
+        x_pos,
+        mag_RB_a[sort_idx],
+        bottom=mag_RG_a[sort_idx],
+        label="deltaRB",
+        color="#3498DB",
+        alpha=0.8,
+    )
+    ax.bar(
+        x_pos,
+        mag_GB_a[sort_idx],
+        bottom=mag_RG_a[sort_idx] + mag_RB_a[sort_idx],
+        label="deltaGB",
+        color="#2ECC71",
+        alpha=0.8,
+    )
     ax.set_xlabel("Neuron (sorted by deltaRG fraction)", fontsize=12)
     ax.set_ylabel("Fraction of total interaction", fontsize=12)
-    ax.set_title("Channel Interaction Decomposition per SAE Neuron", fontsize=13, fontweight="bold")
+    ax.set_title(
+        "Channel Interaction Decomposition per SAE Neuron",
+        fontsize=13,
+        fontweight="bold",
+    )
     ax.legend(fontsize=11)
     ax.set_xlim(0, n_alive)
     ax.grid(True, alpha=0.2)
     fig.tight_layout()
-    fig.savefig(os.path.join(out_dir, "interaction_magnitudes.png"),
-                dpi=args.dpi, bbox_inches="tight")
+    fig.savefig(
+        os.path.join(out_dir, "interaction_magnitudes.png"),
+        dpi=args.dpi,
+        bbox_inches="tight",
+    )
     if _IN_COLAB:
         plt.show()
     plt.close(fig)

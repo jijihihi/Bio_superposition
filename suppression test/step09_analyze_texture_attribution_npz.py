@@ -14,19 +14,22 @@
 # local shape과 refrance frame 값이 합쳐져서 local shape으로 나오게끔 되어 있다
 
 
-import numpy as np
-import pandas as pd
+import argparse
+import os
+
 import matplotlib
 import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 from matplotlib.ticker import MaxNLocator
-import os
-import argparse
 
 # ── Illustrator-friendly SVG defaults ──
-matplotlib.rcParams['svg.fonttype'] = 'none'       # text as text, not paths
-matplotlib.rcParams['pdf.fonttype'] = 42            # TrueType in PDF too
-matplotlib.rcParams['font.family'] = 'DejaVu Sans'   # bundled with matplotlib; swap to Arial in Illustrator if needed
-matplotlib.rcParams['axes.unicode_minus'] = False
+matplotlib.rcParams["svg.fonttype"] = "none"  # text as text, not paths
+matplotlib.rcParams["pdf.fonttype"] = 42  # TrueType in PDF too
+matplotlib.rcParams["font.family"] = (
+    "DejaVu Sans"  # bundled with matplotlib; swap to Arial in Illustrator if needed
+)
+matplotlib.rcParams["axes.unicode_minus"] = False
 
 ## fraction = component / (orig - baseline). 음수 포함. 전체 spatial info 중 이 component가 차지하는 signed 비율.
 
@@ -36,7 +39,6 @@ NPZ_PATHS = {
     "ps16_blur8.0": "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_sparsity3200_loss_L2norm곱해줌/texture_attribution/texture_attribution_ps16_blur8.0.npz",
     "ps8_blur4.0": "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_sparsity3200_loss_L2norm곱해줌/texture_attribution/texture_attribution_ps8_blur4.0.npz",
     "ps4_blur2.0": "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_sparsity3200_loss_L2norm곱해줌/texture_attribution/texture_attribution_ps4_blur2.0.npz",
-    
 }
 
 METRIC = "l2sq"  # default; overridden by --metric arg
@@ -45,27 +47,51 @@ METRIC = "l2sq"  # default; overridden by --metric arg
 CONCEPT_DIR = "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_sparsity3200_loss_L2norm곱해줌/concept_by_gap_csv_d4096_sp3200_max"
 
 COMPONENT_NAMES_12 = [
-    "RG_inter", "RB_inter", "GB_inter",
-    "R_local",  "G_local",  "B_local",
-    "R_ref",    "G_ref",    "B_ref",
-    "R_tex",    "G_tex",    "B_tex",
+    "RG_inter",
+    "RB_inter",
+    "GB_inter",
+    "R_local",
+    "G_local",
+    "B_local",
+    "R_ref",
+    "G_ref",
+    "B_ref",
+    "R_tex",
+    "G_tex",
+    "B_tex",
 ]
 
 # 9-component fallback (old npz without rotation)
 COMPONENT_NAMES_9 = [
-    "RG_inter", "RB_inter", "GB_inter",
-    "R_local",  "G_local",  "B_local",
-    "R_tex",    "G_tex",    "B_tex",
+    "RG_inter",
+    "RB_inter",
+    "GB_inter",
+    "R_local",
+    "G_local",
+    "B_local",
+    "R_tex",
+    "G_tex",
+    "B_tex",
 ]
 
 # Colors for stacked bar
 COLORS = {
-    "RG_inter": "#e74c3c", "RB_inter": "#e67e22", "GB_inter": "#f1c40f",
-    "R_local":  "#2ecc71", "G_local":  "#27ae60", "B_local":  "#1abc9c",
-    "R_ref":    "#9b59b6", "G_ref":    "#8e44ad", "B_ref":    "#6c3483",
-    "R_tex":    "#3498db", "G_tex":    "#2980b9", "B_tex":    "#1f618d",
+    "RG_inter": "#e74c3c",
+    "RB_inter": "#e67e22",
+    "GB_inter": "#f1c40f",
+    "R_local": "#2ecc71",
+    "G_local": "#27ae60",
+    "B_local": "#1abc9c",
+    "R_ref": "#9b59b6",
+    "G_ref": "#8e44ad",
+    "B_ref": "#6c3483",
+    "R_tex": "#3498db",
+    "G_tex": "#2980b9",
+    "B_tex": "#1f618d",
     # hybrid (for summary only)
-    "R_hybrid": "#95a5a6", "G_hybrid": "#7f8c8d", "B_hybrid": "#566573",
+    "R_hybrid": "#95a5a6",
+    "G_hybrid": "#7f8c8d",
+    "B_hybrid": "#566573",
 }
 
 
@@ -118,13 +144,22 @@ def load_npz(path):
         valid = df[f"{m}_total_spatial"] > min_denom
         for comp in comp_names:
             df[f"{m}_{comp}_frac"] = np.where(
-                valid, df[f"{m}_{comp}"] / df[f"{m}_total_spatial"], np.nan)
+                valid, df[f"{m}_{comp}"] / df[f"{m}_total_spatial"], np.nan
+            )
         # Category fractions
-        df[f"{m}_interaction_frac"] = df[[f"{m}_RG_inter_frac", f"{m}_RB_inter_frac", f"{m}_GB_inter_frac"]].sum(axis=1)
-        df[f"{m}_local_shape_frac"] = df[[f"{m}_R_local_frac", f"{m}_G_local_frac", f"{m}_B_local_frac"]].sum(axis=1)
-        df[f"{m}_texture_frac"] = df[[f"{m}_R_tex_frac", f"{m}_G_tex_frac", f"{m}_B_tex_frac"]].sum(axis=1)
+        df[f"{m}_interaction_frac"] = df[
+            [f"{m}_RG_inter_frac", f"{m}_RB_inter_frac", f"{m}_GB_inter_frac"]
+        ].sum(axis=1)
+        df[f"{m}_local_shape_frac"] = df[
+            [f"{m}_R_local_frac", f"{m}_G_local_frac", f"{m}_B_local_frac"]
+        ].sum(axis=1)
+        df[f"{m}_texture_frac"] = df[
+            [f"{m}_R_tex_frac", f"{m}_G_tex_frac", f"{m}_B_tex_frac"]
+        ].sum(axis=1)
         if has_rotation:
-            df[f"{m}_reference_frac"] = df[[f"{m}_R_ref_frac", f"{m}_G_ref_frac", f"{m}_B_ref_frac"]].sum(axis=1)
+            df[f"{m}_reference_frac"] = df[
+                [f"{m}_R_ref_frac", f"{m}_G_ref_frac", f"{m}_B_ref_frac"]
+            ].sum(axis=1)
 
     # Convenience aliases for the primary metric (for plotting)
     # These will be set by set_primary_metric()
@@ -178,8 +213,10 @@ def print_summary(df, label=""):
     for comp in comp_names:
         v = df[comp]
         n_neg = (v < 0).sum()
-        print(f"  {comp:12s}: {v.mean():+.6f} ± {v.std():.6f}  "
-              f"(neg: {n_neg}/{len(v)}, {n_neg/len(v)*100:.1f}%)")
+        print(
+            f"  {comp:12s}: {v.mean():+.6f} ± {v.std():.6f}  "
+            f"(neg: {n_neg}/{len(v)}, {n_neg/len(v)*100:.1f}%)"
+        )
 
     if has_rot:
         print(f"\n  ── Hybrid (local + ref, for verification) ──")
@@ -190,8 +227,7 @@ def print_summary(df, label=""):
             print(f"  {ch}: hybrid={h:+.6f}, local+ref={l+r:+.6f}, diff={h-(l+r):.2e}")
 
     print(f"\n  ── Category Fractions (signed, mean ± std) ──")
-    cats = [("Interaction", "interaction_frac"),
-            ("Local Shape", "local_shape_frac")]
+    cats = [("Interaction", "interaction_frac"), ("Local Shape", "local_shape_frac")]
     if has_rot:
         cats.append(("Reference", "reference_frac"))
     cats.append(("Texture", "texture_frac"))
@@ -227,11 +263,14 @@ def plot_stacked_bar(df, label="", top_n=50, sort_by="orig"):
         bottom += pos
 
     ax.set_xticks(x)
-    ax.set_xticklabels([f"{int(nid)}" for nid in df_sorted["neuron_id"]],
-                       rotation=90, fontsize=6)
+    ax.set_xticklabels(
+        [f"{int(nid)}" for nid in df_sorted["neuron_id"]], rotation=90, fontsize=6
+    )
     ax.axhline(0, color="black", linewidth=0.5)
     ax.set_ylabel("Fraction of total spatial info (signed)")
-    ax.set_title(f"Component Decomposition per Neuron ({label}, top {top_n} by {sort_by})")
+    ax.set_title(
+        f"Component Decomposition per Neuron ({label}, top {top_n} by {sort_by})"
+    )
     ax.legend(bbox_to_anchor=(1.02, 1), loc="upper left", fontsize=8)
     ax.set_xlim(-0.5, len(x) - 0.5)
     plt.tight_layout()
@@ -255,8 +294,14 @@ def plot_linearity_hist(df, label=""):
 def plot_category_scatter(df, label=""):
     """Scatter: interaction fraction vs local shape fraction, colored by texture."""
     fig, ax = plt.subplots(figsize=(6, 6))
-    sc = ax.scatter(df["interaction_frac"], df["local_shape_frac"],
-                    c=df["texture_frac"], cmap="RdBu_r", s=15, alpha=0.7)
+    sc = ax.scatter(
+        df["interaction_frac"],
+        df["local_shape_frac"],
+        c=df["texture_frac"],
+        cmap="RdBu_r",
+        s=15,
+        alpha=0.7,
+    )
     plt.colorbar(sc, ax=ax, label="Texture fraction")
     ax.set_xlabel("Interaction fraction")
     ax.set_ylabel("Local Shape fraction")
@@ -284,7 +329,9 @@ def compare_conditions(dfs, comp_list=None):
     print(f"\nComparing {labels[0]} vs {labels[1]}: {len(common)} common neurons\n")
 
     # Per-component comparison
-    print(f"  {'Component':14s} | {labels[0]:>12s} | {labels[1]:>12s} | {'Δ mean':>10s}")
+    print(
+        f"  {'Component':14s} | {labels[0]:>12s} | {labels[1]:>12s} | {'Δ mean':>10s}"
+    )
     print(f"  {'-'*14}-+-{'-'*12}-+-{'-'*12}-+-{'-'*10}")
     for comp in comp_list:
         m1 = df1.loc[common, comp].mean()
@@ -294,9 +341,11 @@ def compare_conditions(dfs, comp_list=None):
 
     # Category comparison
     print()
-    for cat, cols in [("Interaction", ["RG_inter", "RB_inter", "GB_inter"]),
-                      ("Local Shape", ["R_local", "G_local", "B_local"]),
-                      ("Texture",     ["R_tex", "G_tex", "B_tex"])]:
+    for cat, cols in [
+        ("Interaction", ["RG_inter", "RB_inter", "GB_inter"]),
+        ("Local Shape", ["R_local", "G_local", "B_local"]),
+        ("Texture", ["R_tex", "G_tex", "B_tex"]),
+    ]:
         m1 = df1.loc[common, cols].sum(axis=1).mean()
         m2 = df2.loc[common, cols].sum(axis=1).mean()
         delta = m2 - m1
@@ -362,7 +411,8 @@ def export_per_neuron_csv(df, output_path, metric, label="", neuron_to_class=Non
     # Add class label if available
     if neuron_to_class:
         out_df["class_label"] = out_df["neuron_id"].map(
-            lambda nid: neuron_to_class.get(int(nid), ""))
+            lambda nid: neuron_to_class.get(int(nid), "")
+        )
     out_df.to_csv(output_path, index=False, float_format="%.6f")
     print(f"Saved: {output_path}  ({len(df)} neurons, metric={metric})")
 
@@ -375,12 +425,21 @@ def export_class_summary_csv(df, neuron_to_class, output_path, metric="gap"):
     m = metric
     frac_cols = [f"{m}_{c}_frac" for c in comp_names]
     cat_defs = [
-        ("interaction_frac", [f"{m}_RG_inter_frac", f"{m}_RB_inter_frac", f"{m}_GB_inter_frac"]),
-        ("local_shape_frac", [f"{m}_R_local_frac", f"{m}_G_local_frac", f"{m}_B_local_frac"]),
+        (
+            "interaction_frac",
+            [f"{m}_RG_inter_frac", f"{m}_RB_inter_frac", f"{m}_GB_inter_frac"],
+        ),
+        (
+            "local_shape_frac",
+            [f"{m}_R_local_frac", f"{m}_G_local_frac", f"{m}_B_local_frac"],
+        ),
     ]
     if has_rot:
         cat_defs.append(
-            ("reference_frac", [f"{m}_R_ref_frac", f"{m}_G_ref_frac", f"{m}_B_ref_frac"])
+            (
+                "reference_frac",
+                [f"{m}_R_ref_frac", f"{m}_G_ref_frac", f"{m}_B_ref_frac"],
+            )
         )
     cat_defs.append(
         ("texture_frac", [f"{m}_R_tex_frac", f"{m}_G_tex_frac", f"{m}_B_tex_frac"])
@@ -388,6 +447,7 @@ def export_class_summary_csv(df, neuron_to_class, output_path, metric="gap"):
 
     MUTATIONS = {"SNCA", "GBA", "LRRK2"}
     from collections import defaultdict
+
     group_nids = defaultdict(list)
     df_nid = df.set_index("neuron_id")
     for nid, raw_cls in neuron_to_class.items():
@@ -414,22 +474,33 @@ def export_class_summary_csv(df, neuron_to_class, output_path, metric="gap"):
         for i, col in enumerate(frac_cols):
             clean = comp_names[i]
             vals = sub[col].values
-            rows.append({
-                "class": cls, "component": clean, "type": "component",
-                "n_neurons": n_neurons,
-                "mean": vals.mean(), "median": np.median(vals), "std": vals.std(),
-            })
+            rows.append(
+                {
+                    "class": cls,
+                    "component": clean,
+                    "type": "component",
+                    "n_neurons": n_neurons,
+                    "mean": vals.mean(),
+                    "median": np.median(vals),
+                    "std": vals.std(),
+                }
+            )
         # Category-level fractions
         for cat_name, cat_cols_list in cat_defs:
             valid_cols = [c for c in cat_cols_list if c in sub.columns]
             if valid_cols:
                 cat_sum = sub[valid_cols].sum(axis=1).values
-                rows.append({
-                    "class": cls, "component": cat_name, "type": "category",
-                    "n_neurons": n_neurons,
-                    "mean": cat_sum.mean(), "median": np.median(cat_sum),
-                    "std": cat_sum.std(),
-                })
+                rows.append(
+                    {
+                        "class": cls,
+                        "component": cat_name,
+                        "type": "category",
+                        "n_neurons": n_neurons,
+                        "mean": cat_sum.mean(),
+                        "median": np.median(cat_sum),
+                        "std": cat_sum.std(),
+                    }
+                )
 
     out_df = pd.DataFrame(rows)
     out_df.to_csv(output_path, index=False, float_format="%.6f")
@@ -468,7 +539,9 @@ def export_per_neuron_with_class_csv(df, neuron_to_class, output_path, metric="g
         }
         for c in comp_names:
             row[c] = float(r[f"{m}_{c}"])
-            row[f"{c}_frac"] = float(r[f"{m}_{c}_frac"]) if pd.notna(r[f"{m}_{c}_frac"]) else np.nan
+            row[f"{c}_frac"] = (
+                float(r[f"{m}_{c}_frac"]) if pd.notna(r[f"{m}_{c}_frac"]) else np.nan
+            )
         # Category fracs
         for cat in ["interaction_frac", "local_shape_frac", "texture_frac"]:
             row[cat] = float(r[f"{m}_{cat}"]) if f"{m}_{cat}" in r.index else np.nan
@@ -485,11 +558,13 @@ def export_per_neuron_with_class_csv(df, neuron_to_class, output_path, metric="g
 # Mutation-Specific Decomposition Analysis
 # ==============================================================================
 
+
 def parse_concept_dirs(concept_dir):
     """Parse concept_XXXX_CLASS directories → {neuron_id: class_label}.
     Handles multi-class labels like 'concept_0037_GBA_SNCA' → 'GBA_SNCA'.
     """
     import re
+
     neuron_to_class = {}
     if not os.path.isdir(concept_dir):
         print(f"⚠ Concept dir not found: {concept_dir}")
@@ -523,6 +598,7 @@ def analyze_by_mutation(df, neuron_to_class, metric="gap"):
 
     # Build mutation → list of neuron_ids
     from collections import defaultdict
+
     group_nids = defaultdict(list)
     for nid, raw_cls in neuron_to_class.items():
         if nid not in df_nid.index:
@@ -590,8 +666,14 @@ def analyze_by_mutation(df, neuron_to_class, metric="gap"):
     # Category-level signed
     print(f"\n  {'--- Category ---':16s}")
     cat_defs = [
-        ("Interaction", [f"{m}_RG_inter_frac", f"{m}_RB_inter_frac", f"{m}_GB_inter_frac"]),
-        ("Local Shape", [f"{m}_R_local_frac", f"{m}_G_local_frac", f"{m}_B_local_frac"]),
+        (
+            "Interaction",
+            [f"{m}_RG_inter_frac", f"{m}_RB_inter_frac", f"{m}_GB_inter_frac"],
+        ),
+        (
+            "Local Shape",
+            [f"{m}_R_local_frac", f"{m}_G_local_frac", f"{m}_B_local_frac"],
+        ),
     ]
     if has_rot:
         cat_defs.append(
@@ -712,15 +794,21 @@ def analyze_by_mutation(df, neuron_to_class, metric="gap"):
 # Publication-Quality Figures  (SVG → Illustrator)
 # ==============================================================================
 
+
 def _save_svg(fig, path, dpi=300):
     """Save figure as Illustrator-optimised SVG.
     • text remains editable (svg.fonttype='none' in rcParams)
     • no rasterisation of vector elements
     • tight bounding box
     """
-    fig.savefig(path, format='svg', dpi=dpi,
-                bbox_inches='tight', pad_inches=0.05,
-                transparent=True)
+    fig.savefig(
+        path,
+        format="svg",
+        dpi=dpi,
+        bbox_inches="tight",
+        pad_inches=0.05,
+        transparent=True,
+    )
     plt.close(fig)
     print(f"  ✓ Saved SVG: {path}")
 
@@ -729,14 +817,15 @@ def _build_mutation_groups(df, neuron_to_class, metric):
     """Return {mutation_group: sub_df} with frac columns AND per-neuron
     absolute proportion columns (_absprop).  absprop_i = |frac_i| / Σ|frac_j|
     so each neuron's profile sums to 1.0."""
-    comp_names = df.attrs.get('comp_names', COMPONENT_NAMES_9)
+    comp_names = df.attrs.get("comp_names", COMPONENT_NAMES_9)
     m = metric
-    frac_cols = [f'{m}_{c}_frac' for c in comp_names]
-    absprop_cols = [f'{m}_{c}_absprop' for c in comp_names]
-    MUTATIONS = {'SNCA', 'GBA', 'LRRK2'}
+    frac_cols = [f"{m}_{c}_frac" for c in comp_names]
+    absprop_cols = [f"{m}_{c}_absprop" for c in comp_names]
+    MUTATIONS = {"SNCA", "GBA", "LRRK2"}
     from collections import defaultdict
+
     group_nids = defaultdict(list)
-    df_nid = df.set_index('neuron_id').copy()
+    df_nid = df.set_index("neuron_id").copy()
 
     # ── Compute per-neuron absolute proportions ──
     abs_mat = df_nid[frac_cols].abs()
@@ -747,11 +836,11 @@ def _build_mutation_groups(df, neuron_to_class, metric):
     for nid, raw_cls in neuron_to_class.items():
         if nid not in df_nid.index:
             continue
-        parts = set(raw_cls.split('_'))
+        parts = set(raw_cls.split("_"))
         muts = parts & MUTATIONS
         if not muts:
             continue
-        label = '_'.join(sorted(muts)) if len(muts) > 1 else muts.pop()
+        label = "_".join(sorted(muts)) if len(muts) > 1 else muts.pop()
         group_nids[label].append(nid)
     groups = {}
     all_cols = frac_cols + absprop_cols
@@ -765,30 +854,33 @@ def _build_mutation_groups(df, neuron_to_class, metric):
 
 # ==========  Figure 1: 12-component × 4-class  bar + strip  ==========
 
-def plot_attribution_bar_with_dots(df, neuron_to_class, metric, save_dir, label=''):
+
+def plot_attribution_bar_with_dots(df, neuron_to_class, metric, save_dir, label=""):
     """Bar plot using Absolute Proportions: |mean| / Σ|means|.
     Bar height = mean(|frac_i|) / Σ_j mean(|frac_j|)  (group-level, sums to 1).
     Dots  = per-neuron |frac_i| / Σ|frac_j|  (individual neuron proportions).
     Total bars = 12 components × N_classes (typically 48).
     """
     groups, frac_cols, absprop_cols, comp_names = _build_mutation_groups(
-        df, neuron_to_class, metric)
+        df, neuron_to_class, metric
+    )
     if not groups:
-        print('  ⚠ No mutation groups for attribution bar plot.')
+        print("  ⚠ No mutation groups for attribution bar plot.")
         return
 
     class_list = list(groups.keys())
     n_comp = len(comp_names)
-    n_cls  = len(class_list)
+    n_cls = len(class_list)
 
     CLASS_PALETTE = {
-        'SNCA':  '#4C72B0',
-        'GBA':   '#DD8452',
-        'LRRK2': '#55A868',
+        "SNCA": "#4C72B0",
+        "GBA": "#DD8452",
+        "LRRK2": "#55A868",
     }
-    _extra = ['#C44E52', '#8172B3', '#937860', '#DA8BC3', '#8C8C8C']
-    cls_colors = [CLASS_PALETTE.get(c, _extra[i % len(_extra)])
-                  for i, c in enumerate(class_list)]
+    _extra = ["#C44E52", "#8172B3", "#937860", "#DA8BC3", "#8C8C8C"]
+    cls_colors = [
+        CLASS_PALETTE.get(c, _extra[i % len(_extra)]) for i, c in enumerate(class_list)
+    ]
 
     bar_width = 0.8 / n_cls
     fig, ax = plt.subplots(figsize=(max(10, n_comp * 1.1), 4.5))
@@ -808,41 +900,60 @@ def plot_attribution_bar_with_dots(df, neuron_to_class, metric, save_dir, label=
         offset = (ci - (n_cls - 1) / 2) * bar_width
         x_pos = x_base + offset
 
-        ax.bar(x_pos, bar_vals, bar_width * 0.92,
-               color=cls_colors[ci],
-               edgecolor='white', linewidth=0.4,
-               label=f'{cls} (n={len(sub)})', alpha=0.85, zorder=2)
+        ax.bar(
+            x_pos,
+            bar_vals,
+            bar_width * 0.92,
+            color=cls_colors[ci],
+            edgecolor="white",
+            linewidth=0.4,
+            label=f"{cls} (n={len(sub)})",
+            alpha=0.85,
+            zorder=2,
+        )
 
         rng = np.random.default_rng(42 + ci)
         for j, v in enumerate(dot_vals):
             jitter = rng.uniform(-bar_width * 0.3, bar_width * 0.3, size=len(v))
-            ax.scatter(x_pos[j] + jitter, v,
-                       s=8, color=cls_colors[ci], edgecolors='k',
-                       linewidths=0.25, alpha=0.55, zorder=3)
+            ax.scatter(
+                x_pos[j] + jitter,
+                v,
+                s=8,
+                color=cls_colors[ci],
+                edgecolors="k",
+                linewidths=0.25,
+                alpha=0.55,
+                zorder=3,
+            )
 
     ax.set_xticks(np.arange(n_comp))
-    ax.set_xticklabels(comp_names, rotation=45, ha='right', fontsize=8)
-    ax.set_ylabel('Absolute Proportion  (|mean| / Σ|means|)', fontsize=9)
-    ax.legend(fontsize=7, frameon=True, framealpha=0.9,
-              edgecolor='#cccccc', loc='upper right')
-    ax.set_title('Spatial Attribution by Mutation Class (Absolute Proportion)',
-                 fontsize=10, fontweight='bold')
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
+    ax.set_xticklabels(comp_names, rotation=45, ha="right", fontsize=8)
+    ax.set_ylabel("Absolute Proportion  (|mean| / Σ|means|)", fontsize=9)
+    ax.legend(
+        fontsize=7, frameon=True, framealpha=0.9, edgecolor="#cccccc", loc="upper right"
+    )
+    ax.set_title(
+        "Spatial Attribution by Mutation Class (Absolute Proportion)",
+        fontsize=10,
+        fontweight="bold",
+    )
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
 
-    svg_path = os.path.join(save_dir, f'fig_attribution_bar_dots_{label}_{metric}.svg')
+    svg_path = os.path.join(save_dir, f"fig_attribution_bar_dots_{label}_{metric}.svg")
     _save_svg(fig, svg_path)
 
 
 # ==========  Figure 2: Linearity distribution (ALL neurons)  ==========
 
-def plot_linearity_distribution_all(df, metric, save_dir, label=''):
+
+def plot_linearity_distribution_all(df, metric, save_dir, label=""):
     """KDE + histogram of linearity for ALL alive neurons (no linearity filter).
     X-axis is kept compact to show a smooth continuous distribution.
     """
-    lin_col = f'{metric}_linearity'
+    lin_col = f"{metric}_linearity"
     if lin_col not in df.columns:
-        print('  ⚠ linearity column not found')
+        print("  ⚠ linearity column not found")
         return
     lin = df[lin_col].dropna().values
     if len(lin) == 0:
@@ -857,65 +968,90 @@ def plot_linearity_distribution_all(df, metric, save_dir, label=''):
 
     # Histogram (normalised density)
     bins = np.linspace(x_lo, x_hi, 80)
-    ax.hist(lin, bins=bins, density=False,
-            color='#5B9BD5', edgecolor='white', linewidth=0.3,
-            alpha=0.7, zorder=1)
+    ax.hist(
+        lin,
+        bins=bins,
+        density=False,
+        color="#5B9BD5",
+        edgecolor="white",
+        linewidth=0.3,
+        alpha=0.7,
+        zorder=1,
+    )
     # Reference line at 1.0
-    ax.axvline(1.0, color='#E74C3C', linestyle='--', linewidth=1.2,
-               label='Perfect (1.0)', zorder=3)
+    ax.axvline(
+        1.0,
+        color="#E74C3C",
+        linestyle="--",
+        linewidth=1.2,
+        label="Perfect (1.0)",
+        zorder=3,
+    )
 
     # Annotate median
     med = np.median(lin)
-    ax.axvline(med, color='#F39C12', linestyle=':', linewidth=1.0,
-               label=f'Median ({med:.3f})', zorder=3)
+    ax.axvline(
+        med,
+        color="#F39C12",
+        linestyle=":",
+        linewidth=1.0,
+        label=f"Median ({med:.3f})",
+        zorder=3,
+    )
 
-    ax.set_xlabel('Linearity (sum of components / original)', fontsize=9)
-    ax.set_ylabel('Number of neurons', fontsize=9)
-    ax.set_title(f'Linearity Distribution – All {len(lin)} Neurons ({metric})',
-                 fontsize=10, fontweight='bold')
+    ax.set_xlabel("Linearity (sum of components / original)", fontsize=9)
+    ax.set_ylabel("Number of neurons", fontsize=9)
+    ax.set_title(
+        f"Linearity Distribution – All {len(lin)} Neurons ({metric})",
+        fontsize=10,
+        fontweight="bold",
+    )
     ax.set_xlim(x_lo, x_hi)
-    ax.legend(fontsize=7, frameon=True, framealpha=0.9, edgecolor='#cccccc')
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
+    ax.legend(fontsize=7, frameon=True, framealpha=0.9, edgecolor="#cccccc")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
     ax.yaxis.set_major_locator(MaxNLocator(5))
 
-    svg_path = os.path.join(save_dir, f'fig_linearity_dist_all_{label}_{metric}.svg')
+    svg_path = os.path.join(save_dir, f"fig_linearity_dist_all_{label}_{metric}.svg")
     _save_svg(fig, svg_path)
 
 
 # ==========  Figure 3: Category-level grouped bar + dots  ==========
 
-def plot_category_bar_with_dots(df, neuron_to_class, metric, save_dir, label=''):
+
+def plot_category_bar_with_dots(df, neuron_to_class, metric, save_dir, label=""):
     """Category-level grouped bar using |mean| / Σ|means| formula.
     Bar  = sum of abs_means within category / Σ all abs_means.
     Dots = per-neuron absprop summed within category."""
     groups, frac_cols, absprop_cols, comp_names = _build_mutation_groups(
-        df, neuron_to_class, metric)
+        df, neuron_to_class, metric
+    )
     if not groups:
         return
-    has_rot = df.attrs.get('has_rotation', False)
+    has_rot = df.attrs.get("has_rotation", False)
     m = metric
 
     # Category definitions using BOTH frac (for bar) and absprop (for dots)
     _fc = {c: fc for c, fc in zip(comp_names, frac_cols)}
     _ap = {c: ac for c, ac in zip(comp_names, absprop_cols)}
     cat_comp_names = [
-        ('Interaction', ['RG_inter', 'RB_inter', 'GB_inter']),
-        ('Local Shape', ['R_local', 'G_local', 'B_local']),
+        ("Interaction", ["RG_inter", "RB_inter", "GB_inter"]),
+        ("Local Shape", ["R_local", "G_local", "B_local"]),
     ]
     if has_rot:
-        cat_comp_names.append(('Reference', ['R_ref', 'G_ref', 'B_ref']))
-    cat_comp_names.append(('Texture', ['R_tex', 'G_tex', 'B_tex']))
+        cat_comp_names.append(("Reference", ["R_ref", "G_ref", "B_ref"]))
+    cat_comp_names.append(("Texture", ["R_tex", "G_tex", "B_tex"]))
 
     cat_names = [c[0] for c in cat_comp_names]
     class_list = list(groups.keys())
     n_cat = len(cat_names)
     n_cls = len(class_list)
 
-    CLASS_PALETTE = {'SNCA': '#4C72B0', 'GBA': '#DD8452', 'LRRK2': '#55A868'}
-    _extra = ['#C44E52', '#8172B3', '#937860']
-    cls_colors = [CLASS_PALETTE.get(c, _extra[i % len(_extra)])
-                  for i, c in enumerate(class_list)]
+    CLASS_PALETTE = {"SNCA": "#4C72B0", "GBA": "#DD8452", "LRRK2": "#55A868"}
+    _extra = ["#C44E52", "#8172B3", "#937860"]
+    cls_colors = [
+        CLASS_PALETTE.get(c, _extra[i % len(_extra)]) for i, c in enumerate(class_list)
+    ]
 
     bar_w = 0.8 / n_cls
     fig, ax = plt.subplots(figsize=(max(5, n_cat * 1.8), 4.2))
@@ -924,15 +1060,18 @@ def plot_category_bar_with_dots(df, neuron_to_class, metric, save_dir, label='')
         sub = groups[cls]
 
         # Group-level: abs_means per component, then category sums
-        all_abs_means = np.array([np.abs(sub[fc].values).mean()
-                                  for fc in frac_cols])
+        all_abs_means = np.array([np.abs(sub[fc].values).mean() for fc in frac_cols])
         total_denom = all_abs_means.sum()
 
         bar_vals, dot_vals = [], []
         for cat_name, cnames in cat_comp_names:
             idx = [comp_names.index(cn) for cn in cnames]
             # Bar: sum of abs_means for this category / total
-            cat_bar = sum(all_abs_means[j] for j in idx) / total_denom if total_denom > 1e-12 else 0
+            cat_bar = (
+                sum(all_abs_means[j] for j in idx) / total_denom
+                if total_denom > 1e-12
+                else 0
+            )
             bar_vals.append(cat_bar)
             # Dots: per-neuron absprop summed within category
             ap_cols = [_ap[cn] for cn in cnames]
@@ -944,40 +1083,59 @@ def plot_category_bar_with_dots(df, neuron_to_class, metric, save_dir, label='')
         offset = (ci - (n_cls - 1) / 2) * bar_w
         x_pos = x_base + offset
 
-        ax.bar(x_pos, bar_vals, bar_w * 0.92,
-               color=cls_colors[ci],
-               edgecolor='white', linewidth=0.4,
-               label=f'{cls} (n={len(sub)})', alpha=0.85, zorder=2)
+        ax.bar(
+            x_pos,
+            bar_vals,
+            bar_w * 0.92,
+            color=cls_colors[ci],
+            edgecolor="white",
+            linewidth=0.4,
+            label=f"{cls} (n={len(sub)})",
+            alpha=0.85,
+            zorder=2,
+        )
 
         rng = np.random.default_rng(99 + ci)
         for j, v in enumerate(dot_vals):
             if len(v) == 0:
                 continue
             jitter = rng.uniform(-bar_w * 0.3, bar_w * 0.3, size=len(v))
-            ax.scatter(x_pos[j] + jitter, v,
-                       s=10, color=cls_colors[ci], edgecolors='k',
-                       linewidths=0.25, alpha=0.5, zorder=3)
+            ax.scatter(
+                x_pos[j] + jitter,
+                v,
+                s=10,
+                color=cls_colors[ci],
+                edgecolors="k",
+                linewidths=0.25,
+                alpha=0.5,
+                zorder=3,
+            )
 
     ax.set_xticks(np.arange(n_cat))
     ax.set_xticklabels(cat_names, fontsize=9)
-    ax.set_ylabel('Absolute Proportion  (|mean| / Σ|means|)', fontsize=9)
-    ax.legend(fontsize=7, frameon=True, framealpha=0.9, edgecolor='#cccccc')
-    ax.set_title('Category-Level Attribution (Absolute Proportion)',
-                 fontsize=10, fontweight='bold')
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
+    ax.set_ylabel("Absolute Proportion  (|mean| / Σ|means|)", fontsize=9)
+    ax.legend(fontsize=7, frameon=True, framealpha=0.9, edgecolor="#cccccc")
+    ax.set_title(
+        "Category-Level Attribution (Absolute Proportion)",
+        fontsize=10,
+        fontweight="bold",
+    )
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
 
-    svg_path = os.path.join(save_dir, f'fig_category_bar_dots_{label}_{metric}.svg')
+    svg_path = os.path.join(save_dir, f"fig_category_bar_dots_{label}_{metric}.svg")
     _save_svg(fig, svg_path)
 
 
 # ==========  Figure 4: Heatmap of component profiles  ==========
 
-def plot_attribution_heatmap(df, neuron_to_class, metric, save_dir, label=''):
+
+def plot_attribution_heatmap(df, neuron_to_class, metric, save_dir, label=""):
     """Heatmap where rows = mutation classes, columns = 12 components.
     Value = |mean| / Σ|means| (group-level absolute proportion)."""
     groups, frac_cols, absprop_cols, comp_names = _build_mutation_groups(
-        df, neuron_to_class, metric)
+        df, neuron_to_class, metric
+    )
     if not groups:
         return
     class_list = list(groups.keys())
@@ -988,36 +1146,52 @@ def plot_attribution_heatmap(df, neuron_to_class, metric, save_dir, label=''):
         denom = abs_means.sum()
         mat[i, :] = abs_means / denom if denom > 1e-12 else 0
 
-    fig, ax = plt.subplots(figsize=(max(7, len(comp_names) * 0.65), max(2.5, len(class_list) * 0.7)))
+    fig, ax = plt.subplots(
+        figsize=(max(7, len(comp_names) * 0.65), max(2.5, len(class_list) * 0.7))
+    )
     vmax = np.max(mat) * 1.05
-    im = ax.imshow(mat, cmap='YlOrRd', aspect='auto',
-                   vmin=0, vmax=vmax, interpolation='nearest')
+    im = ax.imshow(
+        mat, cmap="YlOrRd", aspect="auto", vmin=0, vmax=vmax, interpolation="nearest"
+    )
     ax.set_xticks(np.arange(len(comp_names)))
-    ax.set_xticklabels(comp_names, rotation=45, ha='right', fontsize=8)
+    ax.set_xticklabels(comp_names, rotation=45, ha="right", fontsize=8)
     ax.set_yticks(np.arange(len(class_list)))
     n_neurons = [len(groups[c]) for c in class_list]
-    ax.set_yticklabels([f'{c} (n={n})' for c, n in zip(class_list, n_neurons)],
-                       fontsize=9)
+    ax.set_yticklabels(
+        [f"{c} (n={n})" for c, n in zip(class_list, n_neurons)], fontsize=9
+    )
     for i in range(mat.shape[0]):
         for j in range(mat.shape[1]):
-            txt_col = 'white' if mat[i, j] > vmax * 0.6 else 'black'
-            ax.text(j, i, f'{mat[i,j]:.3f}', ha='center', va='center',
-                    fontsize=6.5, color=txt_col)
+            txt_col = "white" if mat[i, j] > vmax * 0.6 else "black"
+            ax.text(
+                j,
+                i,
+                f"{mat[i,j]:.3f}",
+                ha="center",
+                va="center",
+                fontsize=6.5,
+                color=txt_col,
+            )
     cbar = fig.colorbar(im, ax=ax, shrink=0.8, pad=0.02)
-    cbar.set_label('|mean| / Σ|means|', fontsize=8)
-    ax.set_title('Component Attribution Profile (|mean| / Σ|means|)',
-                 fontsize=10, fontweight='bold')
+    cbar.set_label("|mean| / Σ|means|", fontsize=8)
+    ax.set_title(
+        "Component Attribution Profile (|mean| / Σ|means|)",
+        fontsize=10,
+        fontweight="bold",
+    )
 
-    svg_path = os.path.join(save_dir, f'fig_attribution_heatmap_{label}_{metric}.svg')
+    svg_path = os.path.join(save_dir, f"fig_attribution_heatmap_{label}_{metric}.svg")
     _save_svg(fig, svg_path)
 
 
 # ==========  Figure 5: Radar / Polar chart per class  ==========
 
-def plot_attribution_radar(df, neuron_to_class, metric, save_dir, label=''):
+
+def plot_attribution_radar(df, neuron_to_class, metric, save_dir, label=""):
     """Radar chart: |mean| / Σ|means| per mutation class."""
     groups, frac_cols, absprop_cols, comp_names = _build_mutation_groups(
-        df, neuron_to_class, metric)
+        df, neuron_to_class, metric
+    )
     if not groups:
         return
     class_list = list(groups.keys())
@@ -1025,29 +1199,45 @@ def plot_attribution_radar(df, neuron_to_class, metric, save_dir, label=''):
     angles = np.linspace(0, 2 * np.pi, n_comp, endpoint=False).tolist()
     angles += angles[:1]
 
-    CLASS_PALETTE = {'SNCA': '#4C72B0', 'GBA': '#DD8452', 'LRRK2': '#55A868'}
-    _extra = ['#C44E52', '#8172B3', '#937860']
+    CLASS_PALETTE = {"SNCA": "#4C72B0", "GBA": "#DD8452", "LRRK2": "#55A868"}
+    _extra = ["#C44E52", "#8172B3", "#937860"]
 
     fig, ax = plt.subplots(figsize=(5.5, 5.5), subplot_kw=dict(polar=True))
     for ci, cls in enumerate(class_list):
         sub = groups[cls]
         abs_means = np.array([np.abs(sub[col].values).mean() for col in frac_cols])
         denom = abs_means.sum()
-        props = (abs_means / denom).tolist() if denom > 1e-12 else [0]*n_comp
+        props = (abs_means / denom).tolist() if denom > 1e-12 else [0] * n_comp
         props += props[:1]
         color = CLASS_PALETTE.get(cls, _extra[ci % len(_extra)])
-        ax.plot(angles, props, linewidth=1.4, label=f'{cls} (n={len(sub)})',
-                color=color, zorder=2)
+        ax.plot(
+            angles,
+            props,
+            linewidth=1.4,
+            label=f"{cls} (n={len(sub)})",
+            color=color,
+            zorder=2,
+        )
         ax.fill(angles, props, alpha=0.12, color=color)
 
     ax.set_xticks(angles[:-1])
     ax.set_xticklabels(comp_names, fontsize=7)
-    ax.set_title('Spatial Attribution Radar (|mean| / Σ|means|)',
-                 fontsize=10, fontweight='bold', pad=20)
-    ax.legend(fontsize=7, loc='upper right', bbox_to_anchor=(1.3, 1.15),
-              frameon=True, framealpha=0.9, edgecolor='#cccccc')
+    ax.set_title(
+        "Spatial Attribution Radar (|mean| / Σ|means|)",
+        fontsize=10,
+        fontweight="bold",
+        pad=20,
+    )
+    ax.legend(
+        fontsize=7,
+        loc="upper right",
+        bbox_to_anchor=(1.3, 1.15),
+        frameon=True,
+        framealpha=0.9,
+        edgecolor="#cccccc",
+    )
 
-    svg_path = os.path.join(save_dir, f'fig_attribution_radar_{label}_{metric}.svg')
+    svg_path = os.path.join(save_dir, f"fig_attribution_radar_{label}_{metric}.svg")
     _save_svg(fig, svg_path)
 
 
@@ -1056,23 +1246,52 @@ def plot_attribution_radar(df, neuron_to_class, metric, save_dir, label=''):
 # ==============================================================================
 def get_args():
     p = argparse.ArgumentParser("Analyze texture attribution npz")
-    p.add_argument("--metric", type=str, default="gap", choices=["gap", "l2sq"],
-                   help="Primary metric for visualization (default: gap)")
-    p.add_argument("--npz", type=str, nargs="*", default=None,
-                   help="One or more npz file paths. If not given, uses NPZ_PATHS dict.")
-    p.add_argument("--concept_dir", type=str,
-                   default=CONCEPT_DIR,
-                   help="Path to concept directories (concept_XXXX_CLASS)")
-    p.add_argument("--linearity_min", type=float, default=0.3,
-                   help="Minimum linearity to include a neuron (default: 0.0 = no filter)")
-    p.add_argument("--linearity_max", type=float, default=1.3,
-                   help="Maximum linearity to include a neuron (default: 999 = no filter)")
-    p.add_argument("--min_spatial_frac", type=float, default=0.1,
-                   help="Minimum (orig-baseline)/orig to include a neuron. "
-                        "Filters out neurons with negligible spatial info (default: 0.05)")
-    p.add_argument("--plot_label", type=str, default="",
-                   help="Only generate publication SVGs for this label "
-                        "(e.g. 'ps8_blur4.0'). Empty = all.")
+    p.add_argument(
+        "--metric",
+        type=str,
+        default="gap",
+        choices=["gap", "l2sq"],
+        help="Primary metric for visualization (default: gap)",
+    )
+    p.add_argument(
+        "--npz",
+        type=str,
+        nargs="*",
+        default=None,
+        help="One or more npz file paths. If not given, uses NPZ_PATHS dict.",
+    )
+    p.add_argument(
+        "--concept_dir",
+        type=str,
+        default=CONCEPT_DIR,
+        help="Path to concept directories (concept_XXXX_CLASS)",
+    )
+    p.add_argument(
+        "--linearity_min",
+        type=float,
+        default=0.3,
+        help="Minimum linearity to include a neuron (default: 0.0 = no filter)",
+    )
+    p.add_argument(
+        "--linearity_max",
+        type=float,
+        default=1.3,
+        help="Maximum linearity to include a neuron (default: 999 = no filter)",
+    )
+    p.add_argument(
+        "--min_spatial_frac",
+        type=float,
+        default=0.1,
+        help="Minimum (orig-baseline)/orig to include a neuron. "
+        "Filters out neurons with negligible spatial info (default: 0.05)",
+    )
+    p.add_argument(
+        "--plot_label",
+        type=str,
+        default="",
+        help="Only generate publication SVGs for this label "
+        "(e.g. 'ps8_blur4.0'). Empty = all.",
+    )
     return p.parse_args()
 
 
@@ -1115,8 +1334,10 @@ def _apply_spatial_frac_filter(df, metric, min_frac):
         df_out.attrs[k] = v
     after = len(df_out)
     if before != after:
-        print(f"  Spatial frac filter [|orig-baseline|/orig >= {min_frac}]: "
-              f"{before} → {after} neurons (removed {before - after})")
+        print(
+            f"  Spatial frac filter [|orig-baseline|/orig >= {min_frac}]: "
+            f"{before} → {after} neurons (removed {before - after})"
+        )
     return df_out
 
 
@@ -1169,7 +1390,9 @@ def main():
 
     # Parse concept directories for mutation-specific analysis
     concept_dir = args.concept_dir
-    neuron_to_class = parse_concept_dirs(concept_dir) if os.path.isdir(concept_dir) else {}
+    neuron_to_class = (
+        parse_concept_dirs(concept_dir) if os.path.isdir(concept_dir) else {}
+    )
 
     # Per-condition visualizations
     for label, df in dfs.items():
@@ -1187,46 +1410,46 @@ def main():
         else:
             # Fig 2: Linearity distribution — ALL neurons (unfiltered)
             df_raw = dfs_raw[label]
-            plot_linearity_distribution_all(df_raw, metric=METRIC,
-                                            save_dir=save_dir, label=label)
+            plot_linearity_distribution_all(
+                df_raw, metric=METRIC, save_dir=save_dir, label=label
+            )
 
             if neuron_to_class:
                 # Fig 1: 12-comp × class  bar + dots
                 plot_attribution_bar_with_dots(
-                    df, neuron_to_class, metric=METRIC,
-                    save_dir=save_dir, label=label)
+                    df, neuron_to_class, metric=METRIC, save_dir=save_dir, label=label
+                )
                 # Fig 3: Category-level bar + dots
                 plot_category_bar_with_dots(
-                    df, neuron_to_class, metric=METRIC,
-                    save_dir=save_dir, label=label)
+                    df, neuron_to_class, metric=METRIC, save_dir=save_dir, label=label
+                )
                 # Fig 4: Heatmap
                 plot_attribution_heatmap(
-                    df, neuron_to_class, metric=METRIC,
-                    save_dir=save_dir, label=label)
+                    df, neuron_to_class, metric=METRIC, save_dir=save_dir, label=label
+                )
                 # Fig 5: Radar chart
                 plot_attribution_radar(
-                    df, neuron_to_class, metric=METRIC,
-                    save_dir=save_dir, label=label)
+                    df, neuron_to_class, metric=METRIC, save_dir=save_dir, label=label
+                )
 
         # Export CSV — one per metric
         for m in ["gap", "l2sq"]:
             csv_path = path.replace(".npz", f"_{m}_per_neuron.csv")
-            export_per_neuron_csv(df, csv_path, metric=m, label=label,
-                                 neuron_to_class=neuron_to_class)
+            export_per_neuron_csv(
+                df, csv_path, metric=m, label=label, neuron_to_class=neuron_to_class
+            )
 
         # Mutation-specific analysis + CSV export
         if neuron_to_class:
             for m in ["gap", "l2sq"]:
                 print(f"\n  ─── Mutation analysis for {label} (metric={m}) ───")
                 analyze_by_mutation(df, neuron_to_class, metric=m)
-                summary_csv = path.replace(
-                    ".npz", f"_{m}_class_summary.csv")
-                export_class_summary_csv(
-                    df, neuron_to_class, summary_csv, metric=m)
-                neuron_cls_csv = path.replace(
-                    ".npz", f"_{m}_per_neuron_with_class.csv")
+                summary_csv = path.replace(".npz", f"_{m}_class_summary.csv")
+                export_class_summary_csv(df, neuron_to_class, summary_csv, metric=m)
+                neuron_cls_csv = path.replace(".npz", f"_{m}_per_neuron_with_class.csv")
                 export_per_neuron_with_class_csv(
-                    df, neuron_to_class, neuron_cls_csv, metric=m)
+                    df, neuron_to_class, neuron_cls_csv, metric=m
+                )
 
     # Cross-condition comparison
     if len(dfs) >= 2:
@@ -1235,4 +1458,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

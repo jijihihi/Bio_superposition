@@ -4,10 +4,10 @@
 # Contains: LinearProbe, extract_sae_repr, train_linear_probe,
 #           compute_effective_rank, evaluate_concepts_for_sae, DummyTrainer
 # ==============================================================================
-import os
 import csv
-import numpy as np
+import os
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -20,7 +20,6 @@ from sae_project.step06_gated_sae import GatedSAE
 logger = get_logger("sae_eval")
 
 
-
 ## GAP CSV 만들때. 이때는 StrictPlateBalancedBatchSampler 로 배치 센터링 한다. 학습 평가 맥락에서는 올바르다.
 # GAP_csv 만들때 restore_token_norm 없이, L2 정규화된 토큰의 raw SAE activation sum 기반입니다.
 
@@ -28,8 +27,10 @@ logger = get_logger("sae_eval")
 # Linear Probe
 # ==============================================================================
 
+
 class LinearProbe(nn.Module):
     """Simple linear probe for classification."""
+
     def __init__(self, d_in: int, d_out: int):
         super().__init__()
         self.net = nn.Linear(d_in, d_out, bias=False)
@@ -77,7 +78,9 @@ def extract_sae_repr_for_probe(
         if x_cpu.numel() < 1:
             continue
 
-        x = x_cpu.to(device, non_blocking=True).contiguous(memory_format=torch.channels_last)
+        x = x_cpu.to(device, non_blocking=True).contiguous(
+            memory_format=torch.channels_last
+        )
         y = y_cpu
 
         with torch.amp.autocast(**autocast_kwargs):
@@ -87,7 +90,11 @@ def extract_sae_repr_for_probe(
         norm_mode = getattr(sae, "token_norm_mode", "gap-scalar")
         if norm_mode == "gap-scalar":
             gap = fmap.mean(dim=(2, 3))
-            gap_norm = gap.norm(dim=1, keepdim=True).view(curr_batch_size, 1, 1, 1).clamp_min(1e-12)
+            gap_norm = (
+                gap.norm(dim=1, keepdim=True)
+                .view(curr_batch_size, 1, 1, 1)
+                .clamp_min(1e-12)
+            )
             fmap = fmap / gap_norm
 
         fmap = fmap.permute(0, 2, 3, 1).contiguous()
@@ -128,7 +135,11 @@ def extract_sae_repr_for_probe(
         y_list.extend(y.tolist())
 
     if len(X_list) == 0:
-        return np.zeros((0, d_alive), dtype=np.float32), np.zeros(0, dtype=np.int64), d_alive
+        return (
+            np.zeros((0, d_alive), dtype=np.float32),
+            np.zeros(0, dtype=np.int64),
+            d_alive,
+        )
 
     X = np.concatenate(X_list, axis=0).astype(np.float32)
     y = np.array(y_list, dtype=np.int64)
@@ -174,7 +185,9 @@ def train_linear_probe(
         X_test = (X_test - mean) / std
 
     if verbose:
-        logger.info(f"  [Probe] dim: {original_dim} -> {n_alive} (removed {original_dim - n_alive} zero-var)")
+        logger.info(
+            f"  [Probe] dim: {original_dim} -> {n_alive} (removed {original_dim - n_alive} zero-var)"
+        )
         logger.info(f"  [Probe] Train: {len(y_train)}, Test: {len(y_test)}")
 
     rng = np.random.default_rng(42)
@@ -183,10 +196,13 @@ def train_linear_probe(
     samples_per_class = min_class_count
 
     if balanced_training and verbose:
-        logger.info(f"  [Probe] Balanced: {samples_per_class} samples/class x {num_classes} = {samples_per_class * num_classes}/epoch")
+        logger.info(
+            f"  [Probe] Balanced: {samples_per_class} samples/class x {num_classes} = {samples_per_class * num_classes}/epoch"
+        )
 
     probe = LinearProbe(n_alive, num_classes).to(device)
     import torch.optim as optim
+
     optimizer = optim.SGD(probe.parameters(), lr=lr, momentum=0.9)
     criterion = nn.CrossEntropyLoss()
 
@@ -205,7 +221,7 @@ def train_linear_probe(
             rng.shuffle(epoch_indices)
 
         for s in range(0, len(epoch_indices), batch_size):
-            ii = epoch_indices[s:s+batch_size]
+            ii = epoch_indices[s : s + batch_size]
             xb = torch.from_numpy(X_train[ii]).float().to(device)
             yb = torch.from_numpy(y_train[ii]).long().to(device)
 
@@ -221,7 +237,9 @@ def train_linear_probe(
             eval_indices = []
             for c in range(num_classes):
                 c_idx = class_indices[c]
-                sampled = rng.choice(c_idx, size=min(samples_per_class, len(c_idx)), replace=False)
+                sampled = rng.choice(
+                    c_idx, size=min(samples_per_class, len(c_idx)), replace=False
+                )
                 eval_indices.extend(sampled.tolist())
             eval_indices = np.array(eval_indices)
             X_tr_eval = torch.from_numpy(X_train[eval_indices]).float().to(device)
@@ -260,6 +278,7 @@ def train_linear_probe(
 # Effective Rank
 # ==============================================================================
 
+
 @torch.no_grad()
 def compute_effective_rank(sae: GatedSAE, dead_threshold: float = 1e-6) -> dict:
     """Compute effective rank of alive concept weights using SVD entropy."""
@@ -269,7 +288,11 @@ def compute_effective_rank(sae: GatedSAE, dead_threshold: float = 1e-6) -> dict:
     d_alive = int(alive_mask.sum().item())
 
     if d_alive < 2:
-        return {"effective_rank": 1.0, "normalized_effective_rank": 1.0, "d_alive": d_alive}
+        return {
+            "effective_rank": 1.0,
+            "normalized_effective_rank": 1.0,
+            "d_alive": d_alive,
+        }
 
     W_alive = W_dec[alive_mask]
     U, S, Vh = torch.linalg.svd(W_alive, full_matrices=False)
@@ -291,8 +314,10 @@ def compute_effective_rank(sae: GatedSAE, dead_threshold: float = 1e-6) -> dict:
 # Full Concept Evaluation (purity, entropy, GAP CSV, dual probe)
 # ==============================================================================
 
+
 class DummyTrainer:
     """Minimal trainer-like object for evaluation."""
+
     def __init__(self, encoder, sae, device, best_fvu=0.0):
         self.encoder = encoder
         self.sae = sae
@@ -304,7 +329,7 @@ def evaluate_concepts_for_sae(
     trainer,
     train_loader: DataLoader,
     val_loader: DataLoader,
-    test_loader: DataLoader, # test loader 인자로 받음.
+    test_loader: DataLoader,  # test loader 인자로 받음.
     args,
     exp_config: dict,
 ) -> dict:
@@ -323,10 +348,16 @@ def evaluate_concepts_for_sae(
     NUM_CLASSES = 4
     d_sae = sae.d_sae
 
-    concept_class_counts = torch.zeros((d_sae, NUM_CLASSES), dtype=torch.float32, device=device)
-    class_gap_sum = torch.zeros((NUM_CLASSES, d_sae), dtype=torch.float32, device=device)
+    concept_class_counts = torch.zeros(
+        (d_sae, NUM_CLASSES), dtype=torch.float32, device=device
+    )
+    class_gap_sum = torch.zeros(
+        (NUM_CLASSES, d_sae), dtype=torch.float32, device=device
+    )
     class_img_count = torch.zeros(NUM_CLASSES, dtype=torch.long, device=device)
-    class_active_img_count = torch.zeros((NUM_CLASSES, d_sae), dtype=torch.long, device=device)
+    class_active_img_count = torch.zeros(
+        (NUM_CLASSES, d_sae), dtype=torch.long, device=device
+    )
 
     all_token_counts_list = []
     # Per-image GAP vectors for cache saving
@@ -342,108 +373,128 @@ def evaluate_concepts_for_sae(
     if torch.cuda.is_available():
         autocast_kwargs["dtype"] = torch.bfloat16
 
-    eval_loaders = [] 
+    eval_loaders = []
     if val_loader is not None:
         eval_loaders.append(val_loader)
     if test_loader is not None:
         eval_loaders.append(test_loader)
 
     total_eval_images = sum(len(loader.dataset) for loader in eval_loaders)
-    logger.info(f"[Eval] Using {len(eval_loaders)} loaders: {total_eval_images} images (val+test)")
+    logger.info(
+        f"[Eval] Using {len(eval_loaders)} loaders: {total_eval_images} images (val+test)"
+    )
 
     with torch.no_grad():
-      for eval_loader in eval_loaders:
-        for batch in tqdm(eval_loader, desc="Evaluating concepts", leave=False):
-            if batch is None:
-                continue
-            x_cpu = batch[0]
-            y_cpu = batch[1]
-            batch_lines = batch[3] if len(batch) > 3 else ["unknown"] * x_cpu.size(0)
-            batch_uids = batch[4] if len(batch) > 4 else ["unknown"] * x_cpu.size(0)
-            if x_cpu.numel() < 1:
-                continue
+        for eval_loader in eval_loaders:
+            for batch in tqdm(eval_loader, desc="Evaluating concepts", leave=False):
+                if batch is None:
+                    continue
+                x_cpu = batch[0]
+                y_cpu = batch[1]
+                batch_lines = (
+                    batch[3] if len(batch) > 3 else ["unknown"] * x_cpu.size(0)
+                )
+                batch_uids = batch[4] if len(batch) > 4 else ["unknown"] * x_cpu.size(0)
+                if x_cpu.numel() < 1:
+                    continue
 
-            x = x_cpu.to(device, non_blocking=True).contiguous(memory_format=torch.channels_last)
-            y = y_cpu.to(device)
-
-            with torch.amp.autocast(**autocast_kwargs):
-                fmap = encoder.forward_feature_maps(x, which=args.which_layer)
-
-            curr_batch_size = fmap.size(0)
-            if getattr(args, "token_norm_mode", "gap-scalar") == "gap-scalar":
-                gap = fmap.mean(dim=(2, 3))
-                gap_norm = gap.norm(dim=1, keepdim=True).view(curr_batch_size, 1, 1, 1).clamp_min(1e-12)
-                fmap = fmap / gap_norm
-
-            fmap = fmap.permute(0, 2, 3, 1).contiguous()
-            C = fmap.shape[-1]
-
-            flat_tokens = fmap.view(-1, C)
-            flat_tokens = flat_tokens - flat_tokens.mean(dim=0, keepdim=True)
-            flat_tokens = F.normalize(flat_tokens, dim=1, eps=1e-12)
-
-            tokens = flat_tokens.view(curr_batch_size, -1, C)
-            num_tokens_per_img = tokens.shape[1]
-
-            token_batch_size = 8192
-            num_flat_tokens = flat_tokens.size(0)
-
-            image_act_sums = torch.zeros((curr_batch_size, d_sae), device=device, dtype=torch.float32)
-            batch_active_token_count = 0
-            batch_total_token_count = 0
-            batch_token_counts_list = []
-
-            for start in range(0, num_flat_tokens, token_batch_size):
-                end = min(start + token_batch_size, num_flat_tokens)
-                chunk = flat_tokens[start:end]
+                x = x_cpu.to(device, non_blocking=True).contiguous(
+                    memory_format=torch.channels_last
+                )
+                y = y_cpu.to(device)
 
                 with torch.amp.autocast(**autocast_kwargs):
-                    _, chunk_acts, _, _, _ = sae(chunk)
+                    fmap = encoder.forward_feature_maps(x, which=args.which_layer)
 
-                chunk_acts = chunk_acts.float()
-                token_start_idx = start
-                token_end_idx = end
+                curr_batch_size = fmap.size(0)
+                if getattr(args, "token_norm_mode", "gap-scalar") == "gap-scalar":
+                    gap = fmap.mean(dim=(2, 3))
+                    gap_norm = (
+                        gap.norm(dim=1, keepdim=True)
+                        .view(curr_batch_size, 1, 1, 1)
+                        .clamp_min(1e-12)
+                    )
+                    fmap = fmap / gap_norm
 
-                chunk_active = (chunk_acts > 0).sum(dim=1)
-                batch_token_counts_list.append(chunk_active.cpu())
-                batch_active_token_count += (chunk_active > 0).sum().item()
-                batch_total_token_count += chunk_active.size(0)
+                fmap = fmap.permute(0, 2, 3, 1).contiguous()
+                C = fmap.shape[-1]
 
-                for i in range(curr_batch_size):
-                    img_start = i * num_tokens_per_img
-                    img_end = (i + 1) * num_tokens_per_img
-                    rel_start = max(0, img_start - token_start_idx)
-                    rel_end = min(end - start, img_end - token_start_idx)
-                    if rel_start < rel_end and img_start < token_end_idx and img_end > token_start_idx:
-                        image_act_sums[i] += chunk_acts[rel_start:rel_end].sum(dim=0)
+                flat_tokens = fmap.view(-1, C)
+                flat_tokens = flat_tokens - flat_tokens.mean(dim=0, keepdim=True)
+                flat_tokens = F.normalize(flat_tokens, dim=1, eps=1e-12)
 
-                del chunk_acts
+                tokens = flat_tokens.view(curr_batch_size, -1, C)
+                num_tokens_per_img = tokens.shape[1]
 
-            total_tokens += batch_total_token_count
-            active_tokens += batch_active_token_count
+                token_batch_size = 8192
+                num_flat_tokens = flat_tokens.size(0)
 
-            if batch_token_counts_list:
-                all_token_counts_list.append(torch.cat(batch_token_counts_list))
+                image_act_sums = torch.zeros(
+                    (curr_batch_size, d_sae), device=device, dtype=torch.float32
+                )
+                batch_active_token_count = 0
+                batch_total_token_count = 0
+                batch_token_counts_list = []
 
-            for c in range(NUM_CLASSES):
-                class_mask = (y == c)
-                if class_mask.any():
-                    class_act_sums = image_act_sums[class_mask].sum(dim=0)
-                    concept_class_counts[:, c] += class_act_sums
-                    class_gap_sum[c] += image_act_sums[class_mask].sum(dim=0)
-                    class_img_count[c] += class_mask.sum()
-                    active_per_concept = (image_act_sums[class_mask] > 0).long().sum(dim=0)
-                    class_active_img_count[c] += active_per_concept
+                for start in range(0, num_flat_tokens, token_batch_size):
+                    end = min(start + token_batch_size, num_flat_tokens)
+                    chunk = flat_tokens[start:end]
 
-            # Save per-image GAP vectors (act_sum / num_tokens = GAP)
-            image_gap = image_act_sums / num_tokens_per_img  # (B, d_sae)
-            per_image_gap_list.append(image_gap.cpu().numpy())
-            per_image_y_list.extend(y_cpu.tolist())
-            per_image_line_list.extend(batch_lines)
-            per_image_uid_list.extend(batch_uids)
+                    with torch.amp.autocast(**autocast_kwargs):
+                        _, chunk_acts, _, _, _ = sae(chunk)
 
-            del image_act_sums, image_gap, flat_tokens, fmap
-            image_idx += curr_batch_size
+                    chunk_acts = chunk_acts.float()
+                    token_start_idx = start
+                    token_end_idx = end
+
+                    chunk_active = (chunk_acts > 0).sum(dim=1)
+                    batch_token_counts_list.append(chunk_active.cpu())
+                    batch_active_token_count += (chunk_active > 0).sum().item()
+                    batch_total_token_count += chunk_active.size(0)
+
+                    for i in range(curr_batch_size):
+                        img_start = i * num_tokens_per_img
+                        img_end = (i + 1) * num_tokens_per_img
+                        rel_start = max(0, img_start - token_start_idx)
+                        rel_end = min(end - start, img_end - token_start_idx)
+                        if (
+                            rel_start < rel_end
+                            and img_start < token_end_idx
+                            and img_end > token_start_idx
+                        ):
+                            image_act_sums[i] += chunk_acts[rel_start:rel_end].sum(
+                                dim=0
+                            )
+
+                    del chunk_acts
+
+                total_tokens += batch_total_token_count
+                active_tokens += batch_active_token_count
+
+                if batch_token_counts_list:
+                    all_token_counts_list.append(torch.cat(batch_token_counts_list))
+
+                for c in range(NUM_CLASSES):
+                    class_mask = y == c
+                    if class_mask.any():
+                        class_act_sums = image_act_sums[class_mask].sum(dim=0)
+                        concept_class_counts[:, c] += class_act_sums
+                        class_gap_sum[c] += image_act_sums[class_mask].sum(dim=0)
+                        class_img_count[c] += class_mask.sum()
+                        active_per_concept = (
+                            (image_act_sums[class_mask] > 0).long().sum(dim=0)
+                        )
+                        class_active_img_count[c] += active_per_concept
+
+                # Save per-image GAP vectors (act_sum / num_tokens = GAP)
+                image_gap = image_act_sums / num_tokens_per_img  # (B, d_sae)
+                per_image_gap_list.append(image_gap.cpu().numpy())
+                per_image_y_list.extend(y_cpu.tolist())
+                per_image_line_list.extend(batch_lines)
+                per_image_uid_list.extend(batch_uids)
+
+                del image_act_sums, image_gap, flat_tokens, fmap
+                image_idx += curr_batch_size
 
     # --- Process Concept Metrics (CPU) ---
     concept_class_counts_cpu = concept_class_counts.cpu().numpy()
@@ -498,8 +549,12 @@ def evaluate_concepts_for_sae(
         sorted_counts = np.sort(active_counts)
         n = len(sorted_counts)
         cumulative = np.cumsum(sorted_counts)
-        gini = (2 * np.sum((np.arange(1, n + 1) * sorted_counts)) - (n + 1) * cumulative[-1]) / (n * cumulative[-1])
-        normalized_mean = (mean_concepts - 1) / (max_concepts - 1) if max_concepts > 1 else 0.0
+        gini = (
+            2 * np.sum((np.arange(1, n + 1) * sorted_counts)) - (n + 1) * cumulative[-1]
+        ) / (n * cumulative[-1])
+        normalized_mean = (
+            (mean_concepts - 1) / (max_concepts - 1) if max_concepts > 1 else 0.0
+        )
         pmf_counts = np.zeros(max_concepts + 1)
         vals, counts = np.unique(active_counts, return_counts=True)
         pmf_counts[vals.astype(int)] = counts
@@ -520,8 +575,13 @@ def evaluate_concepts_for_sae(
 
     logger.info("  Extracting SAE representations (Standard)...")
     X_train_std, y_train, _ = extract_sae_repr_for_probe(
-        encoder, sae, train_loader, device, args.which_layer,
-        token_l2_norm=args.token_l2_norm, strength_weighting=False,
+        encoder,
+        sae,
+        train_loader,
+        device,
+        args.which_layer,
+        token_l2_norm=args.token_l2_norm,
+        strength_weighting=False,
         dead_threshold=float(args.dead_threshold),
     )
     if torch.cuda.is_available():
@@ -530,22 +590,43 @@ def evaluate_concepts_for_sae(
     X_eval_std_parts, y_eval_parts = [], []
     for name, loader in eval_loaders_lp:
         X_part, y_part, _ = extract_sae_repr_for_probe(
-            encoder, sae, loader, device, args.which_layer,
-            token_l2_norm=args.token_l2_norm, strength_weighting=False,
+            encoder,
+            sae,
+            loader,
+            device,
+            args.which_layer,
+            token_l2_norm=args.token_l2_norm,
+            strength_weighting=False,
             dead_threshold=float(args.dead_threshold),
         )
         X_eval_std_parts.append(X_part)
         y_eval_parts.append(y_part)
 
-    X_eval_std = np.concatenate(X_eval_std_parts, axis=0) if X_eval_std_parts else np.zeros((0, X_train_std.shape[1]), dtype=np.float32)
-    y_eval = np.concatenate(y_eval_parts, axis=0) if y_eval_parts else np.zeros(0, dtype=np.int64)
+    X_eval_std = (
+        np.concatenate(X_eval_std_parts, axis=0)
+        if X_eval_std_parts
+        else np.zeros((0, X_train_std.shape[1]), dtype=np.float32)
+    )
+    y_eval = (
+        np.concatenate(y_eval_parts, axis=0)
+        if y_eval_parts
+        else np.zeros(0, dtype=np.int64)
+    )
     del X_eval_std_parts, y_eval_parts
 
     logger.info("  Training Linear Probe (Standard)...")
     probe_std = train_linear_probe(
-        X_train_std, y_train, X_eval_std, y_eval,
-        num_classes=NUM_CLASSES, epochs=50, lr=0.1, batch_size=256,
-        normalize_repr=False, device=device, verbose=False
+        X_train_std,
+        y_train,
+        X_eval_std,
+        y_eval,
+        num_classes=NUM_CLASSES,
+        epochs=50,
+        lr=0.1,
+        batch_size=256,
+        normalize_repr=False,
+        device=device,
+        verbose=False,
     )
 
     del X_train_std, X_eval_std
@@ -555,8 +636,13 @@ def evaluate_concepts_for_sae(
 
     logger.info("  Extracting SAE representations (Strength-weighted)...")
     X_train_str, y_train_str, _ = extract_sae_repr_for_probe(
-        encoder, sae, train_loader, device, args.which_layer,
-        token_l2_norm=args.token_l2_norm, strength_weighting=True,
+        encoder,
+        sae,
+        train_loader,
+        device,
+        args.which_layer,
+        token_l2_norm=args.token_l2_norm,
+        strength_weighting=True,
         dead_threshold=float(args.dead_threshold),
     )
     if torch.cuda.is_available():
@@ -565,22 +651,43 @@ def evaluate_concepts_for_sae(
     X_eval_str_parts, y_eval_str_parts = [], []
     for name, loader in eval_loaders_lp:
         X_part, y_part, _ = extract_sae_repr_for_probe(
-            encoder, sae, loader, device, args.which_layer,
-            token_l2_norm=args.token_l2_norm, strength_weighting=True,
+            encoder,
+            sae,
+            loader,
+            device,
+            args.which_layer,
+            token_l2_norm=args.token_l2_norm,
+            strength_weighting=True,
             dead_threshold=float(args.dead_threshold),
         )
         X_eval_str_parts.append(X_part)
         y_eval_str_parts.append(y_part)
 
-    X_eval_str = np.concatenate(X_eval_str_parts, axis=0) if X_eval_str_parts else np.zeros((0, X_train_str.shape[1]), dtype=np.float32)
-    y_eval_str = np.concatenate(y_eval_str_parts, axis=0) if y_eval_str_parts else np.zeros(0, dtype=np.int64)
+    X_eval_str = (
+        np.concatenate(X_eval_str_parts, axis=0)
+        if X_eval_str_parts
+        else np.zeros((0, X_train_str.shape[1]), dtype=np.float32)
+    )
+    y_eval_str = (
+        np.concatenate(y_eval_str_parts, axis=0)
+        if y_eval_str_parts
+        else np.zeros(0, dtype=np.int64)
+    )
     del X_eval_str_parts, y_eval_str_parts
 
     logger.info("  Training Linear Probe (Strength-weighted)...")
     probe_str = train_linear_probe(
-        X_train_str, y_train_str, X_eval_str, y_eval_str,
-        num_classes=NUM_CLASSES, epochs=50, lr=0.1, batch_size=256,
-        normalize_repr=False, device=device, verbose=False
+        X_train_str,
+        y_train_str,
+        X_eval_str,
+        y_eval_str,
+        num_classes=NUM_CLASSES,
+        epochs=50,
+        lr=0.1,
+        batch_size=256,
+        normalize_repr=False,
+        device=device,
+        verbose=False,
     )
 
     del X_train_str, X_eval_str
@@ -588,14 +695,20 @@ def evaluate_concepts_for_sae(
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-    logger.info(f"  Probe: std={probe_std['test_acc']:.3f}, str={probe_str['test_acc']:.3f} (val+test combined)")
+    logger.info(
+        f"  Probe: std={probe_std['test_acc']:.3f}, str={probe_str['test_acc']:.3f} (val+test combined)"
+    )
 
     fvu = getattr(trainer, "best_fvu", None)
     if fvu is None:
         fvu = getattr(trainer, "last_fvu", 0.0)
 
-    eff_rank_results = compute_effective_rank(sae, dead_threshold=float(args.dead_threshold))
-    logger.info(f"  Effective Rank: {eff_rank_results['effective_rank']:.2f} (normalized: {eff_rank_results['normalized_effective_rank']:.3f})")
+    eff_rank_results = compute_effective_rank(
+        sae, dead_threshold=float(args.dead_threshold)
+    )
+    logger.info(
+        f"  Effective Rank: {eff_rank_results['effective_rank']:.2f} (normalized: {eff_rank_results['normalized_effective_rank']:.3f})"
+    )
 
     results = {
         **exp_config,
@@ -612,13 +725,21 @@ def evaluate_concepts_for_sae(
         "purity_mean": float(purity_arr.mean()),
         "purity_std": float(purity_arr.std()),
         "purity_median": float(np.median(purity_arr)),
-        "purity_p90": float(np.percentile(purity_arr, 90)) if len(purity_arr) > 0 else 0.0,
-        "purity_p95": float(np.percentile(purity_arr, 95)) if len(purity_arr) > 0 else 0.0,
+        "purity_p90": (
+            float(np.percentile(purity_arr, 90)) if len(purity_arr) > 0 else 0.0
+        ),
+        "purity_p95": (
+            float(np.percentile(purity_arr, 95)) if len(purity_arr) > 0 else 0.0
+        ),
         "entropy_mean": float(entropy_arr.mean()),
         "entropy_std": float(entropy_arr.std()),
         "entropy_min": float(entropy_arr.min()) if len(entropy_arr) > 0 else 0.0,
-        "entropy_p05": float(np.percentile(entropy_arr, 5)) if len(entropy_arr) > 0 else 2.0,
-        "entropy_p10": float(np.percentile(entropy_arr, 10)) if len(entropy_arr) > 0 else 2.0,
+        "entropy_p05": (
+            float(np.percentile(entropy_arr, 5)) if len(entropy_arr) > 0 else 2.0
+        ),
+        "entropy_p10": (
+            float(np.percentile(entropy_arr, 10)) if len(entropy_arr) > 0 else 2.0
+        ),
         "low_entropy_concepts": low_entropy_count,
         "very_low_entropy_concepts": very_low_entropy_count,
         "mean_concepts_per_token": mean_concepts,
@@ -660,19 +781,31 @@ def evaluate_concepts_for_sae(
     with open(gap_csv_path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         active_count_cols = [f"n_{name}" for name in class_names]
-        w.writerow(["concept_id", "is_alive"] + class_names + active_count_cols + ["max_class", "class_diff", "entropy", "total_active_imgs"])
+        w.writerow(
+            ["concept_id", "is_alive"]
+            + class_names
+            + active_count_cols
+            + ["max_class", "class_diff", "entropy", "total_active_imgs"]
+        )
 
         for i in range(d_sae):
             is_alive = int(i in alive_indices)
             gaps = [float(class_gap_mean[c, i]) for c in range(NUM_CLASSES)]
-            active_counts_csv = [int(class_active_img_count_cpu[c, i]) for c in range(NUM_CLASSES)]
+            active_counts_csv = [
+                int(class_active_img_count_cpu[c, i]) for c in range(NUM_CLASSES)
+            ]
             total_active = sum(active_counts_csv)
             max_class = class_names[np.argmax(gaps)] if max(gaps) > 0 else "None"
             class_diff = max(gaps) - min(gaps)
             total = sum(gaps) + 1e-10
             probs_csv = [g / total for g in gaps]
             ent = -sum(p * np.log2(max(p, 1e-10)) for p in probs_csv)
-            w.writerow([i, is_alive] + gaps + active_counts_csv + [max_class, f"{class_diff:.4f}", f"{ent:.4f}", total_active])
+            w.writerow(
+                [i, is_alive]
+                + gaps
+                + active_counts_csv
+                + [max_class, f"{class_diff:.4f}", f"{ent:.4f}", total_active]
+            )
 
     logger.info(f"  Saved class-wise GAP means to: {gap_csv_path}")
     logger.info(f"  Alive concepts: {len(alive_indices)}/{d_sae}")

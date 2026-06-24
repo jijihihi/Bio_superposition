@@ -27,23 +27,33 @@ def get_logger(name: str):
 DEFAULT_SHARD_ROOT = "/content/wds_shards"
 
 LINE_FOLDERS = [
-    "Control_C4", "Control_C18", "Control_C19",
-    "SNCA", "GBA", "LRRK2",
-    "GBA_346", "GBA_WIMP4", "SNCA-G51D_isogenic", "SNCA-G51D", 
-    "SNCA_isogenic", "SNCAx3_isogenic", "alpha_syn_1day", "alpha_syn_7day"
+    "Control_C4",
+    "Control_C18",
+    "Control_C19",
+    "SNCA",
+    "GBA",
+    "LRRK2",
+    "GBA_346",
+    "GBA_WIMP4",
+    "SNCA-G51D_isogenic",
+    "SNCA-G51D",
+    "SNCA_isogenic",
+    "SNCAx3_isogenic",
+    "alpha_syn_1day",
+    "alpha_syn_7day",
 ]
 
 SUPERCLASS_MAP = {
-    "Control_C4":  "Control",
+    "Control_C4": "Control",
     "Control_C18": "Control",
     "Control_C19": "Control",
-    "SNCA":        "SNCA",
-    "GBA":         "GBA",
-    "LRRK2":       "LRRK2",
-    "GBA_346":     "GBA_346",
-    "GBA_WIMP4":   "GBA_WIMP4",
+    "SNCA": "SNCA",
+    "GBA": "GBA",
+    "LRRK2": "LRRK2",
+    "GBA_346": "GBA_346",
+    "GBA_WIMP4": "GBA_WIMP4",
     "SNCA-G51D_isogenic": "SNCA-G51D_isogenic",
-    "SNCA-G51D":   "SNCA-G51D",
+    "SNCA-G51D": "SNCA-G51D",
     "SNCA_isogenic": "SNCA_isogenic",
     "SNCAx3_isogenic": "SNCAx3_isogenic",
     "alpha_syn_1day": "alpha_syn_1day",
@@ -51,10 +61,18 @@ SUPERCLASS_MAP = {
 }
 
 CLASS_TO_LABEL = {
-    "Control": 0, "SNCA": 1, "GBA": 2, "LRRK2": 3,
-    "GBA_346": 4, "GBA_WIMP4": 5, "SNCA-G51D_isogenic": 6, 
-    "SNCA-G51D": 7, "SNCA_isogenic": 8, "SNCAx3_isogenic": 9,
-    "alpha_syn_1day": 10, "alpha_syn_7day": 11
+    "Control": 0,
+    "SNCA": 1,
+    "GBA": 2,
+    "LRRK2": 3,
+    "GBA_346": 4,
+    "GBA_WIMP4": 5,
+    "SNCA-G51D_isogenic": 6,
+    "SNCA-G51D": 7,
+    "SNCA_isogenic": 8,
+    "SNCAx3_isogenic": 9,
+    "alpha_syn_1day": 10,
+    "alpha_syn_7day": 11,
 }
 
 PLATE_DIR_RE = re.compile(r"plate=(\d{6})")

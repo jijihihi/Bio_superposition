@@ -31,33 +31,31 @@
 #     --seed 856 --output_dir "/content/erank"
 # ==============================================================================
 
+import argparse
+import json
 import os
 import sys
-import json
-import argparse
-import numpy as np
 
 import matplotlib
+import numpy as np
+
 _IN_COLAB = "google.colab" in sys.modules
 if not _IN_COLAB:
     matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import seaborn as sns
-
 from sklearn.decomposition import PCA
 
-from sae_project.step02_logging_utils import get_logger, SUPERCLASS_MAP
-from kendall_correlation_coefficient.dpt_kendall import (
-    load_features_cache,
-    apply_normalization,
-    compute_cv_per_neuron,
-    compute_de_neurons,
-)
+from kendall_correlation_coefficient.dpt_kendall import (apply_normalization,
+                                                         compute_cv_per_neuron,
+                                                         compute_de_neurons,
+                                                         load_features_cache)
+from sae_project.step02_logging_utils import SUPERCLASS_MAP, get_logger
 
 logger = get_logger("effective_rank")
 
-plt.rcParams['svg.fonttype'] = 'none'
-plt.rcParams['pdf.fonttype'] = 42
+plt.rcParams["svg.fonttype"] = "none"
+plt.rcParams["pdf.fonttype"] = 42
 sns.set_style("ticks")
 
 
@@ -81,15 +79,22 @@ def get_args():
     p.add_argument("--de_adj_p", type=float, default=0.05)
     p.add_argument("--de_min_log2fc", type=float, default=1.0)
     p.add_argument("--de_top_k", type=int, default=0)
-    p.add_argument("--de_mode", type=str, default="union",
-                   choices=["union", "per_mut"])
+    p.add_argument("--de_mode", type=str, default="union", choices=["union", "per_mut"])
     p.add_argument("--de_eval_split", type=float, default=0.5)
 
-    p.add_argument("--pca_dim", type=int, default=50,
-                   help="PCA dimensions for PCA-based erank. 0 = skip PCA conditions.")
-    p.add_argument("--norm", type=str, default="",
-                   choices=["", "none", "std", "log_std"],
-                   help="Normalization before PCA: '' or 'none' (skip), 'std', 'log_std'")
+    p.add_argument(
+        "--pca_dim",
+        type=int,
+        default=50,
+        help="PCA dimensions for PCA-based erank. 0 = skip PCA conditions.",
+    )
+    p.add_argument(
+        "--norm",
+        type=str,
+        default="",
+        choices=["", "none", "std", "log_std"],
+        help="Normalization before PCA: '' or 'none' (skip), 'std', 'log_std'",
+    )
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--output_dir", type=str, default="")
     p.add_argument("--dpi", type=int, default=200)
@@ -119,7 +124,7 @@ def compute_effective_rank(X):
     p = s / s.sum()
     entropy = -np.sum(p * np.log(p))
     # Cumulative variance ratio: σ_i² / Σσ_j²
-    var_explained = s ** 2
+    var_explained = s**2
     cumvar = np.cumsum(var_explained) / var_explained.sum()
     return float(np.exp(entropy)), s, cumvar
 
@@ -136,14 +141,21 @@ def plot_sv_spectrum(sv_dict, mutation, condition_label, output_path, dpi=200):
         if len(svs) == 0:
             continue
         p = svs / svs.sum()
-        ax.plot(range(1, len(p) + 1), p, "-", color=colors.get(source_label, "gray"),
-                linewidth=1.5, alpha=0.8,
-                label=f"{source_label} (erank={erank:.1f}/{len(svs)})")
+        ax.plot(
+            range(1, len(p) + 1),
+            p,
+            "-",
+            color=colors.get(source_label, "gray"),
+            linewidth=1.5,
+            alpha=0.8,
+            label=f"{source_label} (erank={erank:.1f}/{len(svs)})",
+        )
 
     ax.set_xlabel("Singular value index", fontsize=11)
     ax.set_ylabel("Normalized σ_i / Σσ", fontsize=11)
-    ax.set_title(f"{mutation} — SV Spectrum ({condition_label})",
-                 fontsize=12, fontweight="bold")
+    ax.set_title(
+        f"{mutation} — SV Spectrum ({condition_label})", fontsize=12, fontweight="bold"
+    )
     ax.legend(fontsize=9)
     ax.set_yscale("log")
     ax.grid(True, alpha=0.2)
@@ -178,7 +190,7 @@ def apply_filters(X, superclasses_arr, args):
         logger.info(f"    Filter [{fm}]: {step}")
 
     # DE/Eval split
-    de_eval_split = getattr(args, 'de_eval_split', 0.0)
+    de_eval_split = getattr(args, "de_eval_split", 0.0)
     if de_eval_split > 0 and has_de:
         rng_split = np.random.RandomState(args.seed)
         n_total = len(superclasses_arr)
@@ -189,8 +201,10 @@ def apply_filters(X, superclasses_arr, args):
             chosen = rng_split.choice(cls_idx, size=n_eval, replace=False)
             eval_mask[chosen] = True
         de_mask_global = ~eval_mask
-        logger.info(f"    DE/Eval split: DE={int(de_mask_global.sum())}, "
-                    f"Eval={int(eval_mask.sum())}")
+        logger.info(
+            f"    DE/Eval split: DE={int(de_mask_global.sum())}, "
+            f"Eval={int(eval_mask.sum())}"
+        )
     else:
         de_mask_global = np.ones(len(superclasses_arr), dtype=bool)
 
@@ -201,7 +215,9 @@ def apply_filters(X, superclasses_arr, args):
         sc_de = list(superclasses_arr[de_mask_global])
         for m in ["SNCA", "GBA", "LRRK2"]:
             de_result = compute_de_neurons(
-                X_de, sc_de, m,
+                X_de,
+                sc_de,
+                m,
                 adj_p_threshold=args.de_adj_p,
                 min_log2fc=args.de_min_log2fc,
             )
@@ -209,14 +225,16 @@ def apply_filters(X, superclasses_arr, args):
             if args.de_top_k > 0 and mask.sum() > args.de_top_k:
                 sig_indices = np.where(mask)[0]
                 abs_fc = np.abs(de_result["log2fc"][sig_indices])
-                top_k_idx = sig_indices[np.argsort(abs_fc)[::-1][:args.de_top_k]]
+                top_k_idx = sig_indices[np.argsort(abs_fc)[::-1][: args.de_top_k]]
                 mask = np.zeros_like(mask)
                 mask[top_k_idx] = True
             de_masks.append(mask)
 
         superclasses_allm = [("AllMut" if s != "Control" else "Control") for s in sc_de]
         de_ctrl = compute_de_neurons(
-            X_de, superclasses_allm, "AllMut",
+            X_de,
+            superclasses_allm,
+            "AllMut",
             adj_p_threshold=args.de_adj_p,
             min_log2fc=args.de_min_log2fc,
         )
@@ -299,7 +317,11 @@ def main():
         data = np.load(cache_path, allow_pickle=True)
         if "X_gap" in data:
             X = data["X_gap"]
-            lines = data["lines"].astype(str) if data["lines"].dtype.kind != 'U' else data["lines"]
+            lines = (
+                data["lines"].astype(str)
+                if data["lines"].dtype.kind != "U"
+                else data["lines"]
+            )
             label = "CNN"
             logger.info(f"  Detected CNN GAP cache: {X.shape}")
         elif "X_all" in data:
@@ -381,7 +403,8 @@ def main():
         # Apply filters
         if has_filter:
             X_filtered, filter_label = apply_filters(
-                X_raw.copy(), superclasses_arr, args)
+                X_raw.copy(), superclasses_arr, args
+            )
             logger.info(f"  Filter: {filter_label}")
         else:
             X_filtered = None
@@ -406,22 +429,26 @@ def main():
                 for cond in conditions:
                     cond_label = f"{filter_tag}_{cond}"
                     erank, svs, n_dims, cumvar = compute_erank_condition(
-                        X_mut, cond, args.pca_dim, args.seed,
-                        norm_type=args.norm)
+                        X_mut, cond, args.pca_dim, args.seed, norm_type=args.norm
+                    )
 
                     logger.info(f"    {cond_label:25s}: erank={erank:8.2f} / {n_dims}")
 
-                    all_results.append({
-                        "source": source_label,
-                        "mutation": mut,
-                        "filter": filter_tag,
-                        "condition": cond,
-                        "erank": erank,
-                        "n_dims": n_dims,
-                        "erank_ratio": erank / max(n_dims, 1),
-                        "n_samples": n_mut,
-                        "cumulative_variance": cumvar.tolist() if len(cumvar) > 0 else [],
-                    })
+                    all_results.append(
+                        {
+                            "source": source_label,
+                            "mutation": mut,
+                            "filter": filter_tag,
+                            "condition": cond,
+                            "erank": erank,
+                            "n_dims": n_dims,
+                            "erank_ratio": erank / max(n_dims, 1),
+                            "n_samples": n_mut,
+                            "cumulative_variance": (
+                                cumvar.tolist() if len(cumvar) > 0 else []
+                            ),
+                        }
+                    )
 
                     # Store SVs for spectrum plot
                     if cond == "raw":
@@ -434,14 +461,21 @@ def main():
         for filter_tag in ["unfiltered", "filtered"]:
             sv_dict = {}
             for res in all_results:
-                if (res["mutation"] == mut and res["filter"] == filter_tag
-                        and res["condition"] == "raw" and "_svs" in res):
+                if (
+                    res["mutation"] == mut
+                    and res["filter"] == filter_tag
+                    and res["condition"] == "raw"
+                    and "_svs" in res
+                ):
                     sv_dict[res["source"]] = (res["erank"], res["_svs"])
             if sv_dict:
                 plot_sv_spectrum(
-                    sv_dict, mut, filter_tag,
+                    sv_dict,
+                    mut,
+                    filter_tag,
                     os.path.join(out_dir, f"sv_spectrum_{mut}_{filter_tag}.png"),
-                    dpi=args.dpi)
+                    dpi=args.dpi,
+                )
 
     # ── Summary ──
     logger.info(f"\n{'='*80}")
@@ -449,34 +483,43 @@ def main():
     logger.info(f"{'='*80}")
     logger.info(f"  PCA dim: {args.pca_dim}")
     logger.info(f"  Filter: {filter_label if has_filter else 'none'}")
-    logger.info(f"  {'Source':6s} {'Mut':6s} {'Filter':12s} {'Condition':10s} "
-                f"{'erank':>8s} {'dims':>6s} {'ratio':>7s}")
+    logger.info(
+        f"  {'Source':6s} {'Mut':6s} {'Filter':12s} {'Condition':10s} "
+        f"{'erank':>8s} {'dims':>6s} {'ratio':>7s}"
+    )
     logger.info("  " + "-" * 65)
 
     for res in all_results:
-        logger.info(f"  {res['source']:6s} {res['mutation']:6s} "
-                    f"{res['filter']:12s} {res['condition']:10s} "
-                    f"{res['erank']:8.2f} {res['n_dims']:6d} "
-                    f"{res['erank_ratio']:7.3f}")
+        logger.info(
+            f"  {res['source']:6s} {res['mutation']:6s} "
+            f"{res['filter']:12s} {res['condition']:10s} "
+            f"{res['erank']:8.2f} {res['n_dims']:6d} "
+            f"{res['erank_ratio']:7.3f}"
+        )
 
     # ── Save JSON (trend-plot friendly) ──
-    json_results = [{k: v for k, v in res.items() if k != "_svs"}
-                    for res in all_results]
+    json_results = [
+        {k: v for k, v in res.items() if k != "_svs"} for res in all_results
+    ]
     json_path = os.path.join(out_dir, "effective_rank_results.json")
     with open(json_path, "w") as f:
-        json.dump({
-            "pca_dim": args.pca_dim,
-            "gap_l2_norm": args.gap_l2_norm,
-            "filter_mode": args.filter_mode,
-            "min_cv": args.min_cv,
-            "de_min_log2fc": args.de_min_log2fc,
-            "de_mode": args.de_mode,
-            "de_eval_split": args.de_eval_split,
-            "norm": args.norm,
-            "samples_per_class": args.samples_per_class,
-            "seed": args.seed,
-            "results": json_results,
-        }, f, indent=2)
+        json.dump(
+            {
+                "pca_dim": args.pca_dim,
+                "gap_l2_norm": args.gap_l2_norm,
+                "filter_mode": args.filter_mode,
+                "min_cv": args.min_cv,
+                "de_min_log2fc": args.de_min_log2fc,
+                "de_mode": args.de_mode,
+                "de_eval_split": args.de_eval_split,
+                "norm": args.norm,
+                "samples_per_class": args.samples_per_class,
+                "seed": args.seed,
+                "results": json_results,
+            },
+            f,
+            indent=2,
+        )
     logger.info(f"\n  Saved JSON: {json_path}")
     logger.info(f"  Output: {out_dir}")
     logger.info(f"{'='*80}")

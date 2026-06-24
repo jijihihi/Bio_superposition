@@ -48,41 +48,33 @@
 # 값 이상하다. GAP_CSV 뽑을때와 동일한 방법으로 cache를 뽑아야하는거 같아. 그래야 잘 될듯하다.
 
 
-
-
 # concept_0037_LRRK2_SNCA. 이렇게 되면 control LRRK2로만 DPT만들고 이 궤적 위에서 LRRK2 이미지들 GAP 분석. SNCA도 마찬가지로
 
 # → mutation별로 Control+해당Mutation 이미지만 사용해서 DPT 구축
 
 
+import argparse
 import os
 import sys
-import argparse
-import numpy as np
-
-from sklearn.decomposition import PCA
-from scipy.stats import spearmanr
-
-import scanpy as sc
 
 import matplotlib
+import numpy as np
+import scanpy as sc
+from scipy.stats import spearmanr
+from sklearn.decomposition import PCA
+
 _IN_COLAB = "google.colab" in sys.modules
 if not _IN_COLAB:
     matplotlib.use("Agg")
-import matplotlib.pyplot as plt
+import re
 
-from sae_project.step02_logging_utils import get_logger, SUPERCLASS_MAP
+import matplotlib.pyplot as plt
 
 # ── dpt_kendall 에서 import ──
 from kendall_correlation_coefficient.dpt_kendall import (
-    load_features_cache,
-    load_and_match_apoptosis,
-    compute_cv_per_neuron,
-    compute_de_neurons,
-    apply_normalization,
-)
-
-import re
+    apply_normalization, compute_cv_per_neuron, compute_de_neurons,
+    load_and_match_apoptosis, load_features_cache)
+from sae_project.step02_logging_utils import SUPERCLASS_MAP, get_logger
 
 logger = get_logger("dpt_concept_act")
 
@@ -97,37 +89,78 @@ def get_args():
         description="DPT vs per-concept GAP activation (Spearman ρ + GAM adj.R²)"
     )
 
-    p.add_argument("--features_cache", type=str, required=True,
-                   help="DPT 매니폴드용 cache (sparsity 800, 정보 손실 작음)")
-    p.add_argument("--concept_cache", type=str, required=True,
-                   help="concept GAP activation용 cache (sparsity 3200, monosemantic)")
+    p.add_argument(
+        "--features_cache",
+        type=str,
+        required=True,
+        help="DPT 매니폴드용 cache (sparsity 800, 정보 손실 작음)",
+    )
+    p.add_argument(
+        "--concept_cache",
+        type=str,
+        required=True,
+        help="concept GAP activation용 cache (sparsity 3200, monosemantic)",
+    )
     p.add_argument("--apoptosis_csv", type=str, required=True)
-    p.add_argument("--output_dir", type=str, default="",
-                   help="Output directory for plots (default: next to cache)")
-    p.add_argument("--dead_threshold", type=float, default=5e-5,
-                   help="DPT cache (sp800) dead neuron threshold")
-    p.add_argument("--gap_l2_norm", action="store_true",
-                   help="Apply per-image L2 normalization")
+    p.add_argument(
+        "--output_dir",
+        type=str,
+        default="",
+        help="Output directory for plots (default: next to cache)",
+    )
+    p.add_argument(
+        "--dead_threshold",
+        type=float,
+        default=5e-5,
+        help="DPT cache (sp800) dead neuron threshold",
+    )
+    p.add_argument(
+        "--gap_l2_norm", action="store_true", help="Apply per-image L2 normalization"
+    )
 
     # Concept selection: step14 출력 폴더에서 파싱
-    p.add_argument("--concept_vis_dir", type=str, default="",
-                   help="step14 출력 폴더 경로 (concept_XXXX_CLASS 폴더명에서 ID/class 파싱)")
-    p.add_argument("--concept_dead_threshold", type=float, default=1e-5,
-                   help="Concept cache (sp3200) dead neuron threshold")
+    p.add_argument(
+        "--concept_vis_dir",
+        type=str,
+        default="",
+        help="step14 출력 폴더 경로 (concept_XXXX_CLASS 폴더명에서 ID/class 파싱)",
+    )
+    p.add_argument(
+        "--concept_dead_threshold",
+        type=float,
+        default=1e-5,
+        help="Concept cache (sp3200) dead neuron threshold",
+    )
 
     # ===== DPT manifold filtering (sp800) =====
-    p.add_argument("--filter_mode", type=str, nargs="+", default=["none"],
-                   help="DPT 매니폴드용 필터: 'cv', 'de', 'none'. e.g. '--filter_mode cv de'")
-    p.add_argument("--min_cv", type=float, default=0.1,
-                   help="DPT 매니폴드용 CV 임계값")
-    p.add_argument("--de_adj_p", type=float, default=0.05,
-                   help="DPT 매니폴드용 DE adjusted p-value")
-    p.add_argument("--de_min_log2fc", type=float, default=1.0,
-                   help="DPT 매니폴드용 DE min |log2FC|")
+    p.add_argument(
+        "--filter_mode",
+        type=str,
+        nargs="+",
+        default=["none"],
+        help="DPT 매니폴드용 필터: 'cv', 'de', 'none'. e.g. '--filter_mode cv de'",
+    )
+    p.add_argument("--min_cv", type=float, default=0.1, help="DPT 매니폴드용 CV 임계값")
+    p.add_argument(
+        "--de_adj_p",
+        type=float,
+        default=0.05,
+        help="DPT 매니폴드용 DE adjusted p-value",
+    )
+    p.add_argument(
+        "--de_min_log2fc",
+        type=float,
+        default=1.0,
+        help="DPT 매니폴드용 DE min |log2FC|",
+    )
 
     # Normalization for DPT manifold
-    p.add_argument("--norm", type=str, default="log_std",
-                   help="Feature normalization for DPT manifold (e.g. log_std)")
+    p.add_argument(
+        "--norm",
+        type=str,
+        default="log_std",
+        help="Feature normalization for DPT manifold (e.g. log_std)",
+    )
 
     # PCA / kNN / diffmap
     p.add_argument("--pca_dim", type=int, default=15)
@@ -136,13 +169,18 @@ def get_args():
     p.add_argument("--n_dcs", type=int, default=10)
 
     # DPT scope
-    p.add_argument("--dpt_scope", type=str, default="ctrl_mut_pair",
-                   choices=["ctrl_mut_pair", "global"],
-                   help="'ctrl_mut_pair': Control+Mut pair별 DPT. 'global': 전체.")
+    p.add_argument(
+        "--dpt_scope",
+        type=str,
+        default="ctrl_mut_pair",
+        choices=["ctrl_mut_pair", "global"],
+        help="'ctrl_mut_pair': Control+Mut pair별 DPT. 'global': 전체.",
+    )
 
     # Root selection
-    p.add_argument("--root_mode", type=str, default="diffmap",
-                   choices=["pca", "diffmap"])
+    p.add_argument(
+        "--root_mode", type=str, default="diffmap", choices=["pca", "diffmap"]
+    )
     p.add_argument("--root_perturbation_n", type=int, default=10)
 
     # GAM
@@ -153,8 +191,13 @@ def get_args():
     p.add_argument("--seed", type=int, default=856)
     p.add_argument("--dpi", type=int, default=200)
     p.add_argument("--samples_per_class", type=int, default=5000)
-    p.add_argument("--concepts", type=int, nargs="*", default=None,
-                   help="Specific original concept indices to plot (overrides --concept_vis_dir)")
+    p.add_argument(
+        "--concepts",
+        type=int,
+        nargs="*",
+        default=None,
+        help="Specific original concept indices to plot (overrides --concept_vis_dir)",
+    )
     p.add_argument("--de_eval_split", type=float, default=0.5)
 
     return p.parse_args()
@@ -163,8 +206,9 @@ def get_args():
 # ==============================================================================
 # DPT computation — ctrl_mut_pair scope (from dpt_kendall logic)
 # ==============================================================================
-def compute_dpt_ctrl_mut_pair(X_pca, superclasses_arr, n_neighbors, n_pca,
-                               n_diffmap, n_dcs, mutations=None):
+def compute_dpt_ctrl_mut_pair(
+    X_pca, superclasses_arr, n_neighbors, n_pca, n_diffmap, n_dcs, mutations=None
+):
     """
     Compute DPT for each Ctrl+Mut pair (ctrl_mut_pair scope).
 
@@ -193,8 +237,10 @@ def compute_dpt_ctrl_mut_pair(X_pca, superclasses_arr, n_neighbors, n_pca,
         X_pca_pair = X_pca[pair_mask]
         pair_sc = superclasses_arr[pair_mask]
         n_pair = X_pca_pair.shape[0]
-        logger.info(f"  {mut} pair: {n_pair} cells "
-                    f"(Ctrl={ctrl_mask.sum()}, {mut}={mut_mask.sum()})")
+        logger.info(
+            f"  {mut} pair: {n_pair} cells "
+            f"(Ctrl={ctrl_mask.sum()}, {mut}={mut_mask.sum()})"
+        )
 
         # Build diffmap on pair
         adata_pair = sc.AnnData(X_pca_pair.astype(np.float32))
@@ -206,8 +252,9 @@ def compute_dpt_ctrl_mut_pair(X_pca, superclasses_arr, n_neighbors, n_pca,
         n_dcs_pair = min(n_dcs, n_diffmap_pair)
         n_dcs_pair = max(n_dcs_pair, 2)
 
-        sc.pp.neighbors(adata_pair, n_neighbors=n_neighbors,
-                        n_pcs=n_pca, use_rep="X_pca")
+        sc.pp.neighbors(
+            adata_pair, n_neighbors=n_neighbors, n_pcs=n_pca, use_rep="X_pca"
+        )
         sc.tl.diffmap(adata_pair, n_comps=n_diffmap_pair)
 
         evals = adata_pair.uns["diffmap_evals"]
@@ -218,7 +265,8 @@ def compute_dpt_ctrl_mut_pair(X_pca, superclasses_arr, n_neighbors, n_pca,
         pair_ctrl_mask = np.array(pair_sc) == "Control"
         ctrl_centroid = diffmap_coords[pair_ctrl_mask].mean(axis=0)
         ctrl_dists = np.linalg.norm(
-            diffmap_coords[pair_ctrl_mask] - ctrl_centroid, axis=1)
+            diffmap_coords[pair_ctrl_mask] - ctrl_centroid, axis=1
+        )
         root_in_pair = np.where(pair_ctrl_mask)[0][np.argmin(ctrl_dists)]
         logger.info(f"    Root: Ctrl cell (pair idx {root_in_pair})")
 
@@ -237,23 +285,35 @@ def compute_dpt_ctrl_mut_pair(X_pca, superclasses_arr, n_neighbors, n_pca,
         if pair_ctrl_dpt > pair_mut_dpt:
             max_dpt = np.nanmax(dpt_pair)
             dpt_pair = max_dpt - dpt_pair
-            logger.warning(f"    ⚠ DPT FLIPPED: Ctrl({pair_ctrl_dpt:.4f}) > "
-                         f"{mut}({pair_mut_dpt:.4f}) → reversed")
+            logger.warning(
+                f"    ⚠ DPT FLIPPED: Ctrl({pair_ctrl_dpt:.4f}) > "
+                f"{mut}({pair_mut_dpt:.4f}) → reversed"
+            )
             # 재확인
             pair_ctrl_dpt_new = np.nanmean(dpt_pair[pair_ctrl_mask])
             pair_mut_dpt_new = np.nanmean(dpt_pair[np.array(pair_sc) == mut])
-            logger.info(f"    After flip: Ctrl={pair_ctrl_dpt_new:.4f}, "
-                       f"{mut}={pair_mut_dpt_new:.4f}")
+            logger.info(
+                f"    After flip: Ctrl={pair_ctrl_dpt_new:.4f}, "
+                f"{mut}={pair_mut_dpt_new:.4f}"
+            )
         else:
-            logger.info(f"    Direction OK: Ctrl({pair_ctrl_dpt:.4f}) < "
-                       f"{mut}({pair_mut_dpt:.4f})")
+            logger.info(
+                f"    Direction OK: Ctrl({pair_ctrl_dpt:.4f}) < "
+                f"{mut}({pair_mut_dpt:.4f})"
+            )
 
-        logger.info(f"    Control medoid DPT = {dpt_pair[root_in_pair]:.6f} "
-                    f"(pair idx {root_in_pair})")
-        logger.info(f"    Ctrl: mean={np.nanmean(dpt_pair[np.array(pair_sc) == 'Control']):.4f}, "
-                    f"median={np.nanmedian(dpt_pair[np.array(pair_sc) == 'Control']):.4f}")
-        logger.info(f"    {mut}: mean={np.nanmean(dpt_pair[np.array(pair_sc) == mut]):.4f}, "
-                    f"median={np.nanmedian(dpt_pair[np.array(pair_sc) == mut]):.4f}")
+        logger.info(
+            f"    Control medoid DPT = {dpt_pair[root_in_pair]:.6f} "
+            f"(pair idx {root_in_pair})"
+        )
+        logger.info(
+            f"    Ctrl: mean={np.nanmean(dpt_pair[np.array(pair_sc) == 'Control']):.4f}, "
+            f"median={np.nanmedian(dpt_pair[np.array(pair_sc) == 'Control']):.4f}"
+        )
+        logger.info(
+            f"    {mut}: mean={np.nanmean(dpt_pair[np.array(pair_sc) == mut]):.4f}, "
+            f"median={np.nanmedian(dpt_pair[np.array(pair_sc) == mut]):.4f}"
+        )
 
         dpt_dict[mut] = dpt_pair
         pair_mask_dict[mut] = pair_mask
@@ -266,10 +326,17 @@ def compute_dpt_ctrl_mut_pair(X_pca, superclasses_arr, n_neighbors, n_pca,
 # ==============================================================================
 # Plot: single concept × mutation — scatter + GAM + Spearman ρ + adj.R²
 # ==============================================================================
-def plot_concept_vs_dpt(dpt_vals, act_vals, concept_idx, mutation,
-                        output_path, dpi=200,
-                        gam_splines=8, gam_trim_pctl=(5, 95),
-                        class_label=""):
+def plot_concept_vs_dpt(
+    dpt_vals,
+    act_vals,
+    concept_idx,
+    mutation,
+    output_path,
+    dpi=200,
+    gam_splines=8,
+    gam_trim_pctl=(5, 95),
+    class_label="",
+):
     """
     DPT (x) vs concept GAP activation (y) scatter + GAM fit.
 
@@ -294,8 +361,16 @@ def plot_concept_vs_dpt(dpt_vals, act_vals, concept_idx, mutation,
     fig, ax = plt.subplots(figsize=(8, 5))
 
     # Scatter
-    ax.scatter(dpt_v, act_v, s=6, alpha=0.25, c=color,
-               edgecolors="none", rasterized=True, zorder=1)
+    ax.scatter(
+        dpt_v,
+        act_v,
+        s=6,
+        alpha=0.25,
+        c=color,
+        edgecolors="none",
+        rasterized=True,
+        zorder=1,
+    )
 
     # GAM fit
     adj_r2 = 0.0
@@ -306,23 +381,41 @@ def plot_concept_vs_dpt(dpt_vals, act_vals, concept_idx, mutation,
 
     x_line = np.linspace(pct_lo, pct_hi, 200)
     try:
-        from pygam import LinearGAM, s as s_term
+        from pygam import LinearGAM
+        from pygam import s as s_term
+
         n_sp = min(gam_splines, max(5, len(dpt_dense) // 50))
         gam = LinearGAM(s_term(0, n_splines=n_sp, spline_order=3)).fit(
-            dpt_dense.reshape(-1, 1), act_dense)
+            dpt_dense.reshape(-1, 1), act_dense
+        )
         y_gam = gam.predict(x_line.reshape(-1, 1))
         ci = gam.confidence_intervals(x_line.reshape(-1, 1), width=0.95)
 
-        ax.plot(x_line, y_gam, "-", color="black", lw=2.5,
-                alpha=0.9, zorder=5, label="GAM fit")
-        ax.fill_between(x_line, ci[:, 0], ci[:, 1],
-                        color="black", alpha=0.12, zorder=2, label="95% CI")
+        ax.plot(
+            x_line,
+            y_gam,
+            "-",
+            color="black",
+            lw=2.5,
+            alpha=0.9,
+            zorder=5,
+            label="GAM fit",
+        )
+        ax.fill_between(
+            x_line,
+            ci[:, 0],
+            ci[:, 1],
+            color="black",
+            alpha=0.12,
+            zorder=2,
+            label="95% CI",
+        )
 
         # Adjusted R²
         ss_res = np.sum((act_dense - gam.predict(dpt_dense.reshape(-1, 1))) ** 2)
         ss_tot = np.sum((act_dense - act_dense.mean()) ** 2)
         n = len(act_dense)
-        p = gam.statistics_['edof']
+        p = gam.statistics_["edof"]
         if ss_tot > 0 and n > p + 1:
             adj_r2 = 1 - (ss_res / (n - p - 1)) / (ss_tot / (n - 1))
         else:
@@ -331,8 +424,16 @@ def plot_concept_vs_dpt(dpt_vals, act_vals, concept_idx, mutation,
         # Fallback: linear fit
         if len(dpt_v) > 2:
             z = np.polyfit(dpt_v, act_v, 1)
-            ax.plot(x_line, np.polyval(z, x_line), "--", color="black",
-                    lw=2, alpha=0.7, zorder=3, label="Linear fit")
+            ax.plot(
+                x_line,
+                np.polyval(z, x_line),
+                "--",
+                color="black",
+                lw=2,
+                alpha=0.7,
+                zorder=3,
+                label="Linear fit",
+            )
 
     ax.set_xlabel("DPT (Diffusion Pseudotime)", fontsize=12)
     ax.set_ylabel(f"Concept {concept_idx} activation (L2-normed GAP)", fontsize=12)
@@ -350,9 +451,16 @@ def plot_concept_vs_dpt(dpt_vals, act_vals, concept_idx, mutation,
         f"Spearman ρ = {rho:.4f} (p = {pval:.2e})",
         f"GAM adj.R² = {adj_r2:.4f}",
     ]
-    ax.text(0.95, 0.95, "\n".join(info_lines),
-            transform=ax.transAxes, fontsize=10, ha="right", va="top",
-            bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.85))
+    ax.text(
+        0.95,
+        0.95,
+        "\n".join(info_lines),
+        transform=ax.transAxes,
+        fontsize=10,
+        ha="right",
+        va="top",
+        bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.85),
+    )
 
     fig.tight_layout()
     fig.savefig(output_path, dpi=dpi, bbox_inches="tight")
@@ -433,7 +541,9 @@ def main():
     logger.info(f"  Concept shape: {X_concept_raw.shape} ({alive_info_concept})")
 
     # original concept ID → alive column index 매핑 (concept cache 기준)
-    orig_to_alive_col = {int(orig_id): col for col, orig_id in enumerate(alive_indices_concept)}
+    orig_to_alive_col = {
+        int(orig_id): col for col, orig_id in enumerate(alive_indices_concept)
+    }
 
     # ===================================================================
     # 3) UID 정렬 — 두 cache의 교집합 UID로 정렬
@@ -450,7 +560,9 @@ def main():
     n_dpt_only = len(set_dpt - common_uids)
     n_concept_only = len(set_concept - common_uids)
     if n_dpt_only > 0 or n_concept_only > 0:
-        logger.warning(f"  UID mismatch: DPT-only={n_dpt_only}, Concept-only={n_concept_only}")
+        logger.warning(
+            f"  UID mismatch: DPT-only={n_dpt_only}, Concept-only={n_concept_only}"
+        )
 
     # DPT cache 기준 순서로 정렬 (DPT가 주축)
     dpt_uid_to_idx = {uid: i for i, uid in enumerate(uids_dpt)}
@@ -468,8 +580,10 @@ def main():
     y = y[dpt_indices]
     uids = common_ordered
 
-    logger.info(f"  UID alignment: {len(common_ordered)} common images "
-                f"(DPT={len(uids_dpt)}, Concept={len(uids_concept)})")
+    logger.info(
+        f"  UID alignment: {len(common_ordered)} common images "
+        f"(DPT={len(uids_dpt)}, Concept={len(uids_concept)})"
+    )
 
     # Concept cache에 GAP L2 norm 적용 (y축 양 보정)
     if args.gap_l2_norm:
@@ -504,8 +618,11 @@ def main():
             invalid_idx = cls_idx[~valid_mask]
             ordered = np.concatenate([valid_idx, invalid_idx])
             n_take = min(spc, len(ordered))
-            chosen = rng.choice(ordered[:max(n_take, len(valid_idx))],
-                                size=min(n_take, len(ordered)), replace=False)
+            chosen = rng.choice(
+                ordered[: max(n_take, len(valid_idx))],
+                size=min(n_take, len(ordered)),
+                replace=False,
+            )
             keep_indices.extend(chosen.tolist())
             logger.info(f"  Subsample {cls}: {len(cls_idx)} → {len(chosen)}")
         keep_indices = sorted(keep_indices)
@@ -556,17 +673,20 @@ def main():
         sc_de = list(superclasses_arr[de_mask_global])
         for mut in ["SNCA", "GBA", "LRRK2"]:
             de_result = compute_de_neurons(
-                X_de, sc_de, mut,
+                X_de,
+                sc_de,
+                mut,
                 adj_p_threshold=args.de_adj_p,
                 min_log2fc=args.de_min_log2fc,
             )
             de_masks.append(de_result["mask"])
 
         # Control vs AllMut — Control-high
-        superclasses_allm = [("AllMut" if s != "Control" else "Control")
-                             for s in sc_de]
+        superclasses_allm = [("AllMut" if s != "Control" else "Control") for s in sc_de]
         de_ctrl = compute_de_neurons(
-            X_de, superclasses_allm, "AllMut",
+            X_de,
+            superclasses_allm,
+            "AllMut",
             adj_p_threshold=args.de_adj_p,
             min_log2fc=args.de_min_log2fc,
         )
@@ -607,7 +727,8 @@ def main():
     mutations = ["SNCA", "GBA", "LRRK2"]
 
     dpt_dict, pair_mask_dict = compute_dpt_ctrl_mut_pair(
-        X_pca, superclasses_arr,
+        X_pca,
+        superclasses_arr,
         n_neighbors=args.n_neighbors,
         n_pca=n_pca,
         n_diffmap=n_diffmap,
@@ -619,8 +740,9 @@ def main():
     if args.output_dir:
         out_dir = args.output_dir
     else:
-        out_dir = os.path.join(os.path.dirname(args.features_cache),
-                               "dpt_concept_activation")
+        out_dir = os.path.join(
+            os.path.dirname(args.features_cache), "dpt_concept_activation"
+        )
     os.makedirs(out_dir, exist_ok=True)
     logger.info(f"  Output dir: {out_dir}")
 
@@ -632,9 +754,7 @@ def main():
         concept_entries = []
         for orig_id in args.concepts:
             if orig_id in orig_to_alive_col:
-                concept_entries.append((
-                    orig_to_alive_col[orig_id], orig_id, ""
-                ))
+                concept_entries.append((orig_to_alive_col[orig_id], orig_id, ""))
             else:
                 logger.warning(f"  Concept {orig_id} not in alive set, skip")
         logger.info(f"  Manual: {len(concept_entries)} concepts")
@@ -645,7 +765,7 @@ def main():
         logger.info(f"\n{'='*60}")
         logger.info(f"Parsing concepts from step14 output: {args.concept_vis_dir}")
         concept_entries = []
-        pattern = re.compile(r'^concept_(\d+)(?:_(.+))?$')
+        pattern = re.compile(r"^concept_(\d+)(?:_(.+))?$")
 
         for folder_name in sorted(os.listdir(args.concept_vis_dir)):
             folder_path = os.path.join(args.concept_vis_dir, folder_name)
@@ -656,11 +776,13 @@ def main():
                 orig_id = int(m.group(1))
                 cls_label = m.group(2) or ""  # e.g. "GBA", "SNCA_GBA", "Control"
                 if orig_id in orig_to_alive_col:
-                    concept_entries.append((
-                        orig_to_alive_col[orig_id], orig_id, cls_label
-                    ))
+                    concept_entries.append(
+                        (orig_to_alive_col[orig_id], orig_id, cls_label)
+                    )
                 else:
-                    logger.warning(f"  Concept {orig_id} ({cls_label}) not in alive set, skip")
+                    logger.warning(
+                        f"  Concept {orig_id} ({cls_label}) not in alive set, skip"
+                    )
 
         logger.info(f"  Found {len(concept_entries)} concepts from step14 output")
         for alive_col, orig_id, cls in concept_entries[:20]:
@@ -671,8 +793,7 @@ def main():
     else:
         # all alive
         concept_entries = [
-            (col, int(alive_indices_concept[col]), "")
-            for col in range(d_alive)
+            (col, int(alive_indices_concept[col]), "") for col in range(d_alive)
         ]
         logger.info(f"  All alive: {len(concept_entries)} concepts")
 
@@ -682,7 +803,9 @@ def main():
 
     # ── Per-concept × per-mutation analysis ──
     logger.info(f"\n{'='*60}")
-    logger.info(f"Per-concept × per-mutation analysis ({len(concept_entries)} concepts)")
+    logger.info(
+        f"Per-concept × per-mutation analysis ({len(concept_entries)} concepts)"
+    )
 
     summary_rows = []
 
@@ -716,25 +839,32 @@ def main():
             out_path = os.path.join(concept_folder, fname)
 
             rho, adj_r2 = plot_concept_vs_dpt(
-                dpt_mut, act_mut, orig_id, mut,
-                out_path, dpi=args.dpi,
+                dpt_mut,
+                act_mut,
+                orig_id,
+                mut,
+                out_path,
+                dpi=args.dpi,
                 gam_splines=args.gam_splines,
                 gam_trim_pctl=tuple(args.gam_trim_pctl),
                 class_label=cls_label,
             )
 
-            summary_rows.append({
-                "concept_original_id": orig_id,
-                "alive_col": alive_col,
-                "class_label": cls_label,
-                "mutation": mut,
-                "spearman_rho": rho,
-                "gam_adj_r2": adj_r2,
-                "n_cells": int(mut_in_pair.sum()),
-            })
+            summary_rows.append(
+                {
+                    "concept_original_id": orig_id,
+                    "alive_col": alive_col,
+                    "class_label": cls_label,
+                    "mutation": mut,
+                    "spearman_rho": rho,
+                    "gam_adj_r2": adj_r2,
+                    "n_cells": int(mut_in_pair.sum()),
+                }
+            )
 
     # ── Summary CSV ──
     import pandas as pd
+
     df = pd.DataFrame(summary_rows)
     csv_path = os.path.join(out_dir, "concept_dpt_summary.csv")
     df.to_csv(csv_path, index=False)
@@ -748,10 +878,12 @@ def main():
         top = df.sort_values("abs_rho", ascending=False).head(20)
         logger.info("\nTop 20 concepts by |Spearman ρ|:")
         for _, row in top.iterrows():
-            cls_str = f" ({row['class_label']})" if row.get('class_label') else ""
-            logger.info(f"  Concept {int(row['concept_original_id']):5d}{cls_str}  "
-                        f"{row['mutation']:6s}  "
-                        f"ρ={row['spearman_rho']:+.4f}  adj.R²={row['gam_adj_r2']:.4f}")
+            cls_str = f" ({row['class_label']})" if row.get("class_label") else ""
+            logger.info(
+                f"  Concept {int(row['concept_original_id']):5d}{cls_str}  "
+                f"{row['mutation']:6s}  "
+                f"ρ={row['spearman_rho']:+.4f}  adj.R²={row['gam_adj_r2']:.4f}"
+            )
 
     logger.info(f"\n{'='*60}")
     logger.info("DPT concept activation analysis complete!")

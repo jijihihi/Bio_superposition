@@ -26,29 +26,28 @@
 ## 토큰 배치 센터링할때 학습시에는 StrictPlateBalancedBatchSamplerOnBank 이걸 이용해서, 골고루 플레이트와 클래스별로 다 들어가서 토큰 센터링 하고 그 토큰들로 학습한다.
 # 따라서 StrictPlateBalancedBatchSamplerOnBank 이걸 쓰는게 학습시와 동일하게 한다. 다만 배치 랜덤성이 개입될 여지가 있다.
 
-import os
 import argparse
+import gc
+import os
 import random
-import numpy as np
 from collections import defaultdict
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
-import gc
 
-from sae_project.step02_logging_utils import get_logger, SUPERCLASS_MAP
-from sae_project.step03_data_shards import load_all_sample_refs, build_uid_to_refidx
+from sae_project.step02_logging_utils import SUPERCLASS_MAP, get_logger
+from sae_project.step03_data_shards import (build_uid_to_refidx,
+                                            load_all_sample_refs)
 from sae_project.step04_data_bank import (
-    InMemoryTarBank, InMemorySixteenBitDataset, load_split_csv,
-    seed_worker, collate_skip_none,
-    StrictPlateBalancedBatchSamplerOnBank,
-)
-from sae_project.step05_model_encoder import (
-    SupMoCoModel, parse_int_list, renorm_unit_per_out_channel_,
-    robust_load_state_dict,
-)
+    InMemorySixteenBitDataset, InMemoryTarBank,
+    StrictPlateBalancedBatchSamplerOnBank, collate_skip_none, load_split_csv,
+    seed_worker)
+from sae_project.step05_model_encoder import (SupMoCoModel, parse_int_list,
+                                              renorm_unit_per_out_channel_,
+                                              robust_load_state_dict)
 from sae_project.step06_gated_sae import GatedSAE
 
 logger = get_logger("extract_features")
@@ -64,24 +63,42 @@ def get_args():
 
     # SAE / Model
     p.add_argument("--sae_ckpt", type=str, required=True)
-    p.add_argument("--save_dir", type=str, required=True,
-                   help="Model output dir (contains train/val/test_split.csv)")
+    p.add_argument(
+        "--save_dir",
+        type=str,
+        required=True,
+        help="Model output dir (contains train/val/test_split.csv)",
+    )
     p.add_argument("--model_state_path", type=str, required=True)
     p.add_argument("--shard_root", type=str, required=True)
 
     # Output
-    p.add_argument("--output_path", type=str, default="",
-                   help="Path for .npz cache file (default: next to SAE ckpt)")
+    p.add_argument(
+        "--output_path",
+        type=str,
+        default="",
+        help="Path for .npz cache file (default: next to SAE ckpt)",
+    )
 
     # Feature extraction
-    p.add_argument("--which_layer", type=str, default="",
-                   help="Encoder layer to extract (default: use SAE ckpt value, e.g. refine_out, stage5_out)")
-    p.add_argument("--restore_token_norm", action="store_true",
-                   help="Multiply SAE activations by original per-token L2 norms before pooling")
+    p.add_argument(
+        "--which_layer",
+        type=str,
+        default="",
+        help="Encoder layer to extract (default: use SAE ckpt value, e.g. refine_out, stage5_out)",
+    )
+    p.add_argument(
+        "--restore_token_norm",
+        action="store_true",
+        help="Multiply SAE activations by original per-token L2 norms before pooling",
+    )
 
     # Sampling
-    p.add_argument("--use_all_data", action="store_true",
-                   help="Load train+val+test (default: val+test only)")
+    p.add_argument(
+        "--use_all_data",
+        action="store_true",
+        help="Load train+val+test (default: val+test only)",
+    )
     p.add_argument("--seed", type=int, default=42)
 
     # Encoder architecture
@@ -138,84 +155,86 @@ def extract_all_sae_features(
     X_list, y_list, line_list, uid_list = [], [], [], []
 
     for split_name, loader in loaders:
-      for batch in tqdm(loader, desc=f"Extracting SAE features ({split_name})", leave=True):
-        if batch is None:
-            continue
+        for batch in tqdm(
+            loader, desc=f"Extracting SAE features ({split_name})", leave=True
+        ):
+            if batch is None:
+                continue
 
-        x_cpu = batch[0]
-        y_cpu = batch[1]
-        batch_lines = batch[3] if len(batch) > 3 else ["unknown"] * x_cpu.size(0)
-        batch_uids = batch[4] if len(batch) > 4 else ["unknown"] * x_cpu.size(0)
+            x_cpu = batch[0]
+            y_cpu = batch[1]
+            batch_lines = batch[3] if len(batch) > 3 else ["unknown"] * x_cpu.size(0)
+            batch_uids = batch[4] if len(batch) > 4 else ["unknown"] * x_cpu.size(0)
 
-        if x_cpu.numel() < 1:
-            continue
+            if x_cpu.numel() < 1:
+                continue
 
-        x = x_cpu.to(device, non_blocking=True).contiguous(
-            memory_format=torch.channels_last
-        )
-        curr_bs = x.size(0)
+            x = x_cpu.to(device, non_blocking=True).contiguous(
+                memory_format=torch.channels_last
+            )
+            curr_bs = x.size(0)
 
-        with torch.amp.autocast(**autocast_kwargs):
-            fmap = encoder.forward_feature_maps(x, which=which_layer)
-
-        # GAP-scalar normalization
-        gap = fmap.mean(dim=(2, 3))
-        gap_norm = (
-            gap.norm(dim=1, keepdim=True)
-            .view(curr_bs, 1, 1, 1)
-            .clamp_min(1e-12)
-        )
-        fmap = fmap / gap_norm
-
-        fmap = fmap.permute(0, 2, 3, 1).contiguous()
-        C = fmap.shape[-1]
-        H_W = fmap.shape[1] * fmap.shape[2]
-
-        flat_tokens = fmap.view(-1, C)
-        flat_tokens = flat_tokens - flat_tokens.mean(dim=0, keepdim=True)
-
-        # Save per-token L2 norms before normalization
-        token_l2_norms = flat_tokens.norm(dim=1, keepdim=True).clamp_min(1e-12)
-
-        flat_tokens = F.normalize(flat_tokens, dim=1, eps=1e-12)
-
-        # SAE forward in chunks — accumulate per-image sums directly
-        # (same pattern as step09_sae_eval.py to avoid OOM on large d_sae)
-        num_tokens_per_img = H_W
-        token_batch_size = 8192
-        num_flat_tokens = flat_tokens.size(0)
-        image_act_sums = torch.zeros((curr_bs, sae.d_sae), device=device, dtype=torch.float32)
-
-        for s in range(0, num_flat_tokens, token_batch_size):
-            e = min(s + token_batch_size, num_flat_tokens)
-            chunk = flat_tokens[s:e]
             with torch.amp.autocast(**autocast_kwargs):
-                _, chunk_acts, _, _, _ = sae(chunk)
-            chunk_acts = chunk_acts.float()
+                fmap = encoder.forward_feature_maps(x, which=which_layer)
 
-            # Optionally restore per-token L2 norms
-            if restore_token_norm:
-                chunk_acts = chunk_acts * token_l2_norms[s:e]
+            # GAP-scalar normalization
+            gap = fmap.mean(dim=(2, 3))
+            gap_norm = (
+                gap.norm(dim=1, keepdim=True).view(curr_bs, 1, 1, 1).clamp_min(1e-12)
+            )
+            fmap = fmap / gap_norm
 
-            # Accumulate sum per image
-            for i in range(curr_bs):
-                img_start = i * num_tokens_per_img
-                img_end = (i + 1) * num_tokens_per_img
-                rel_start = max(0, img_start - s)
-                rel_end = min(e - s, img_end - s)
-                if rel_start < rel_end and img_start < e and img_end > s:
-                    image_act_sums[i] += chunk_acts[rel_start:rel_end].sum(dim=0)
+            fmap = fmap.permute(0, 2, 3, 1).contiguous()
+            C = fmap.shape[-1]
+            H_W = fmap.shape[1] * fmap.shape[2]
 
-            del chunk_acts
+            flat_tokens = fmap.view(-1, C)
+            flat_tokens = flat_tokens - flat_tokens.mean(dim=0, keepdim=True)
 
-        pooled = image_act_sums  # (B, d_sae) — sum over tokens
+            # Save per-token L2 norms before normalization
+            token_l2_norms = flat_tokens.norm(dim=1, keepdim=True).clamp_min(1e-12)
 
-        # Save ALL neurons (no alive_mask filtering!)
-        X_list.append(pooled.cpu().numpy())
+            flat_tokens = F.normalize(flat_tokens, dim=1, eps=1e-12)
 
-        y_list.extend(y_cpu.tolist())
-        line_list.extend(batch_lines)
-        uid_list.extend(batch_uids)
+            # SAE forward in chunks — accumulate per-image sums directly
+            # (same pattern as step09_sae_eval.py to avoid OOM on large d_sae)
+            num_tokens_per_img = H_W
+            token_batch_size = 8192
+            num_flat_tokens = flat_tokens.size(0)
+            image_act_sums = torch.zeros(
+                (curr_bs, sae.d_sae), device=device, dtype=torch.float32
+            )
+
+            for s in range(0, num_flat_tokens, token_batch_size):
+                e = min(s + token_batch_size, num_flat_tokens)
+                chunk = flat_tokens[s:e]
+                with torch.amp.autocast(**autocast_kwargs):
+                    _, chunk_acts, _, _, _ = sae(chunk)
+                chunk_acts = chunk_acts.float()
+
+                # Optionally restore per-token L2 norms
+                if restore_token_norm:
+                    chunk_acts = chunk_acts * token_l2_norms[s:e]
+
+                # Accumulate sum per image
+                for i in range(curr_bs):
+                    img_start = i * num_tokens_per_img
+                    img_end = (i + 1) * num_tokens_per_img
+                    rel_start = max(0, img_start - s)
+                    rel_end = min(e - s, img_end - s)
+                    if rel_start < rel_end and img_start < e and img_end > s:
+                        image_act_sums[i] += chunk_acts[rel_start:rel_end].sum(dim=0)
+
+                del chunk_acts
+
+            pooled = image_act_sums  # (B, d_sae) — sum over tokens
+
+            # Save ALL neurons (no alive_mask filtering!)
+            X_list.append(pooled.cpu().numpy())
+
+            y_list.extend(y_cpu.tolist())
+            line_list.extend(batch_lines)
+            uid_list.extend(batch_uids)
 
     if len(X_list) == 0:
         raise ValueError(
@@ -258,9 +277,16 @@ def _make_single_split_loader(args, refs, uid_to_refidx, split_csv_path, seed_of
     def uid_to_relative(uid: str) -> str:
         for root in KNOWN_ROOTS:
             if uid.startswith(root):
-                return uid[len(root):]
-        for cls_prefix in ["Control/", "SNCA/", "GBA/", "LRRK2/",
-                           "Control_C4/", "Control_C18/", "Control_C19/"]:
+                return uid[len(root) :]
+        for cls_prefix in [
+            "Control/",
+            "SNCA/",
+            "GBA/",
+            "LRRK2/",
+            "Control_C4/",
+            "Control_C18/",
+            "Control_C19/",
+        ]:
             idx = uid.find(cls_prefix)
             if idx >= 0:
                 return uid[idx:]
@@ -301,7 +327,8 @@ def _make_single_split_loader(args, refs, uid_to_refidx, split_csv_path, seed_of
 
     # StrictPlateBalancedBatchSamplerOnBank: match SAE training centering
     sampler = StrictPlateBalancedBatchSamplerOnBank(
-        bank, batch_size=args.batch_size,
+        bank,
+        batch_size=args.batch_size,
         seed=args.seed + seed_offset,
     )
     loader = DataLoader(
@@ -313,7 +340,9 @@ def _make_single_split_loader(args, refs, uid_to_refidx, split_csv_path, seed_of
         collate_fn=collate_skip_none,
     )
     n_covered = sum(len(b) for b in sampler)
-    logger.info(f"  → {len(refidx_list)} images, StrictPlateBalanced ({n_covered} covered)")
+    logger.info(
+        f"  → {len(refidx_list)} images, StrictPlateBalanced ({n_covered} covered)"
+    )
     return loader, n_covered
 
 
@@ -393,7 +422,9 @@ def main():
     usage_ema = sae.usage_ema.cpu().numpy()
 
     if args.which_layer and args.which_layer != which_layer_ckpt:
-        logger.warning(f"Overriding SAE ckpt layer '{which_layer_ckpt}' → '{which_layer}'")
+        logger.warning(
+            f"Overriding SAE ckpt layer '{which_layer_ckpt}' → '{which_layer}'"
+        )
     logger.info(f"SAE: d_sae={d_sae}, layer={which_layer}")
 
     # ── 2. Load encoder ──────────────────────────────────────────────────
@@ -404,10 +435,15 @@ def main():
     dilations = parse_int_list(args.dilations, 4)
 
     model = SupMoCoModel(
-        embed_dim=args.embed_dim, blocks=blocks, dilations=dilations,
-        refine_blocks=args.refine_blocks, ckpt_segments=args.ckpt_segments,
-        proj_layers=args.proj_layers, proj_hidden=args.proj_hidden,
-        proj_bn=args.proj_bn, proj_dropout=args.proj_dropout,
+        embed_dim=args.embed_dim,
+        blocks=blocks,
+        dilations=dilations,
+        refine_blocks=args.refine_blocks,
+        ckpt_segments=args.ckpt_segments,
+        proj_layers=args.proj_layers,
+        proj_hidden=args.proj_hidden,
+        proj_bn=args.proj_bn,
+        proj_dropout=args.proj_dropout,
     )
     sd = torch.load(args.model_state_path, map_location="cpu", weights_only=False)
     robust_load_state_dict(model, sd, strict=True)
@@ -431,17 +467,25 @@ def main():
     uid_to_refidx = build_uid_to_refidx(refs)
 
     loaders = make_balanced_loaders(
-        args, refs, uid_to_refidx,
+        args,
+        refs,
+        uid_to_refidx,
         include_train=use_all,
     )
 
     # ── 4. Extract features (ALL neurons) ────────────────────────────────
     logger.info(f"\n{'='*60}")
-    logger.info(f"Extracting SAE GAP features — ALL {d_sae} neurons "
-                f"(restore_token_norm={args.restore_token_norm})")
+    logger.info(
+        f"Extracting SAE GAP features — ALL {d_sae} neurons "
+        f"(restore_token_norm={args.restore_token_norm})"
+    )
 
     X_all, y, lines, uids = extract_all_sae_features(
-        encoder, sae, loaders, device, which_layer,
+        encoder,
+        sae,
+        loaders,
+        device,
+        which_layer,
         restore_token_norm=args.restore_token_norm,
     )
     logger.info(f"Features: {X_all.shape}")
@@ -454,7 +498,7 @@ def main():
         all_tag = "_all" if use_all else ""
         out_path = os.path.join(
             os.path.dirname(args.sae_ckpt),
-            f"features_cache_{which_layer}{suffix}{all_tag}.npz"
+            f"features_cache_{which_layer}{suffix}{all_tag}.npz",
         )
 
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
@@ -479,6 +523,7 @@ def main():
 
     # ── Summary ──────────────────────────────────────────────────────────
     from sae_project.step02_logging_utils import SUPERCLASS_MAP
+
     superclasses = [SUPERCLASS_MAP.get(ln, ln) for ln in lines]
     unique_classes, class_counts = np.unique(superclasses, return_counts=True)
     logger.info(f"\n  Classes: {dict(zip(unique_classes, class_counts))}")

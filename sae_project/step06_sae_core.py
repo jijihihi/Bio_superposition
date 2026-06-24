@@ -7,6 +7,7 @@
 # ==============================================================================
 
 from __future__ import annotations
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -23,7 +24,7 @@ class PointwiseTopKSAE(nn.Module):
     """
 
     # ---- hardcoded defaults (no argparse bloat) ----
-    AUX_K: int = 32          # auxiliary K (must be > k)
+    AUX_K: int = 32  # auxiliary K (must be > k)
     AUX_COEFF: float = 0.10  # auxiliary loss coefficient
     TIED_INIT_ONLY: bool = True
 
@@ -34,9 +35,13 @@ class PointwiseTopKSAE(nn.Module):
         self.k = int(k)
 
         # encoder/decoder weights (untied)
-        self.W_enc = nn.Parameter(torch.randn(self.d_in, self.d_sae) * float(init_scale))
+        self.W_enc = nn.Parameter(
+            torch.randn(self.d_in, self.d_sae) * float(init_scale)
+        )
         self.b_enc = nn.Parameter(torch.zeros(self.d_sae))
-        self.W_dec = nn.Parameter(torch.randn(self.d_sae, self.d_in) * float(init_scale))
+        self.W_dec = nn.Parameter(
+            torch.randn(self.d_sae, self.d_in) * float(init_scale)
+        )
         self.b_dec = nn.Parameter(torch.zeros(self.d_in))
 
         # tied init only (W_dec <- W_enc.T), then untied training
@@ -91,7 +96,9 @@ class PointwiseTopKSAE(nn.Module):
         return acts, idx
 
     @staticmethod
-    def _auxk_excluding_topk(pre: torch.Tensor, idx_topk: torch.Tensor, aux_k: int) -> torch.Tensor:
+    def _auxk_excluding_topk(
+        pre: torch.Tensor, idx_topk: torch.Tensor, aux_k: int
+    ) -> torch.Tensor:
         """
         Build aux activations by taking top aux_k by |pre|,
         then removing those already in topk, so aux uses "other" features.
@@ -99,7 +106,9 @@ class PointwiseTopKSAE(nn.Module):
         if aux_k <= idx_topk.size(1):
             return torch.zeros_like(pre)
 
-        idx_aux = torch.topk(pre.abs(), k=aux_k, dim=1, largest=True, sorted=False).indices
+        idx_aux = torch.topk(
+            pre.abs(), k=aux_k, dim=1, largest=True, sorted=False
+        ).indices
         aux = torch.zeros_like(pre)
         aux.scatter_(1, idx_aux, pre.gather(1, idx_aux))
 

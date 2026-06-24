@@ -2,14 +2,15 @@
 # Tar offset index -> SampleRef
 # ==============================================================================
 
-import os
 import glob
-import time
+import os
 import pickle
+import time
 from dataclasses import dataclass
 from typing import Dict, List, Tuple
 
-from sae_project.step02_logging_utils import get_logger, PLATE_DIR_RE, SUPERCLASS_MAP, CLASS_TO_LABEL
+from sae_project.step02_logging_utils import (CLASS_TO_LABEL, PLATE_DIR_RE,
+                                              SUPERCLASS_MAP, get_logger)
 
 logger = get_logger("data_shards")
 
@@ -45,6 +46,7 @@ def build_tar_index_if_needed(tar_path: str):
     items = {}
 
     import tarfile
+
     with tarfile.open(tar_path, "r") as tf:
         for m in tf.getmembers():
             if not m.isreg():
@@ -66,12 +68,16 @@ def build_tar_index_if_needed(tar_path: str):
     pairs = []
     for pref, it in items.items():
         if "tif_off" in it and "js_off" in it:
-            pairs.append((pref, it["tif_off"], it["tif_size"], it["js_off"], it["js_size"]))
+            pairs.append(
+                (pref, it["tif_off"], it["tif_size"], it["js_off"], it["js_size"])
+            )
 
     with open(idx_path, "wb") as f:
         pickle.dump(pairs, f, protocol=pickle.HIGHEST_PROTOCOL)
 
-    logger.info(f"[tar-index] built {len(pairs)} pairs: {os.path.basename(tar_path)} ({time.time()-t0:.1f}s)")
+    logger.info(
+        f"[tar-index] built {len(pairs)} pairs: {os.path.basename(tar_path)} ({time.time()-t0:.1f}s)"
+    )
 
 
 def load_all_sample_refs(shard_root: str) -> List[SampleRef]:
@@ -92,18 +98,20 @@ def load_all_sample_refs(shard_root: str) -> List[SampleRef]:
             pairs = pickle.load(f)
 
         for pref, tif_off, tif_size, js_off, js_size in pairs:
-            refs.append(SampleRef(
-                tar_path=tp,
-                prefix=pref,
-                tif_off=int(tif_off),
-                tif_size=int(tif_size),
-                js_off=int(js_off),
-                js_size=int(js_size),
-                line=line,
-                superclass=superclass,
-                label=label,
-                plate=plate
-            ))
+            refs.append(
+                SampleRef(
+                    tar_path=tp,
+                    prefix=pref,
+                    tif_off=int(tif_off),
+                    tif_size=int(tif_size),
+                    js_off=int(js_off),
+                    js_size=int(js_size),
+                    line=line,
+                    superclass=superclass,
+                    label=label,
+                    plate=plate,
+                )
+            )
 
     logger.info(f"Loaded sample refs: {len(refs)}")
     return refs

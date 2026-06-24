@@ -30,7 +30,7 @@
 
 
 ## AM할때 gated SAE는 eval할때 gradient가 0이 된다.
-# eval 모드 
+# eval 모드
 
 # eval 모드 (self.training = False)
 # gate = (gate_pre > 0).float()  # ← step function, gradient = 0!
@@ -44,27 +44,25 @@
 # overlay = create_overlay(base_rgb, heatmap_rgb, alpha=0.5)
 
 
-
+import argparse
 import os
 import sys
-import argparse
-import numpy as np
 
+import matplotlib
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-import matplotlib
 _IN_COLAB = "google.colab" in sys.modules
 if not _IN_COLAB:
     matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from sae_project.step02_logging_utils import get_logger
-from sae_project.step05_model_encoder import (
-    SupMoCoModel, parse_int_list, renorm_unit_per_out_channel_,
-    robust_load_state_dict,
-)
+from sae_project.step05_model_encoder import (SupMoCoModel, parse_int_list,
+                                              renorm_unit_per_out_channel_,
+                                              robust_load_state_dict)
 from sae_project.step06_gated_sae import GatedSAE
 
 logger = get_logger("activation_max")
@@ -87,7 +85,7 @@ def random_jitter(x, max_px=8):
     h, w = x.shape[2], x.shape[3]
     dy = torch.randint(0, 2 * pad + 1, (1,)).item()
     dx = torch.randint(0, 2 * pad + 1, (1,)).item()
-    return x_pad[:, :, dy:dy+h, dx:dx+w]
+    return x_pad[:, :, dy : dy + h, dx : dx + w]
 
 
 def random_rotate(x, max_deg=15.0):
@@ -96,25 +94,35 @@ def random_rotate(x, max_deg=15.0):
     theta = torch.tensor(angle * np.pi / 180.0)
     cos_a, sin_a = torch.cos(theta), torch.sin(theta)
     # Affine matrix for rotation
-    rot = torch.tensor([
-        [cos_a, -sin_a, 0],
-        [sin_a,  cos_a, 0],
-    ], dtype=x.dtype, device=x.device).unsqueeze(0)
+    rot = torch.tensor(
+        [
+            [cos_a, -sin_a, 0],
+            [sin_a, cos_a, 0],
+        ],
+        dtype=x.dtype,
+        device=x.device,
+    ).unsqueeze(0)
     grid = F.affine_grid(rot, x.shape, align_corners=False)
-    return F.grid_sample(x, grid, align_corners=False, mode="bilinear",
-                         padding_mode="reflection")
+    return F.grid_sample(
+        x, grid, align_corners=False, mode="bilinear", padding_mode="reflection"
+    )
 
 
 def random_scale(x, lo=0.9, hi=1.1):
     """Random uniform scaling."""
     s = torch.empty(1).uniform_(lo, hi).item()
-    theta = torch.tensor([
-        [s, 0, 0],
-        [0, s, 0],
-    ], dtype=x.dtype, device=x.device).unsqueeze(0)
+    theta = torch.tensor(
+        [
+            [s, 0, 0],
+            [0, s, 0],
+        ],
+        dtype=x.dtype,
+        device=x.device,
+    ).unsqueeze(0)
     grid = F.affine_grid(theta, x.shape, align_corners=False)
-    return F.grid_sample(x, grid, align_corners=False, mode="bilinear",
-                         padding_mode="reflection")
+    return F.grid_sample(
+        x, grid, align_corners=False, mode="bilinear", padding_mode="reflection"
+    )
 
 
 def gaussian_blur(x, kernel_size=3, sigma=1.0):
@@ -198,13 +206,13 @@ def encoder_forward_with_grad(encoder, x, which_layer):
 # Forward pass: Input → Encoder → SAE → target neuron activation
 # ==============================================================================
 def forward_to_sae_neuron(
-    x_input,           # (1, 3, H, W), requires_grad
+    x_input,  # (1, 3, H, W), requires_grad
     encoder,
     sae,
     which_layer,
     target_neuron_idx,  # int or list[int]
-    pooling="gap",      # "gap" or "max"
-    temperature=10.0,   # soft gate sharpness
+    pooling="gap",  # "gap" or "max"
+    temperature=10.0,  # soft gate sharpness
     restore_token_norm=True,  # multiply back per-token L2 norms
 ):
     """
@@ -273,7 +281,7 @@ def forward_to_sae_neuron(
 # ==============================================================================
 @torch.no_grad()
 def get_spatial_activation_map(
-    img_tensor,         # (3, H, W) cpu float tensor (AM result)
+    img_tensor,  # (3, H, W) cpu float tensor (AM result)
     encoder,
     sae,
     which_layer,
@@ -324,8 +332,9 @@ def get_spatial_activation_map(
     spatial_map = spatial_acts.view(1, 1, H_feat, W_feat)  # (1, 1, H, W)
 
     # Bilinear interpolation to input image size
-    heatmap = F.interpolate(spatial_map, size=(H_img, W_img),
-                            mode="bilinear", align_corners=False)
+    heatmap = F.interpolate(
+        spatial_map, size=(H_img, W_img), mode="bilinear", align_corners=False
+    )
     return heatmap.squeeze().cpu().numpy()  # (H_img, W_img)
 
 
@@ -402,12 +411,15 @@ def run_activation_maximization(
     # ── Fourier preconditioning setup ──
     # Learnable parameter = Fourier coefficients (complex)
     rfft_shape = (1, 3, img_size, img_size // 2 + 1)
-    fourier_coeffs = torch.randn(*rfft_shape, dtype=torch.cfloat, device=device) * init_std
+    fourier_coeffs = (
+        torch.randn(*rfft_shape, dtype=torch.cfloat, device=device) * init_std
+    )
     fourier_coeffs = fourier_coeffs.requires_grad_(True)
 
     # 1/f decay mask (precomputed, not learnable)
-    decay_mask = make_fourier_decay_mask(img_size, img_size,
-                                          decay_power=decay_power, device=device)
+    decay_mask = make_fourier_decay_mask(
+        img_size, img_size, decay_power=decay_power, device=device
+    )
 
     optimizer = torch.optim.Adam([fourier_coeffs], lr=lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=steps)
@@ -442,8 +454,12 @@ def run_activation_maximization(
 
         # ── Forward pass (with token norm restoration) ──
         activation = forward_to_sae_neuron(
-            x, encoder, sae, which_layer,
-            target_neuron_idx, pooling="gap",
+            x,
+            encoder,
+            sae,
+            which_layer,
+            target_neuron_idx,
+            pooling="gap",
             restore_token_norm=True,
         )
 
@@ -478,11 +494,11 @@ def run_activation_maximization(
 # Visualization
 # ==============================================================================
 def visualize_am_result(
-    img_tensor,     # (3, H, W) float tensor
+    img_tensor,  # (3, H, W) float tensor
     neuron_idx,
     activation,
     output_path,
-    heatmap=None,   # (H, W) numpy array, optional spatial activation map
+    heatmap=None,  # (H, W) numpy array, optional spatial activation map
     dpi=150,
 ):
     """
@@ -507,8 +523,9 @@ def visualize_am_result(
             ch_disp = np.zeros_like(ch)
 
         axes[i].imshow(ch_disp, cmap=channel_cmaps[i], vmin=0, vmax=1)
-        axes[i].set_title(f"{channel_names[i]}\n[{ch_min:.3f}, {ch_max:.3f}]",
-                         fontsize=10)
+        axes[i].set_title(
+            f"{channel_names[i]}\n[{ch_min:.3f}, {ch_max:.3f}]", fontsize=10
+        )
         axes[i].axis("off")
 
     # Composite: merge channels as RGB
@@ -526,15 +543,21 @@ def visualize_am_result(
     # Spatial activation heatmap
     if heatmap is not None:
         axes[4].imshow(rgb, alpha=0.3)  # dim composite background
-        im = axes[4].imshow(heatmap, cmap="hot", alpha=0.7,
-                            vmin=0, vmax=heatmap.max() + 1e-8)
-        axes[4].set_title(f"Spatial Activation\n[{heatmap.min():.3f}, {heatmap.max():.3f}]",
-                         fontsize=10)
+        im = axes[4].imshow(
+            heatmap, cmap="hot", alpha=0.7, vmin=0, vmax=heatmap.max() + 1e-8
+        )
+        axes[4].set_title(
+            f"Spatial Activation\n[{heatmap.min():.3f}, {heatmap.max():.3f}]",
+            fontsize=10,
+        )
         axes[4].axis("off")
         fig.colorbar(im, ax=axes[4], fraction=0.046, pad=0.04)
 
-    fig.suptitle(f"Activation Maximization — SAE Neuron {neuron_idx:04d}",
-                fontsize=13, fontweight="bold")
+    fig.suptitle(
+        f"Activation Maximization — SAE Neuron {neuron_idx:04d}",
+        fontsize=13,
+        fontweight="bold",
+    )
     fig.tight_layout()
     fig.savefig(output_path, dpi=dpi, bbox_inches="tight")
     plt.show()
@@ -568,9 +591,13 @@ def visualize_am_grid(results, output_path, dpi=200):
             axes[row, i].imshow(ch_disp, cmap=channel_cmaps[i], vmin=0, vmax=1)
             if row == 0:
                 axes[row, i].set_title(channel_names[i], fontsize=10)
-            axes[row, i].set_ylabel(f"N{neuron_idx:04d}\nact={act:.3f}",
-                                     fontsize=9, rotation=0, labelpad=60,
-                                     va="center")
+            axes[row, i].set_ylabel(
+                f"N{neuron_idx:04d}\nact={act:.3f}",
+                fontsize=9,
+                rotation=0,
+                labelpad=60,
+                va="center",
+            )
             axes[row, i].set_xticks([])
             axes[row, i].set_yticks([])
 
@@ -587,8 +614,7 @@ def visualize_am_grid(results, output_path, dpi=200):
         axes[row, 3].set_xticks([])
         axes[row, 3].set_yticks([])
 
-    fig.suptitle("SAE Neuron Activation Maximization", fontsize=14,
-                fontweight="bold")
+    fig.suptitle("SAE Neuron Activation Maximization", fontsize=14, fontweight="bold")
     fig.tight_layout()
     fig.savefig(output_path, dpi=dpi, bbox_inches="tight")
     plt.show()
@@ -600,18 +626,24 @@ def visualize_am_grid(results, output_path, dpi=200):
 # Argument Parser
 # ==============================================================================
 def get_args():
-    p = argparse.ArgumentParser(
-        description="Activation Maximization for SAE neurons"
-    )
+    p = argparse.ArgumentParser(description="Activation Maximization for SAE neurons")
     # Model
     p.add_argument("--sae_ckpt", type=str, required=True)
     p.add_argument("--model_state_path", type=str, required=True)
-    p.add_argument("--which_layer", type=str, default="",
-                   help="Encoder layer (default: from SAE ckpt)")
+    p.add_argument(
+        "--which_layer",
+        type=str,
+        default="",
+        help="Encoder layer (default: from SAE ckpt)",
+    )
 
     # Target neurons
-    p.add_argument("--concepts", type=str, required=True,
-                   help="Comma-separated neuron indices, e.g. '0018,0037,0152'")
+    p.add_argument(
+        "--concepts",
+        type=str,
+        required=True,
+        help="Comma-separated neuron indices, e.g. '0018,0037,0152'",
+    )
 
     # Output
     p.add_argument("--output_dir", type=str, required=True)
@@ -623,20 +655,41 @@ def get_args():
     p.add_argument("--seed", type=int, default=42)
 
     # Regularization
-    p.add_argument("--l2_weight", type=float, default=1e-4,
-                   help="L2 Fourier coefficient decay weight")
-    p.add_argument("--l1_weight", type=float, default=1e-4,
-                   help="L1 pixel sparsity weight (dark backgrounds)")
-    p.add_argument("--decay_power", type=float, default=1.0,
-                   help="Fourier 1/f decay power (higher = smoother, 1.0 = natural images)")
-    p.add_argument("--jitter_px", type=int, default=8,
-                   help="Max random jitter in pixels (0=off)")
-    p.add_argument("--rotate_deg", type=float, default=15.0,
-                   help="Max random rotation degrees (0=off)")
+    p.add_argument(
+        "--l2_weight",
+        type=float,
+        default=1e-4,
+        help="L2 Fourier coefficient decay weight",
+    )
+    p.add_argument(
+        "--l1_weight",
+        type=float,
+        default=1e-4,
+        help="L1 pixel sparsity weight (dark backgrounds)",
+    )
+    p.add_argument(
+        "--decay_power",
+        type=float,
+        default=1.0,
+        help="Fourier 1/f decay power (higher = smoother, 1.0 = natural images)",
+    )
+    p.add_argument(
+        "--jitter_px", type=int, default=8, help="Max random jitter in pixels (0=off)"
+    )
+    p.add_argument(
+        "--rotate_deg",
+        type=float,
+        default=15.0,
+        help="Max random rotation degrees (0=off)",
+    )
     p.add_argument("--scale_lo", type=float, default=0.9)
     p.add_argument("--scale_hi", type=float, default=1.1)
-    p.add_argument("--init_std", type=float, default=0.01,
-                   help="Std of initial Fourier coefficients")
+    p.add_argument(
+        "--init_std",
+        type=float,
+        default=0.01,
+        help="Std of initial Fourier coefficients",
+    )
     # Legacy (kept for backward compat, ignored by Fourier mode)
     p.add_argument("--tv_weight", type=float, default=0.0)
     p.add_argument("--blur_every", type=int, default=0)
@@ -701,10 +754,15 @@ def main():
     dilations = parse_int_list(args.dilations, 4)
 
     model = SupMoCoModel(
-        embed_dim=args.embed_dim, blocks=blocks, dilations=dilations,
-        refine_blocks=args.refine_blocks, ckpt_segments=args.ckpt_segments,
-        proj_layers=args.proj_layers, proj_hidden=args.proj_hidden,
-        proj_bn=args.proj_bn, proj_dropout=args.proj_dropout,
+        embed_dim=args.embed_dim,
+        blocks=blocks,
+        dilations=dilations,
+        refine_blocks=args.refine_blocks,
+        ckpt_segments=args.ckpt_segments,
+        proj_layers=args.proj_layers,
+        proj_hidden=args.proj_hidden,
+        proj_bn=args.proj_bn,
+        proj_dropout=args.proj_dropout,
     )
     sd = torch.load(args.model_state_path, map_location="cpu", weights_only=False)
     robust_load_state_dict(model, sd, strict=True)
@@ -718,6 +776,7 @@ def main():
 
     del model, sd
     import gc
+
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
@@ -761,16 +820,20 @@ def main():
 
         # Compute spatial activation heatmap
         heatmap = get_spatial_activation_map(
-            img, encoder, sae, which_layer, neuron_idx, device,
+            img,
+            encoder,
+            sae,
+            which_layer,
+            neuron_idx,
+            device,
         )
         logger.info(f"  Heatmap range: [{heatmap.min():.4f}, {heatmap.max():.4f}]")
 
         # Save individual plot
-        out_path = os.path.join(
-            args.output_dir, f"am_neuron_{neuron_idx:04d}.png"
+        out_path = os.path.join(args.output_dir, f"am_neuron_{neuron_idx:04d}.png")
+        visualize_am_result(
+            img, neuron_idx, act, out_path, heatmap=heatmap, dpi=args.dpi
         )
-        visualize_am_result(img, neuron_idx, act, out_path,
-                            heatmap=heatmap, dpi=args.dpi)
 
         # Save raw tensor
         np.savez_compressed(

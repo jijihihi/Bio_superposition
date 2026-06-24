@@ -16,23 +16,17 @@
 # ==============================================================================
 
 
-
-
-
-
-
-
-import os
-import sys
-import json
-import re
 import argparse
 import csv
+import json
+import os
+import re
+import sys
 from collections import defaultdict
 
+import matplotlib
 import numpy as np
 
-import matplotlib
 if "google.colab" not in sys.modules:
     matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -50,13 +44,13 @@ def collect_results(results_dir: str):
     Parses: CNN_seed{N}_{l2label}_{filter_label}
     Returns agg, per_seed, all_folds.
     """
-    agg = defaultdict(list)   # key = (l2_label, filter_label, model, group) → list of r2_mean
+    agg = defaultdict(
+        list
+    )  # key = (l2_label, filter_label, model, group) → list of r2_mean
     per_seed = []
-    all_folds = []            # every individual fold R²
+    all_folds = []  # every individual fold R²
 
-    dir_pattern = re.compile(
-        r"CNN_seed(\d+)_(l2norm|no_l2norm)(?:_(.+))?$"
-    )
+    dir_pattern = re.compile(r"CNN_seed(\d+)_(l2norm|no_l2norm)(?:_(.+))?$")
 
     for entry in sorted(os.listdir(results_dir)):
         entry_path = os.path.join(results_dir, entry)
@@ -98,30 +92,34 @@ def collect_results(results_dir: str):
                 key = (l2_label, filter_label, model_tag, grp)
                 agg[key].append(r2_mean)
 
-                per_seed.append({
-                    "sae_seed": sae_seed,
-                    "l2_norm": l2_label,
-                    "filter": filter_label,
-                    "model": model_tag,
-                    "group": grp,
-                    "r2_mean": r2_mean,
-                    "r2_std": r2_std,
-                    "r2_scores": r2_scores,
-                    "perm_pval": perm_pval,
-                    "perm_fold_r2s": res.get("perm_fold_r2s", []),
-                })
-
-                # Store individual fold R²s
-                for fold_i, fold_r2 in enumerate(r2_scores):
-                    all_folds.append({
+                per_seed.append(
+                    {
                         "sae_seed": sae_seed,
                         "l2_norm": l2_label,
                         "filter": filter_label,
                         "model": model_tag,
                         "group": grp,
-                        "fold_idx": fold_i,
-                        "r2": fold_r2,
-                    })
+                        "r2_mean": r2_mean,
+                        "r2_std": r2_std,
+                        "r2_scores": r2_scores,
+                        "perm_pval": perm_pval,
+                        "perm_fold_r2s": res.get("perm_fold_r2s", []),
+                    }
+                )
+
+                # Store individual fold R²s
+                for fold_i, fold_r2 in enumerate(r2_scores):
+                    all_folds.append(
+                        {
+                            "sae_seed": sae_seed,
+                            "l2_norm": l2_label,
+                            "filter": filter_label,
+                            "model": model_tag,
+                            "group": grp,
+                            "fold_idx": fold_i,
+                            "r2": fold_r2,
+                        }
+                    )
 
     return dict(agg), per_seed, all_folds
 
@@ -152,8 +150,12 @@ def print_summary(agg, per_seed):
                     len(agg.get((l2_label, filter_label, model_tag, g), []))
                     for g in GROUPS_OF_INTEREST
                 )
-                print(f"\n  ── L2={l2_label} | filter={filter_label} | {model_tag} ({n_seeds} seeds) ──")
-                print(f"  {'Group':20s} {'Mean R²':>10s} {'±Std':>10s} {'Min':>10s} {'Max':>10s}")
+                print(
+                    f"\n  ── L2={l2_label} | filter={filter_label} | {model_tag} ({n_seeds} seeds) ──"
+                )
+                print(
+                    f"  {'Group':20s} {'Mean R²':>10s} {'±Std':>10s} {'Min':>10s} {'Max':>10s}"
+                )
                 print("  " + "-" * 60)
 
                 for grp in GROUPS_OF_INTEREST:
@@ -162,8 +164,10 @@ def print_summary(agg, per_seed):
                     if vals:
                         m = np.mean(vals)
                         s = np.std(vals)
-                        print(f"  {grp:20s} {m:>10.4f} {s:>10.4f} "
-                              f"{np.min(vals):>10.4f} {np.max(vals):>10.4f}")
+                        print(
+                            f"  {grp:20s} {m:>10.4f} {s:>10.4f} "
+                            f"{np.min(vals):>10.4f} {np.max(vals):>10.4f}"
+                        )
 
 
 # ==============================================================================
@@ -190,15 +194,23 @@ def compute_ci95(all_folds):
         se = arr.std(ddof=1) / np.sqrt(n) if n > 1 else 0.0
 
         if n > 1:
-            ci_low, ci_high = stats.t.interval(0.95, df=n-1, loc=mean, scale=se)
+            ci_low, ci_high = stats.t.interval(0.95, df=n - 1, loc=mean, scale=se)
         else:
             ci_low, ci_high = mean, mean
 
-        ci_results.append({
-            "l2_norm": l2, "filter": filt, "model": model, "group": grp,
-            "mean_r2": mean, "ci95_lower": ci_low, "ci95_upper": ci_high,
-            "n_folds": n, "std": arr.std(ddof=1) if n > 1 else 0.0,
-        })
+        ci_results.append(
+            {
+                "l2_norm": l2,
+                "filter": filt,
+                "model": model,
+                "group": grp,
+                "mean_r2": mean,
+                "ci95_lower": ci_low,
+                "ci95_upper": ci_high,
+                "n_folds": n,
+                "std": arr.std(ddof=1) if n > 1 else 0.0,
+            }
+        )
 
     return ci_results
 
@@ -223,7 +235,7 @@ def compute_wilcoxon(all_folds):
 
     # Identify unique (filter, model, group) combos
     combos = set()
-    for (filt, model, grp, l2) in lookup:
+    for filt, model, grp, l2 in lookup:
         combos.add((filt, model, grp))
 
     results = []
@@ -240,7 +252,9 @@ def compute_wilcoxon(all_folds):
         # Find common paired keys
         common_keys = sorted(set(l2on_dict.keys()) & set(l2off_dict.keys()))
         if len(common_keys) < 5:
-            print(f"  ⚠ Wilcoxon skip: {filt}|{model}|{grp} — only {len(common_keys)} pairs")
+            print(
+                f"  ⚠ Wilcoxon skip: {filt}|{model}|{grp} — only {len(common_keys)} pairs"
+            )
             continue
 
         r2_on = np.array([l2on_dict[k] for k in common_keys])
@@ -254,17 +268,21 @@ def compute_wilcoxon(all_folds):
             # All differences are zero
             stat, pval = 0.0, 1.0
 
-        results.append({
-            "filter": filt, "model": model, "group": grp,
-            "n_pairs": len(common_keys),
-            "median_l2on": float(np.median(r2_on)),
-            "median_l2off": float(np.median(r2_off)),
-            "mean_l2on": float(np.mean(r2_on)),
-            "mean_l2off": float(np.mean(r2_off)),
-            "median_diff": float(np.median(diff)),
-            "W_stat": float(stat),
-            "p_value": float(pval),
-        })
+        results.append(
+            {
+                "filter": filt,
+                "model": model,
+                "group": grp,
+                "n_pairs": len(common_keys),
+                "median_l2on": float(np.median(r2_on)),
+                "median_l2off": float(np.median(r2_off)),
+                "mean_l2on": float(np.mean(r2_on)),
+                "mean_l2off": float(np.mean(r2_off)),
+                "median_diff": float(np.median(diff)),
+                "W_stat": float(stat),
+                "p_value": float(pval),
+            }
+        )
 
     return results
 
@@ -292,9 +310,13 @@ def print_perm_summary(per_seed):
     for key in sorted(grouped.keys()):
         l2, filt, model, grp = key
         pvals = np.array(grouped[key])
-        print(f"\n  ── L2={l2} | filter={filt} | {model} | {grp} ({len(pvals)} seeds) ──")
-        print(f"    Mean p = {pvals.mean():.4f}, Median p = {np.median(pvals):.4f}, "
-              f"Min = {pvals.min():.4f}, Max = {pvals.max():.4f}")
+        print(
+            f"\n  ── L2={l2} | filter={filt} | {model} | {grp} ({len(pvals)} seeds) ──"
+        )
+        print(
+            f"    Mean p = {pvals.mean():.4f}, Median p = {np.median(pvals):.4f}, "
+            f"Min = {pvals.min():.4f}, Max = {pvals.max():.4f}"
+        )
         n_sig = np.sum(pvals < 0.05)
         print(f"    Significant (p<0.05): {n_sig}/{len(pvals)}")
 
@@ -334,15 +356,19 @@ def compute_pooled_perm_pval(per_seed, all_folds):
         real_mean = real_vals.mean()
         p_value = (np.sum(null_vals >= real_mean) + 1) / (len(null_vals) + 1)
 
-        results.append({
-            "l2_norm": key[0], "filter": key[1],
-            "model": key[2], "group": key[3],
-            "real_mean_r2": float(real_mean),
-            "n_real_folds": len(real_vals),
-            "null_mean_r2": float(null_vals.mean()),
-            "n_null_folds": len(null_vals),
-            "pooled_p_value": float(p_value),
-        })
+        results.append(
+            {
+                "l2_norm": key[0],
+                "filter": key[1],
+                "model": key[2],
+                "group": key[3],
+                "real_mean_r2": float(real_mean),
+                "n_real_folds": len(real_vals),
+                "null_mean_r2": float(null_vals.mean()),
+                "n_null_folds": len(null_vals),
+                "pooled_p_value": float(p_value),
+            }
+        )
 
     return results
 
@@ -361,84 +387,154 @@ def print_pooled_perm(pooled_perm):
         if r["group"] not in GROUPS_OF_INTEREST:
             continue
         sig = "✅" if r["pooled_p_value"] < 0.05 else "  "
-        print(f"  {sig} L2={r['l2_norm']:12s} | filter={r['filter']:15s} | "
-              f"{r['model']:8s} | {r['group']:12s}: "
-              f"p = {r['pooled_p_value']:.4f}  "
-              f"(real={r['real_mean_r2']:.4f}, null={r['null_mean_r2']:.4f}, "
-              f"n_real={r['n_real_folds']}, n_null={r['n_null_folds']})")
+        print(
+            f"  {sig} L2={r['l2_norm']:12s} | filter={r['filter']:15s} | "
+            f"{r['model']:8s} | {r['group']:12s}: "
+            f"p = {r['pooled_p_value']:.4f}  "
+            f"(real={r['real_mean_r2']:.4f}, null={r['null_mean_r2']:.4f}, "
+            f"n_real={r['n_real_folds']}, n_null={r['n_null_folds']})"
+        )
 
 
 # ==============================================================================
 # Save CSVs
 # ==============================================================================
-def save_csvs(results_dir, agg, per_seed, all_folds, ci_results, wilcoxon_results,
-              pooled_perm=None):
+def save_csvs(
+    results_dir,
+    agg,
+    per_seed,
+    all_folds,
+    ci_results,
+    wilcoxon_results,
+    pooled_perm=None,
+):
     """Save all CSV files."""
 
     # 1. Per-seed CSV (backward compatible)
     csv_path = os.path.join(results_dir, "sae_r2_per_seed.csv")
     rows_sorted = sorted(
-        per_seed,
-        key=lambda x: (x["l2_norm"], x["filter"], x["model"], x["sae_seed"])
+        per_seed, key=lambda x: (x["l2_norm"], x["filter"], x["model"], x["sae_seed"])
     )
     with open(csv_path, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["CNN_Seed", "GAP_L2_Norm", "Filter", "Model",
-                     "Group", "R2_mean", "R2_std", "Perm_pval",
-                     "R2_fold_scores"])
+        w.writerow(
+            [
+                "CNN_Seed",
+                "GAP_L2_Norm",
+                "Filter",
+                "Model",
+                "Group",
+                "R2_mean",
+                "R2_std",
+                "Perm_pval",
+                "R2_fold_scores",
+            ]
+        )
         for r in rows_sorted:
-            w.writerow([
-                r["sae_seed"], r["l2_norm"], r["filter"], r["model"],
-                r["group"], f"{r['r2_mean']:.6f}", f"{r['r2_std']:.6f}",
-                f"{r['perm_pval']:.4f}" if r["perm_pval"] is not None else "",
-                ";".join(f"{s:.6f}" for s in r["r2_scores"]) if r["r2_scores"] else "",
-            ])
+            w.writerow(
+                [
+                    r["sae_seed"],
+                    r["l2_norm"],
+                    r["filter"],
+                    r["model"],
+                    r["group"],
+                    f"{r['r2_mean']:.6f}",
+                    f"{r['r2_std']:.6f}",
+                    f"{r['perm_pval']:.4f}" if r["perm_pval"] is not None else "",
+                    (
+                        ";".join(f"{s:.6f}" for s in r["r2_scores"])
+                        if r["r2_scores"]
+                        else ""
+                    ),
+                ]
+            )
     print(f"\n  Saved per-seed CSV: {csv_path}")
 
     # 2. All folds CSV
     folds_csv = os.path.join(results_dir, "sae_r2_all_folds.csv")
     folds_sorted = sorted(
         all_folds,
-        key=lambda x: (x["l2_norm"], x["filter"], x["model"], x["sae_seed"], x["fold_idx"])
+        key=lambda x: (
+            x["l2_norm"],
+            x["filter"],
+            x["model"],
+            x["sae_seed"],
+            x["fold_idx"],
+        ),
     )
     with open(folds_csv, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["CNN_Seed", "GAP_L2_Norm", "Filter", "Model",
-                     "Group", "Fold_idx", "R2"])
+        w.writerow(
+            ["CNN_Seed", "GAP_L2_Norm", "Filter", "Model", "Group", "Fold_idx", "R2"]
+        )
         for r in folds_sorted:
-            w.writerow([
-                r["sae_seed"], r["l2_norm"], r["filter"], r["model"],
-                r["group"], r["fold_idx"], f"{r['r2']:.6f}",
-            ])
+            w.writerow(
+                [
+                    r["sae_seed"],
+                    r["l2_norm"],
+                    r["filter"],
+                    r["model"],
+                    r["group"],
+                    r["fold_idx"],
+                    f"{r['r2']:.6f}",
+                ]
+            )
     print(f"  Saved all-folds CSV: {folds_csv}")
 
     # 3. Summary CSV
     summary_path = os.path.join(results_dir, "sae_r2_summary.csv")
     with open(summary_path, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["GAP_L2_Norm", "Filter", "Model", "Group",
-                     "Mean_R2", "Std_R2", "N_seeds"])
+        w.writerow(
+            ["GAP_L2_Norm", "Filter", "Model", "Group", "Mean_R2", "Std_R2", "N_seeds"]
+        )
         for key in sorted(agg.keys()):
             l2_label, filter_label, model_tag, grp = key
             vals = agg[key]
-            w.writerow([
-                l2_label, filter_label, model_tag, grp,
-                f"{np.mean(vals):.6f}", f"{np.std(vals):.6f}", len(vals),
-            ])
+            w.writerow(
+                [
+                    l2_label,
+                    filter_label,
+                    model_tag,
+                    grp,
+                    f"{np.mean(vals):.6f}",
+                    f"{np.std(vals):.6f}",
+                    len(vals),
+                ]
+            )
     print(f"  Saved summary CSV:  {summary_path}")
 
     # 4. 95% CI CSV
     ci_csv = os.path.join(results_dir, "sae_r2_ci95.csv")
     with open(ci_csv, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["GAP_L2_Norm", "Filter", "Model", "Group",
-                     "Mean_R2", "CI95_lower", "CI95_upper", "Std", "N_folds"])
+        w.writerow(
+            [
+                "GAP_L2_Norm",
+                "Filter",
+                "Model",
+                "Group",
+                "Mean_R2",
+                "CI95_lower",
+                "CI95_upper",
+                "Std",
+                "N_folds",
+            ]
+        )
         for r in ci_results:
-            w.writerow([
-                r["l2_norm"], r["filter"], r["model"], r["group"],
-                f"{r['mean_r2']:.6f}", f"{r['ci95_lower']:.6f}",
-                f"{r['ci95_upper']:.6f}", f"{r['std']:.6f}", r["n_folds"],
-            ])
+            w.writerow(
+                [
+                    r["l2_norm"],
+                    r["filter"],
+                    r["model"],
+                    r["group"],
+                    f"{r['mean_r2']:.6f}",
+                    f"{r['ci95_lower']:.6f}",
+                    f"{r['ci95_upper']:.6f}",
+                    f"{r['std']:.6f}",
+                    r["n_folds"],
+                ]
+            )
     print(f"  Saved 95% CI CSV:   {ci_csv}")
 
     # 5. Wilcoxon CSV
@@ -446,18 +542,37 @@ def save_csvs(results_dir, agg, per_seed, all_folds, ci_results, wilcoxon_result
         wilcoxon_csv = os.path.join(results_dir, "sae_r2_wilcoxon.csv")
         with open(wilcoxon_csv, "w", newline="") as f:
             w = csv.writer(f)
-            w.writerow(["Filter", "Model", "Group", "N_pairs",
-                         "Median_L2on", "Median_L2off",
-                         "Mean_L2on", "Mean_L2off",
-                         "Median_diff", "W_stat", "P_value"])
+            w.writerow(
+                [
+                    "Filter",
+                    "Model",
+                    "Group",
+                    "N_pairs",
+                    "Median_L2on",
+                    "Median_L2off",
+                    "Mean_L2on",
+                    "Mean_L2off",
+                    "Median_diff",
+                    "W_stat",
+                    "P_value",
+                ]
+            )
             for r in wilcoxon_results:
-                w.writerow([
-                    r["filter"], r["model"], r["group"], r["n_pairs"],
-                    f"{r['median_l2on']:.6f}", f"{r['median_l2off']:.6f}",
-                    f"{r['mean_l2on']:.6f}", f"{r['mean_l2off']:.6f}",
-                    f"{r['median_diff']:.6f}",
-                    f"{r['W_stat']:.1f}", f"{r['p_value']:.6f}",
-                ])
+                w.writerow(
+                    [
+                        r["filter"],
+                        r["model"],
+                        r["group"],
+                        r["n_pairs"],
+                        f"{r['median_l2on']:.6f}",
+                        f"{r['median_l2off']:.6f}",
+                        f"{r['mean_l2on']:.6f}",
+                        f"{r['mean_l2off']:.6f}",
+                        f"{r['median_diff']:.6f}",
+                        f"{r['W_stat']:.1f}",
+                        f"{r['p_value']:.6f}",
+                    ]
+                )
         print(f"  Saved Wilcoxon CSV: {wilcoxon_csv}")
 
     # 6. Pooled permutation p-value CSV
@@ -465,16 +580,33 @@ def save_csvs(results_dir, agg, per_seed, all_folds, ci_results, wilcoxon_result
         perm_csv = os.path.join(results_dir, "sae_r2_pooled_perm.csv")
         with open(perm_csv, "w", newline="") as f:
             w = csv.writer(f)
-            w.writerow(["GAP_L2_Norm", "Filter", "Model", "Group",
-                         "Real_mean_R2", "N_real_folds",
-                         "Null_mean_R2", "N_null_folds", "Pooled_p_value"])
+            w.writerow(
+                [
+                    "GAP_L2_Norm",
+                    "Filter",
+                    "Model",
+                    "Group",
+                    "Real_mean_R2",
+                    "N_real_folds",
+                    "Null_mean_R2",
+                    "N_null_folds",
+                    "Pooled_p_value",
+                ]
+            )
             for r in pooled_perm:
-                w.writerow([
-                    r["l2_norm"], r["filter"], r["model"], r["group"],
-                    f"{r['real_mean_r2']:.6f}", r["n_real_folds"],
-                    f"{r['null_mean_r2']:.6f}", r["n_null_folds"],
-                    f"{r['pooled_p_value']:.6f}",
-                ])
+                w.writerow(
+                    [
+                        r["l2_norm"],
+                        r["filter"],
+                        r["model"],
+                        r["group"],
+                        f"{r['real_mean_r2']:.6f}",
+                        r["n_real_folds"],
+                        f"{r['null_mean_r2']:.6f}",
+                        r["n_null_folds"],
+                        f"{r['pooled_p_value']:.6f}",
+                    ]
+                )
         print(f"  Saved pooled perm CSV: {perm_csv}")
 
 
@@ -496,14 +628,18 @@ def plot_paired_comparison(per_seed, results_dir):
 
     for filt in filter_labels:
         for model in MODEL_TAGS:
-            groups_present = [g for g in GROUPS_OF_INTEREST
-                              if lookup.get((filt, model, g, "l2norm"))
-                              and lookup.get((filt, model, g, "no_l2norm"))]
+            groups_present = [
+                g
+                for g in GROUPS_OF_INTEREST
+                if lookup.get((filt, model, g, "l2norm"))
+                and lookup.get((filt, model, g, "no_l2norm"))
+            ]
             if not groups_present:
                 continue
 
-            fig, axes = plt.subplots(1, len(groups_present),
-                                      figsize=(5 * len(groups_present), 5))
+            fig, axes = plt.subplots(
+                1, len(groups_present), figsize=(5 * len(groups_present), 5)
+            )
             if len(groups_present) == 1:
                 axes = [axes]
 
@@ -513,27 +649,45 @@ def plot_paired_comparison(per_seed, results_dir):
                 common_seeds = sorted(set(l2on_dict.keys()) & set(l2off_dict.keys()))
 
                 for seed in common_seeds:
-                    ax.plot([0, 1], [l2off_dict[seed], l2on_dict[seed]],
-                            "o-", color="#555555", alpha=0.5, markersize=6)
+                    ax.plot(
+                        [0, 1],
+                        [l2off_dict[seed], l2on_dict[seed]],
+                        "o-",
+                        color="#555555",
+                        alpha=0.5,
+                        markersize=6,
+                    )
 
                 # Means
                 if common_seeds:
                     mean_off = np.mean([l2off_dict[s] for s in common_seeds])
                     mean_on = np.mean([l2on_dict[s] for s in common_seeds])
-                    ax.plot([0, 1], [mean_off, mean_on],
-                            "s-", color="#E24A33", markersize=10, linewidth=2.5,
-                            label=f"Mean", zorder=5)
+                    ax.plot(
+                        [0, 1],
+                        [mean_off, mean_on],
+                        "s-",
+                        color="#E24A33",
+                        markersize=10,
+                        linewidth=2.5,
+                        label=f"Mean",
+                        zorder=5,
+                    )
 
                 ax.set_xticks([0, 1])
                 ax.set_xticklabels(["L2 OFF", "L2 ON"], fontsize=11)
                 ax.set_ylabel("R² (mean across folds)", fontsize=11)
-                ax.set_title(f"{grp}\n{model} | filter={filt}", fontsize=12,
-                             fontweight="bold")
+                ax.set_title(
+                    f"{grp}\n{model} | filter={filt}", fontsize=12, fontweight="bold"
+                )
                 ax.grid(True, alpha=0.2, axis="y")
                 ax.legend(fontsize=9)
 
-            fig.suptitle("SAE Vector: GAP L2 Norm Effect (Paired by CNN Seed)",
-                         fontsize=14, fontweight="bold", y=1.02)
+            fig.suptitle(
+                "SAE Vector: GAP L2 Norm Effect (Paired by CNN Seed)",
+                fontsize=14,
+                fontweight="bold",
+                y=1.02,
+            )
             fig.tight_layout()
             safe = f"paired_{model}_{filt}".replace(" ", "_")
             save_path = os.path.join(results_dir, f"{safe}.png")
@@ -552,8 +706,11 @@ def plot_forest_ci(ci_results, results_dir):
     """
     for model in MODEL_TAGS:
         # Get relevant results
-        model_results = [r for r in ci_results
-                         if r["model"] == model and r["group"] in GROUPS_OF_INTEREST]
+        model_results = [
+            r
+            for r in ci_results
+            if r["model"] == model and r["group"] in GROUPS_OF_INTEREST
+        ]
         if not model_results:
             continue
 
@@ -564,8 +721,11 @@ def plot_forest_ci(ci_results, results_dir):
             if not filt_results:
                 continue
 
-            groups_present = [g for g in GROUPS_OF_INTEREST
-                              if any(r["group"] == g for r in filt_results)]
+            groups_present = [
+                g
+                for g in GROUPS_OF_INTEREST
+                if any(r["group"] == g for r in filt_results)
+            ]
             if not groups_present:
                 continue
 
@@ -577,25 +737,43 @@ def plot_forest_ci(ci_results, results_dir):
 
             for grp in groups_present:
                 for l2 in ["l2norm", "no_l2norm"]:
-                    matches = [r for r in filt_results
-                               if r["group"] == grp and r["l2_norm"] == l2]
+                    matches = [
+                        r
+                        for r in filt_results
+                        if r["group"] == grp and r["l2_norm"] == l2
+                    ]
                     if not matches:
                         continue
                     r = matches[0]
                     color = "#E24A33" if l2 == "l2norm" else "#348ABD"
                     label_str = f"L2 {'ON' if l2 == 'l2norm' else 'OFF'}"
 
-                    ci_err = [[r["mean_r2"] - r["ci95_lower"]],
-                              [r["ci95_upper"] - r["mean_r2"]]]
+                    ci_err = [
+                        [r["mean_r2"] - r["ci95_lower"]],
+                        [r["ci95_upper"] - r["mean_r2"]],
+                    ]
 
-                    ax.errorbar(r["mean_r2"], y_offset, xerr=ci_err,
-                                fmt="o", color=color, markersize=8,
-                                capsize=5, capthick=1.5, linewidth=1.5,
-                                label=label_str if y_offset < 2 else None)
+                    ax.errorbar(
+                        r["mean_r2"],
+                        y_offset,
+                        xerr=ci_err,
+                        fmt="o",
+                        color=color,
+                        markersize=8,
+                        capsize=5,
+                        capthick=1.5,
+                        linewidth=1.5,
+                        label=label_str if y_offset < 2 else None,
+                    )
 
-                    ax.text(r["ci95_upper"] + 0.002, y_offset,
-                            f"  {r['mean_r2']:.4f} [{r['ci95_lower']:.4f}, {r['ci95_upper']:.4f}]",
-                            va="center", fontsize=8, color=color)
+                    ax.text(
+                        r["ci95_upper"] + 0.002,
+                        y_offset,
+                        f"  {r['mean_r2']:.4f} [{r['ci95_lower']:.4f}, {r['ci95_upper']:.4f}]",
+                        va="center",
+                        fontsize=8,
+                        color=color,
+                    )
 
                     y_positions.append(y_offset)
                     y_labels.append(f"{grp} ({label_str})")
@@ -606,8 +784,11 @@ def plot_forest_ci(ci_results, results_dir):
             ax.set_yticks(y_positions)
             ax.set_yticklabels(y_labels, fontsize=9)
             ax.set_xlabel("R²", fontsize=11)
-            ax.set_title(f"SAE {model} | filter={filt}\n95% CI (all folds pooled)",
-                         fontsize=12, fontweight="bold")
+            ax.set_title(
+                f"SAE {model} | filter={filt}\n95% CI (all folds pooled)",
+                fontsize=12,
+                fontweight="bold",
+            )
             ax.axvline(0, color="gray", linewidth=0.5, linestyle="--", alpha=0.5)
             ax.grid(True, alpha=0.15, axis="x")
             ax.invert_yaxis()
@@ -642,10 +823,14 @@ def print_wilcoxon_results(wilcoxon_results):
         sig = "✅ *" if r["p_value"] < 0.05 else "  "
         print(f"\n  {sig} filter={r['filter']} | {r['model']} | {r['group']}")
         print(f"    N pairs = {r['n_pairs']}")
-        print(f"    Median R²:  L2 ON = {r['median_l2on']:.4f},  "
-              f"L2 OFF = {r['median_l2off']:.4f},  Δ = {r['median_diff']:+.4f}")
-        print(f"    Mean R²:    L2 ON = {r['mean_l2on']:.4f},  "
-              f"L2 OFF = {r['mean_l2off']:.4f}")
+        print(
+            f"    Median R²:  L2 ON = {r['median_l2on']:.4f},  "
+            f"L2 OFF = {r['median_l2off']:.4f},  Δ = {r['median_diff']:+.4f}"
+        )
+        print(
+            f"    Mean R²:    L2 ON = {r['mean_l2on']:.4f},  "
+            f"L2 OFF = {r['mean_l2off']:.4f}"
+        )
         print(f"    W = {r['W_stat']:.1f},  p = {r['p_value']:.6f}")
 
     # Summary
@@ -665,10 +850,12 @@ def print_ci_results(ci_results):
     for r in ci_results:
         if r["group"] not in GROUPS_OF_INTEREST:
             continue
-        print(f"  L2={r['l2_norm']:12s} | filter={r['filter']:15s} | {r['model']:8s} | "
-              f"{r['group']:12s}: "
-              f"{r['mean_r2']:.4f} [{r['ci95_lower']:.4f}, {r['ci95_upper']:.4f}]  "
-              f"(n={r['n_folds']})")
+        print(
+            f"  L2={r['l2_norm']:12s} | filter={r['filter']:15s} | {r['model']:8s} | "
+            f"{r['group']:12s}: "
+            f"{r['mean_r2']:.4f} [{r['ci95_lower']:.4f}, {r['ci95_upper']:.4f}]  "
+            f"(n={r['n_folds']})"
+        )
 
 
 # ==============================================================================
@@ -679,8 +866,10 @@ def main():
         description="Aggregate SAE vector apoptosis R² results"
     )
     parser.add_argument(
-        "--results_dir", type=str, required=True,
-        help="Path to SAE_vector results directory"
+        "--results_dir",
+        type=str,
+        required=True,
+        help="Path to SAE_vector results directory",
     )
     args = parser.parse_args()
 
@@ -694,7 +883,9 @@ def main():
         print("ERROR: No results found.")
         sys.exit(1)
 
-    print(f"\n  Found {len(per_seed)} seed-level entries, {len(all_folds)} fold-level entries.")
+    print(
+        f"\n  Found {len(per_seed)} seed-level entries, {len(all_folds)} fold-level entries."
+    )
 
     # ── Print basic summary ──
     print_summary(agg, per_seed)
@@ -718,8 +909,15 @@ def main():
     print("\n" + "=" * 100)
     print("  SAVING OUTPUT FILES")
     print("=" * 100)
-    save_csvs(args.results_dir, agg, per_seed, all_folds, ci_results, wilcoxon_results,
-              pooled_perm)
+    save_csvs(
+        args.results_dir,
+        agg,
+        per_seed,
+        all_folds,
+        ci_results,
+        wilcoxon_results,
+        pooled_perm,
+    )
 
     # ── Plots ──
     print("\n" + "=" * 100)

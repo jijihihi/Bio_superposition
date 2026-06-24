@@ -16,28 +16,27 @@
 #       --which_layer stage5_mid
 # ==============================================================================
 
-import os
 import argparse
+import gc
+import os
 import random
-import numpy as np
 from collections import defaultdict
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
-import gc
 
-from sae_project.step02_logging_utils import get_logger, SUPERCLASS_MAP
-from sae_project.step03_data_shards import load_all_sample_refs, build_uid_to_refidx
-from sae_project.step04_data_bank import (
-    InMemoryTarBank, InMemorySixteenBitDataset, load_split_csv,
-    seed_worker, collate_skip_none,
-)
-from sae_project.step05_model_encoder import (
-    SupMoCoModel, parse_int_list, renorm_unit_per_out_channel_,
-    robust_load_state_dict,
-)
+from sae_project.step02_logging_utils import SUPERCLASS_MAP, get_logger
+from sae_project.step03_data_shards import (build_uid_to_refidx,
+                                            load_all_sample_refs)
+from sae_project.step04_data_bank import (InMemorySixteenBitDataset,
+                                          InMemoryTarBank, collate_skip_none,
+                                          load_split_csv, seed_worker)
+from sae_project.step05_model_encoder import (SupMoCoModel, parse_int_list,
+                                              renorm_unit_per_out_channel_,
+                                              robust_load_state_dict)
 
 logger = get_logger("extract_cnn_gap")
 
@@ -51,28 +50,50 @@ def get_args():
     )
 
     # Model
-    p.add_argument("--save_dir", type=str, required=True,
-                   help="Model output dir (contains train/val/test_split.csv)")
+    p.add_argument(
+        "--save_dir",
+        type=str,
+        required=True,
+        help="Model output dir (contains train/val/test_split.csv)",
+    )
     p.add_argument("--model_state_path", type=str, required=True)
     p.add_argument("--shard_root", type=str, required=True)
 
     # Output
-    p.add_argument("--output_dir", type=str, default="",
-                   help="Directory for .npz cache file (default: <save_dir>/CNN_GAP)")
+    p.add_argument(
+        "--output_dir",
+        type=str,
+        default="",
+        help="Directory for .npz cache file (default: <save_dir>/CNN_GAP)",
+    )
 
     # Feature extraction
-    p.add_argument("--which_layer", type=str, default="stage5_mid",
-                   choices=["stage5_mid", "stage5_out", "refine_out"],
-                   help="Encoder layer to extract GAP from")
+    p.add_argument(
+        "--which_layer",
+        type=str,
+        default="stage5_mid",
+        choices=["stage5_mid", "stage5_out", "refine_out"],
+        help="Encoder layer to extract GAP from",
+    )
 
     # Sampling
-    p.add_argument("--samples_per_class", type=int, default=5000,
-                   help="Samples per class (0 = use ALL, no sampling)")
-    p.add_argument("--use_all_data", action="store_true",
-                   help="Load train+val+test (default: val+test only). "
-                        "Also sets samples_per_class=0 if not explicitly set")
-    p.add_argument("--ignore_splits", action="store_true",
-                   help="Ignore train/val/test split CSVs and use ALL images found in shard_root")
+    p.add_argument(
+        "--samples_per_class",
+        type=int,
+        default=5000,
+        help="Samples per class (0 = use ALL, no sampling)",
+    )
+    p.add_argument(
+        "--use_all_data",
+        action="store_true",
+        help="Load train+val+test (default: val+test only). "
+        "Also sets samples_per_class=0 if not explicitly set",
+    )
+    p.add_argument(
+        "--ignore_splits",
+        action="store_true",
+        help="Ignore train/val/test split CSVs and use ALL images found in shard_root",
+    )
     p.add_argument("--seed", type=int, default=42)
 
     # Encoder architecture
@@ -106,7 +127,7 @@ def extract_cnn_gap_features(
 ) -> tuple:
     """
     Extract CNN GAP features directly from encoder feature maps.
-    
+
     Process:
         1. encoder.forward_feature_maps(x, which_layer) → (B, C, H, W)
         2. GAP: mean(dim=(2,3)) → (B, C)
@@ -169,8 +190,9 @@ def extract_cnn_gap_features(
 # ==============================================================================
 # Data Loading (reused from extract_features.py)
 # ==============================================================================
-def make_balanced_loader(args, refs, uid_to_refidx, samples_per_class, seed,
-                         include_train=False):
+def make_balanced_loader(
+    args, refs, uid_to_refidx, samples_per_class, seed, include_train=False
+):
     """Load data, optionally balanced per class.
 
     include_train: if True, also loads train_split.csv
@@ -178,14 +200,16 @@ def make_balanced_loader(args, refs, uid_to_refidx, samples_per_class, seed,
     """
     if getattr(args, "ignore_splits", False):
         refidx_list = list(range(len(refs)))
-        logger.info(f"  [!] --ignore_splits is ON: Using all {len(refs)} images found in shard_root, bypassing CSVs.")
+        logger.info(
+            f"  [!] --ignore_splits is ON: Using all {len(refs)} images found in shard_root, bypassing CSVs."
+        )
     else:
         csv_paths = []
         if include_train:
             csv_paths.append(os.path.join(args.save_dir, "train_split.csv"))
         csv_paths.append(os.path.join(args.save_dir, "val_split.csv"))
         csv_paths.append(os.path.join(args.save_dir, "test_split.csv"))
-    
+
         all_uids = []
         for csv_path in csv_paths:
             if os.path.exists(csv_path):
@@ -194,10 +218,10 @@ def make_balanced_loader(args, refs, uid_to_refidx, samples_per_class, seed,
                 logger.info(f"  Loaded {csv_path}: {len(uids)} UIDs")
             else:
                 logger.warning(f"  Not found (skipping): {csv_path}")
-    
+
         if not all_uids:
             raise FileNotFoundError(f"No val/test CSVs in {args.save_dir}")
-    
+
         # Normalize UIDs for cross-machine path matching
         KNOWN_ROOTS = [
             "/home/ubuntu/model-east3/wds_shards_tar/",
@@ -205,17 +229,17 @@ def make_balanced_loader(args, refs, uid_to_refidx, samples_per_class, seed,
             args.shard_root.rstrip("/\\") + "/",
             args.shard_root.rstrip("/\\") + "\\",
         ]
-    
+
         def uid_to_relative(uid: str) -> str:
             for root in KNOWN_ROOTS:
                 if uid.startswith(root):
-                    return uid[len(root):]
+                    return uid[len(root) :]
             for cls_prefix in ["Control/", "SNCA/", "GBA/", "LRRK2/"]:
                 idx = uid.find(cls_prefix)
                 if idx >= 0:
                     return uid[idx:]
             return uid
-    
+
         rel_to_refidx = {uid_to_relative(k): v for k, v in uid_to_refidx.items()}
         refidx_list = []
         n_missing = 0
@@ -223,7 +247,7 @@ def make_balanced_loader(args, refs, uid_to_refidx, samples_per_class, seed,
             rel_key = uid_to_relative(uid)
             if rel_key in rel_to_refidx:
                 refidx_list.append(rel_to_refidx[rel_key])
-                
+
         # [NEW] CSV 파일에 없는 OOD 클래스 (Label 4 이상)는 폴더에 있는 모든 이미지를 무조건 포함!
         # (이미 targz_to_wds 변환 단계에서 27,000장으로 맞춰두었으므로 그대로 다 쓰면 됩니다)
         for rel_key, ridx in rel_to_refidx.items():
@@ -231,9 +255,11 @@ def make_balanced_loader(args, refs, uid_to_refidx, samples_per_class, seed,
                 refidx_list.append(ridx)
             else:
                 n_missing += 1
-    
+
         if n_missing > 0:
-            logger.warning(f"  {n_missing}/{len(all_uids)} UIDs not matched (path mismatch?)")
+            logger.warning(
+                f"  {n_missing}/{len(all_uids)} UIDs not matched (path mismatch?)"
+            )
         logger.info(f"  Matched: {len(refidx_list)}/{len(all_uids)} UIDs")
 
     # Group by class AND line to ensure strict balancing among lines within the same class
@@ -245,29 +271,33 @@ def make_balanced_loader(args, refs, uid_to_refidx, samples_per_class, seed,
 
     rng = np.random.default_rng(seed)
     selected = []
-    
+
     for cls in sorted(class_to_lines.keys()):
         lines_dict = class_to_lines[cls]
         num_lines = len(lines_dict)
-        
+
         if samples_per_class > 0:
             target_total = samples_per_class
             base_take = target_total // num_lines
             remainder = target_total % num_lines
-            
+
             sorted_lines = sorted(lines_dict.keys())
             class_selected = []
-            
+
             for idx, line_name in enumerate(sorted_lines):
                 pool = lines_dict[line_name]
                 take_for_this_line = base_take + (1 if idx < remainder else 0)
                 n_take = min(take_for_this_line, len(pool))
                 chosen = rng.choice(pool, size=n_take, replace=False).tolist()
                 class_selected.extend(chosen)
-                logger.info(f"    Line {line_name} (Class {cls}): {n_take}/{len(pool)} selected")
-                
+                logger.info(
+                    f"    Line {line_name} (Class {cls}): {n_take}/{len(pool)} selected"
+                )
+
             selected.extend(class_selected)
-            logger.info(f"  Class {cls} Total: {len(class_selected)} selected (across {num_lines} lines)")
+            logger.info(
+                f"  Class {cls} Total: {len(class_selected)} selected (across {num_lines} lines)"
+            )
         else:
             class_selected = []
             for line_name in sorted(lines_dict.keys()):
@@ -315,10 +345,15 @@ def main():
     dilations = parse_int_list(args.dilations, 4)
 
     model = SupMoCoModel(
-        embed_dim=args.embed_dim, blocks=blocks, dilations=dilations,
-        refine_blocks=args.refine_blocks, ckpt_segments=args.ckpt_segments,
-        proj_layers=args.proj_layers, proj_hidden=args.proj_hidden,
-        proj_bn=args.proj_bn, proj_dropout=args.proj_dropout,
+        embed_dim=args.embed_dim,
+        blocks=blocks,
+        dilations=dilations,
+        refine_blocks=args.refine_blocks,
+        ckpt_segments=args.ckpt_segments,
+        proj_layers=args.proj_layers,
+        proj_hidden=args.proj_hidden,
+        proj_bn=args.proj_bn,
+        proj_dropout=args.proj_dropout,
     )
     sd = torch.load(args.model_state_path, map_location="cpu", weights_only=False)
     robust_load_state_dict(model, sd, strict=True)
@@ -349,7 +384,9 @@ def main():
     uid_to_refidx = build_uid_to_refidx(refs)
 
     loader = make_balanced_loader(
-        args, refs, uid_to_refidx,
+        args,
+        refs,
+        uid_to_refidx,
         samples_per_class=spc,
         seed=args.seed,
         include_train=use_all,
@@ -361,12 +398,17 @@ def main():
     logger.info(f"Extracting CNN GAP features — layer={which_layer}")
 
     X_gap, y, lines, uids = extract_cnn_gap_features(
-        encoder, loader, device, which_layer,
+        encoder,
+        loader,
+        device,
+        which_layer,
     )
     logger.info(f"Features: {X_gap.shape}")
 
     # ── 4. Save cache ────────────────────────────────────────────────────
-    output_dir = args.output_dir if args.output_dir else os.path.join(args.save_dir, "CNN_GAP")
+    output_dir = (
+        args.output_dir if args.output_dir else os.path.join(args.save_dir, "CNN_GAP")
+    )
     os.makedirs(output_dir, exist_ok=True)
 
     if getattr(args, "ignore_splits", False):

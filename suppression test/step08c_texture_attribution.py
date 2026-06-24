@@ -165,8 +165,14 @@
 # 수정함. 자기 자신 제외하게
 
 
-import os, sys, csv, random, argparse
+import argparse
+import csv
+import os
+import random
+import sys
 from typing import List
+
+import matplotlib
 import numpy as np
 import torch
 import torch.nn as nn
@@ -174,39 +180,32 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
-import matplotlib
 _IN_COLAB = "google.colab" in sys.modules
 if not _IN_COLAB:
     matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-
-from sae_project.step02_logging_utils import get_logger, OUT_DIM, SUPERCLASS_MAP
-from sae_project.step03_data_shards import load_all_sample_refs, build_uid_to_refidx
-from sae_project.step04_data_bank import (
-    InMemoryTarBank, InMemorySixteenBitDataset,
-    seed_worker, collate_skip_none,
-)
-from sae_project.step05_model_encoder import (
-    Encoder, SupMoCoModel, parse_int_list,
-    renorm_unit_per_out_channel_, robust_load_state_dict,
-)
-from sae_project.step06_gated_sae import GatedSAE
-
 # Reuse from step08
 # pyrefly: ignore [missing-import]
 from suppression_test.step08_channel_attribution import (
-    lr_swap_channels, ud_swap_channels,
-    build_combined_seam_mask,
-    get_sae_activation_maps,
-    load_split_csv, remap_uid, KNOWN_SHARD_ROOTS,
-    plot_histogram,
-)
-
+    KNOWN_SHARD_ROOTS, build_combined_seam_mask, get_sae_activation_maps,
+    load_split_csv, lr_swap_channels, plot_histogram, remap_uid,
+    ud_swap_channels)
 # Reuse from step08b
 from suppression_test.step08b_local_shape_attribution import (
-    patch_shuffle_channels,
-    patch_rotate_channels,
-)
+    patch_rotate_channels, patch_shuffle_channels)
+
+from sae_project.step02_logging_utils import (OUT_DIM, SUPERCLASS_MAP,
+                                              get_logger)
+from sae_project.step03_data_shards import (build_uid_to_refidx,
+                                            load_all_sample_refs)
+from sae_project.step04_data_bank import (InMemorySixteenBitDataset,
+                                          InMemoryTarBank, collate_skip_none,
+                                          seed_worker)
+from sae_project.step05_model_encoder import (Encoder, SupMoCoModel,
+                                              parse_int_list,
+                                              renorm_unit_per_out_channel_,
+                                              robust_load_state_dict)
+from sae_project.step06_gated_sae import GatedSAE
 
 logger = get_logger("texture_attribution")
 
@@ -475,7 +474,8 @@ def main():
         logger.info(f"\n{'='*60}")
         logger.info("DE-based neuron selection")
         logger.info(f"{'='*60}")
-        from kendall_correlation_coefficient.dpt_kendall import compute_de_neurons
+        from kendall_correlation_coefficient.dpt_kendall import \
+            compute_de_neurons
         sc_arr = np.array(superclasses)
         alive_indices = np.where(alive_mask)[0]
         gap_alive = gap_all[:, alive_mask]

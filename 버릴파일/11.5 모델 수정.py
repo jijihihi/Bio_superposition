@@ -4,35 +4,29 @@
 
 #### 학습 #### XBM + moco
 
-import os
-import glob
-import random
 import argparse
-import logging
-import sys
+import concurrent.futures
+import copy
 import csv
+import glob
+import logging
+import os
+import random
+import sys
 from typing import List, Optional, Tuple
 
-import numpy as np
 import cv2
-from sklearn.model_selection import train_test_split
-
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from sklearn.model_selection import train_test_split
 from torch.nn.utils.parametrizations import weight_norm
-from torch.utils.data import Dataset, DataLoader
-from torchvision import transforms
+from torch.utils.data import DataLoader, Dataset, Sampler
 from torch.utils.data.dataloader import default_collate
+from torchvision import transforms
 from tqdm.auto import tqdm
-import concurrent.futures
-
-import numpy as np
-import random
-from torch.utils.data import Sampler, DataLoader
-import copy
-
 
 # ==============================================================================
 # Logging
@@ -64,63 +58,145 @@ DEFAULT_DATA_ROOTS = {
 # 1. Configuration & Reproducibility
 # ==============================================================================
 def get_args():
-    parser = argparse.ArgumentParser(description="SupCon + Class-Balanced XBM (neg-only, same-class ignored)")
+    parser = argparse.ArgumentParser(
+        description="SupCon + Class-Balanced XBM (neg-only, same-class ignored)"
+    )
 
-    parser.add_argument("--moco_m", type=float, default=0.995, help="Momentum for key encoder EMA update (0.99~0.999)")
+    parser.add_argument(
+        "--moco_m",
+        type=float,
+        default=0.995,
+        help="Momentum for key encoder EMA update (0.99~0.999)",
+    )
 
     # Experiment
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
-    parser.add_argument("--save_dir", type=str, default="/content/drive/MyDrive/Final_paper/Model5", help="Save directory")
+    parser.add_argument(
+        "--save_dir",
+        type=str,
+        default="/content/drive/MyDrive/Final_paper/Model5",
+        help="Save directory",
+    )
 
     # Data
-    parser.add_argument("--max_samples", type=int, default=18000, help="Max samples per class")
-    parser.add_argument("--test_ratio", type=float, default=1 / 3, help="Test split ratio")
-    parser.add_argument("--val_ratio", type=float, default=0.25, help="Validation split ratio")
+    parser.add_argument(
+        "--max_samples", type=int, default=18000, help="Max samples per class"
+    )
+    parser.add_argument(
+        "--test_ratio", type=float, default=1 / 3, help="Test split ratio"
+    )
+    parser.add_argument(
+        "--val_ratio", type=float, default=0.25, help="Validation split ratio"
+    )
 
     # Training
     parser.add_argument("--img_size", type=int, default=128, help="Input image size")
-    parser.add_argument("--batch_size", type=int, default=512, help="Batch size (must be 256 as requested)")
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=512,
+        help="Batch size (must be 256 as requested)",
+    )
     parser.add_argument("--epochs", type=int, default=150, help="Number of epochs")
     parser.add_argument("--lr", type=float, default=2e-4, help="Learning rate")
-    parser.add_argument("--temp", type=float, default=0.1, help="Temperature for SupCon loss")
-    parser.add_argument("--embed_dim", type=int, default=512, help="Projection head dimension")
-    parser.add_argument("--patience", type=int, default=15, help="Early stopping patience")
+    parser.add_argument(
+        "--temp", type=float, default=0.1, help="Temperature for SupCon loss"
+    )
+    parser.add_argument(
+        "--embed_dim", type=int, default=512, help="Projection head dimension"
+    )
+    parser.add_argument(
+        "--patience", type=int, default=15, help="Early stopping patience"
+    )
 
     # ---- Linear probe early stopping ----
-    parser.add_argument("--probe_eval_every", type=int, default=5,
-                        help="Run linear probe every N epochs (default=5).")
-    parser.add_argument("--probe_epochs", type=int, default=3,
-                        help="Number of epochs for linear probe training (default=3).")
-    parser.add_argument("--probe_patience", type=int, default=3,
-                        help="Early stopping patience measured in probe evaluations (default=3).")
-    parser.add_argument("--probe_lr", type=float, default=1e-2,
-                        help="Learning rate for linear probe (default=1e-2).")
-    parser.add_argument("--probe_weight_decay", type=float, default=0.0,
-                        help="Weight decay for linear probe (default=0.0).")
+    parser.add_argument(
+        "--probe_eval_every",
+        type=int,
+        default=5,
+        help="Run linear probe every N epochs (default=5).",
+    )
+    parser.add_argument(
+        "--probe_epochs",
+        type=int,
+        default=3,
+        help="Number of epochs for linear probe training (default=3).",
+    )
+    parser.add_argument(
+        "--probe_patience",
+        type=int,
+        default=3,
+        help="Early stopping patience measured in probe evaluations (default=3).",
+    )
+    parser.add_argument(
+        "--probe_lr",
+        type=float,
+        default=1e-2,
+        help="Learning rate for linear probe (default=1e-2).",
+    )
+    parser.add_argument(
+        "--probe_weight_decay",
+        type=float,
+        default=0.0,
+        help="Weight decay for linear probe (default=0.0).",
+    )
 
     # ---- Speed ----
-    parser.add_argument("--channels_last", action="store_true",
-                        help="If set, use channels_last for input tensors (often faster on A100/H100).")
-
+    parser.add_argument(
+        "--channels_last",
+        action="store_true",
+        help="If set, use channels_last for input tensors (often faster on A100/H100).",
+    )
 
     #### resume
-    parser.add_argument("--resume_ckpt", type=str, default="",
-                    help="Full checkpoint path to resume (saves model_q/k, optim, sched, scaler, xbm, epoch, rng).")
-    parser.add_argument("--ckpt_name", type=str, default="resume_ckpt.pt",
-                        help="Filename for latest full checkpoint inside save_dir.")
-    parser.add_argument("--save_every", type=int, default=1,
-                        help="Save full checkpoint every N epochs (default=1).")
-    parser.add_argument("--no_save_xbm", action="store_true",
-                        help="If set, do NOT store XBM buffers in checkpoint (file gets smaller, but exact resume breaks).")
-
+    parser.add_argument(
+        "--resume_ckpt",
+        type=str,
+        default="",
+        help="Full checkpoint path to resume (saves model_q/k, optim, sched, scaler, xbm, epoch, rng).",
+    )
+    parser.add_argument(
+        "--ckpt_name",
+        type=str,
+        default="resume_ckpt.pt",
+        help="Filename for latest full checkpoint inside save_dir.",
+    )
+    parser.add_argument(
+        "--save_every",
+        type=int,
+        default=1,
+        help="Save full checkpoint every N epochs (default=1).",
+    )
+    parser.add_argument(
+        "--no_save_xbm",
+        action="store_true",
+        help="If set, do NOT store XBM buffers in checkpoint (file gets smaller, but exact resume breaks).",
+    )
 
     # XBM (Cross-Batch Memory)
-    parser.add_argument("--xbm_start_epoch", type=int, default=3, help="Start using XBM from this epoch (default=3)")
-    parser.add_argument("--xbm_total_capacity", type=int, default=65536, help="Total queue capacity (fp16). Big queue.")
-    parser.add_argument("--xbm_sample_per_class", type=int, default=512,
-                        help="How many memory negatives to sample per class per step (controls compute).")
-    parser.add_argument("--xbm_enqueue_both_views", action="store_true",
-                        help="If set, enqueue both views. Default is enqueue view1 only (recommended).")
+    parser.add_argument(
+        "--xbm_start_epoch",
+        type=int,
+        default=3,
+        help="Start using XBM from this epoch (default=3)",
+    )
+    parser.add_argument(
+        "--xbm_total_capacity",
+        type=int,
+        default=65536,
+        help="Total queue capacity (fp16). Big queue.",
+    )
+    parser.add_argument(
+        "--xbm_sample_per_class",
+        type=int,
+        default=512,
+        help="How many memory negatives to sample per class per step (controls compute).",
+    )
+    parser.add_argument(
+        "--xbm_enqueue_both_views",
+        action="store_true",
+        help="If set, enqueue both views. Default is enqueue view1 only (recommended).",
+    )
 
     # Jupyter/Colab
     if "ipykernel" in sys.modules:
@@ -143,7 +219,9 @@ def set_seed(seed: int):
     torch.set_float32_matmul_precision("high")
 
     logger.info(f"Random Seed set to {seed}")
-    logger.info(f"cudnn.deterministic={torch.backends.cudnn.deterministic}, cudnn.benchmark={torch.backends.cudnn.benchmark}")
+    logger.info(
+        f"cudnn.deterministic={torch.backends.cudnn.deterministic}, cudnn.benchmark={torch.backends.cudnn.benchmark}"
+    )
 
 
 def seed_worker(worker_id: int):
@@ -168,7 +246,11 @@ def validate_uint16_rgb_128(img: np.ndarray, filepath: str, img_size: int = 128)
 
 
 def log_skip(filepath: str, reason: Exception):
-    print(f"[DATA_SKIP] {filepath} | {type(reason).__name__}: {reason}", file=sys.stderr, flush=True)
+    print(
+        f"[DATA_SKIP] {filepath} | {type(reason).__name__}: {reason}",
+        file=sys.stderr,
+        flush=True,
+    )
 
 
 def collate_skip_none(batch):
@@ -183,6 +265,7 @@ def collate_skip_none(batch):
 # ==============================================================================
 class SafeInstanceNormalize:
     """(x - mu) / max(std, threshold) on CHW tensor."""
+
     def __init__(self, threshold: float = 0.01):
         self.threshold = float(threshold)
 
@@ -200,6 +283,7 @@ class InMemorySixteenBitDataset(Dataset):
     - augment: rotation aug ON/OFF
     - preloaded_images: reuse RAM cache
     """
+
     def __init__(
         self,
         files: List[str],
@@ -222,18 +306,25 @@ class InMemorySixteenBitDataset(Dataset):
             print(f"⚡ Loading {len(files)} images into RAM...")
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
-                list(tqdm(executor.map(self._load_file, range(len(files))), total=len(files), leave=False))
+                list(
+                    tqdm(
+                        executor.map(self._load_file, range(len(files))),
+                        total=len(files),
+                        leave=False,
+                    )
+                )
 
         if self.augment:
-            self.aug = transforms.RandomChoice([
-                transforms.Lambda(lambda x: x),
-                transforms.Lambda(lambda x: torch.rot90(x, 1, [1, 2])),
-                transforms.Lambda(lambda x: torch.rot90(x, 2, [1, 2])),
-                transforms.Lambda(lambda x: torch.rot90(x, 3, [1, 2])),
-            ])
+            self.aug = transforms.RandomChoice(
+                [
+                    transforms.Lambda(lambda x: x),
+                    transforms.Lambda(lambda x: torch.rot90(x, 1, [1, 2])),
+                    transforms.Lambda(lambda x: torch.rot90(x, 2, [1, 2])),
+                    transforms.Lambda(lambda x: torch.rot90(x, 3, [1, 2])),
+                ]
+            )
         else:
             self.aug = transforms.Lambda(lambda x: x)
-
 
     def _load_file(self, idx: int):
         filepath = self.files[idx]
@@ -261,7 +352,6 @@ class InMemorySixteenBitDataset(Dataset):
         except Exception as e:
             log_skip(filepath, e)
             self.images[idx] = None
-
 
     def __len__(self):
         return len(self.files)
@@ -303,12 +393,13 @@ class BalancedBatchSampler(Sampler):
 
         self.classes = np.unique(self.labels).tolist()
         self.num_classes = len(self.classes)
-        assert self.batch_size % self.num_classes == 0, "batch_size must be divisible by num_classes"
+        assert (
+            self.batch_size % self.num_classes == 0
+        ), "batch_size must be divisible by num_classes"
         self.per_class = self.batch_size // self.num_classes
 
         self.class_to_indices = {
-            c: np.where(self.labels == c)[0].tolist()
-            for c in self.classes
+            c: np.where(self.labels == c)[0].tolist() for c in self.classes
         }
         self.epoch = 0
 
@@ -331,12 +422,13 @@ class BalancedBatchSampler(Sampler):
             batch = []
             for c in self.classes:
                 start = b * self.per_class
-                batch.extend(pools[c][start:start + self.per_class])
+                batch.extend(pools[c][start : start + self.per_class])
             rng.shuffle(batch)
             yield batch
 
     def __len__(self):
         return min(len(v) // self.per_class for v in self.class_to_indices.values())
+
 
 def get_dataloaders(args):
     class_map = {"Control": 0, "SNCA": 1, "GBA": 2, "PINK1": 3}
@@ -353,7 +445,9 @@ def get_dataloaders(args):
 
         if class_name == "Control":
             for line_idx, line_path in enumerate(paths):
-                files = glob.glob(os.path.join(line_path, "**/*.[tT][iI][fF]*"), recursive=True)
+                files = glob.glob(
+                    os.path.join(line_path, "**/*.[tT][iI][fF]*"), recursive=True
+                )
                 files.sort()
                 random.shuffle(files)
                 files = files[: min(len(files), target_per_control_line)]
@@ -366,7 +460,9 @@ def get_dataloaders(args):
         else:
             files = []
             for p in paths:
-                files.extend(glob.glob(os.path.join(p, "**/*.[tT][iI][fF]*"), recursive=True))
+                files.extend(
+                    glob.glob(os.path.join(p, "**/*.[tT][iI][fF]*"), recursive=True)
+                )
             files.sort()
             random.shuffle(files)
             files = files[: min(len(files), args.max_samples)]
@@ -378,12 +474,20 @@ def get_dataloaders(args):
             stratify_counter += 1
 
     X_temp, X_test, y_temp, y_test, strat_temp, strat_test = train_test_split(
-        all_files, all_labels, stratify_labels,
-        test_size=args.test_ratio, random_state=args.seed, stratify=stratify_labels
+        all_files,
+        all_labels,
+        stratify_labels,
+        test_size=args.test_ratio,
+        random_state=args.seed,
+        stratify=stratify_labels,
     )
     X_train, X_val, y_train, y_val, _, _ = train_test_split(
-        X_temp, y_temp, strat_temp,
-        test_size=args.val_ratio, random_state=args.seed, stratify=strat_temp
+        X_temp,
+        y_temp,
+        strat_temp,
+        test_size=args.val_ratio,
+        random_state=args.seed,
+        stratify=strat_temp,
     )
 
     os.makedirs(args.save_dir, exist_ok=True)
@@ -391,20 +495,28 @@ def get_dataloaders(args):
     save_split_info(X_val, y_val, args.save_dir, "val_split.csv")
     save_split_info(X_test, y_test, args.save_dir, "test_split.csv")
 
-    logger.info(f"Split -> Train: {len(X_train)}, Val: {len(X_val)}, Test: {len(X_test)}")
+    logger.info(
+        f"Split -> Train: {len(X_train)}, Val: {len(X_val)}, Test: {len(X_test)}"
+    )
 
     # Train: two crops + aug
-    train_ds = InMemorySixteenBitDataset(X_train, y_train, args.img_size, two_crops=True, augment=True)
+    train_ds = InMemorySixteenBitDataset(
+        X_train, y_train, args.img_size, two_crops=True, augment=True
+    )
 
     # Val: two crops + NO aug
-    val_ds = InMemorySixteenBitDataset(X_val, y_val, args.img_size, two_crops=True, augment=False)
+    val_ds = InMemorySixteenBitDataset(
+        X_val, y_val, args.img_size, two_crops=True, augment=False
+    )
 
     g = torch.Generator()
     g.manual_seed(args.seed)
 
     NUM_WORKERS = 0
 
-    train_sampler = BalancedBatchSampler(train_ds.labels, batch_size=args.batch_size, seed=args.seed)
+    train_sampler = BalancedBatchSampler(
+        train_ds.labels, batch_size=args.batch_size, seed=args.seed
+    )
 
     train_loader = DataLoader(
         train_ds,
@@ -428,9 +540,11 @@ def get_dataloaders(args):
 
     return train_loader, val_loader
 
+
 # ===============================================================================
 # 4.5 학습 재개
 # =================================================================================
+
 
 def _get_rng_state():
     st = {
@@ -457,11 +571,13 @@ def _pack_xbm(trainer):
     # XBM ring buffers: emb/ptr/full 저장
     xbm_state = []
     for b in trainer.xbm.buffers:
-        xbm_state.append({
-            "emb": b.emb.detach().cpu(),   # fp16 그대로 CPU로 내림
-            "ptr": int(b.ptr),
-            "full": bool(b.full),
-        })
+        xbm_state.append(
+            {
+                "emb": b.emb.detach().cpu(),  # fp16 그대로 CPU로 내림
+                "ptr": int(b.ptr),
+                "full": bool(b.full),
+            }
+        )
     return xbm_state
 
 
@@ -472,9 +588,6 @@ def _unpack_xbm(trainer, xbm_state):
         buf.full = bool(st["full"])
 
 
-
-
-
 # ==============================================================================
 # 4. Model
 # ==============================================================================
@@ -483,9 +596,15 @@ class Encoder(nn.Module):
         super().__init__()
         self.layer1 = nn.Sequential(weight_norm(nn.Conv2d(3, 64, 3, 2, 1)), nn.ReLU())
         self.layer2 = nn.Sequential(weight_norm(nn.Conv2d(64, 128, 3, 1, 1)), nn.ReLU())
-        self.layer3 = nn.Sequential(weight_norm(nn.Conv2d(128, 256, 3, 1, 2, dilation=2)), nn.ReLU())
-        self.layer4 = nn.Sequential(weight_norm(nn.Conv2d(256, 512, 3, 1, 4, dilation=4)), nn.ReLU())
-        self.layer5 = nn.Sequential(weight_norm(nn.Conv2d(512, 1024, 3, 1, 2, dilation=2)), nn.ReLU())
+        self.layer3 = nn.Sequential(
+            weight_norm(nn.Conv2d(128, 256, 3, 1, 2, dilation=2)), nn.ReLU()
+        )
+        self.layer4 = nn.Sequential(
+            weight_norm(nn.Conv2d(256, 512, 3, 1, 4, dilation=4)), nn.ReLU()
+        )
+        self.layer5 = nn.Sequential(
+            weight_norm(nn.Conv2d(512, 1024, 3, 1, 2, dilation=2)), nn.ReLU()
+        )
         self.gap = nn.AdaptiveAvgPool2d((1, 1))
 
     def forward(self, x, return_map=False):
@@ -503,8 +622,9 @@ class SupConModel(nn.Module):
         super().__init__()
         self.encoder = Encoder()
         self.projector = nn.Sequential(
-            weight_norm(nn.Linear(1024, 1024)), nn.ReLU(),
-            weight_norm(nn.Linear(1024, embed_dim))
+            weight_norm(nn.Linear(1024, 1024)),
+            nn.ReLU(),
+            weight_norm(nn.Linear(1024, embed_dim)),
         )
 
     def forward(self, x):
@@ -522,7 +642,9 @@ class _RingEmbBuffer:
         self.device = device
         self.dtype = dtype
 
-        self.emb = torch.empty((self.capacity, self.dim), device=self.device, dtype=self.dtype)
+        self.emb = torch.empty(
+            (self.capacity, self.dim), device=self.device, dtype=self.dtype
+        )
         self.ptr = 0
         self.full = False
 
@@ -539,17 +661,17 @@ class _RingEmbBuffer:
         n = z.size(0)
 
         if n >= self.capacity:
-            self.emb.copy_(z[-self.capacity:])
+            self.emb.copy_(z[-self.capacity :])
             self.ptr = 0
             self.full = True
             return
 
         end = self.ptr + n
         if end <= self.capacity:
-            self.emb[self.ptr:end].copy_(z)
+            self.emb[self.ptr : end].copy_(z)
         else:
             first = self.capacity - self.ptr
-            self.emb[self.ptr:].copy_(z[:first])
+            self.emb[self.ptr :].copy_(z[:first])
             rest = n - first
             self.emb[:rest].copy_(z[first:])
 
@@ -565,7 +687,7 @@ class _RingEmbBuffer:
             return self.emb
         if self.ptr == 0:
             return None
-        return self.emb[:self.ptr]
+        return self.emb[: self.ptr]
 
 
 class ClassBalancedXBM:
@@ -573,7 +695,15 @@ class ClassBalancedXBM:
     - total_capacity를 클래스 수로 나눠 per-class quota 고정
     - get_balanced에서 step당 per-class로 n개 샘플링 (계산량 제어)
     """
-    def __init__(self, total_capacity: int, num_classes: int, dim: int, device, dtype=torch.float16):
+
+    def __init__(
+        self,
+        total_capacity: int,
+        num_classes: int,
+        dim: int,
+        device,
+        dtype=torch.float16,
+    ):
         total_capacity = int(total_capacity)
         num_classes = int(num_classes)
 
@@ -597,11 +727,13 @@ class ClassBalancedXBM:
     def enqueue(self, z: torch.Tensor, y: torch.Tensor):
         y = y.detach().to(self.device, dtype=torch.long)
         for c in range(self.num_classes):
-            m = (y == c)
+            m = y == c
             if m.any():
                 self.buffers[c].enqueue(z[m])
 
-    def get_balanced(self, n_per_class: int) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
+    def get_balanced(
+        self, n_per_class: int
+    ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
         avail = [b.available() for b in self.buffers]
         if min(avail) == 0:
             return None, None
@@ -668,9 +800,9 @@ def supcon_xbm_crossclass_only(
         pos_mask[:, N:] = False  # memory positives 금지
 
     # denominator: batch(all except self) + memory(cross-class only)
-    denom_mask = (~self_mask)
+    denom_mask = ~self_mask
     if M > 0:
-        cross_class = (y.view(-1, 1) != y_mem.view(1, -1))  # [N, M]
+        cross_class = y.view(-1, 1) != y_mem.view(1, -1)  # [N, M]
         denom_mask[:, N:] = cross_class  # same-class memory는 denom에서 제외 = IGNORE
 
     # stable masked log-softmax
@@ -706,7 +838,9 @@ class Trainer:
         self.val_loader = val_loader
 
         self.optimizer = optim.AdamW(self.model_q.parameters(), lr=args.lr)
-        self.scheduler = optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=args.epochs)
+        self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
+            self.optimizer, T_max=args.epochs
+        )
         self.scaler = torch.amp.GradScaler("cuda", enabled=torch.cuda.is_available())
 
         self.num_classes = 4
@@ -722,8 +856,12 @@ class Trainer:
         self.patience_counter = 0
 
         # paths
-        self.best_path = os.path.join(self.args.save_dir, "best_model.pt")  # query weights only
-        self.ckpt_path = os.path.join(self.args.save_dir, self.args.ckpt_name)  # full resume ckpt
+        self.best_path = os.path.join(
+            self.args.save_dir, "best_model.pt"
+        )  # query weights only
+        self.ckpt_path = os.path.join(
+            self.args.save_dir, self.args.ckpt_name
+        )  # full resume ckpt
 
         # ---- Linear probe early stopping state ----
         self.best_probe_acc = 0.0
@@ -775,17 +913,13 @@ class Trainer:
             "epoch": int(epoch),
             "best_loss": float(self.best_loss),
             "patience_counter": int(self.patience_counter),
-
             "model_q": self.model_q.state_dict(),
             "model_k": self.model_k.state_dict(),
-
             "optimizer": self.optimizer.state_dict(),
             "scheduler": self.scheduler.state_dict(),
             "scaler": self.scaler.state_dict(),
-
             "args": vars(self.args),
             "rng": _get_rng_state(),
-
             "best_probe_acc": float(self.best_probe_acc),
             "probe_patience_counter": int(self.probe_patience_counter),
         }
@@ -814,7 +948,6 @@ class Trainer:
         self.best_probe_acc = float(ckpt.get("best_probe_acc", 0.0))
         self.probe_patience_counter = int(ckpt.get("probe_patience_counter", 0))
 
-
         if ckpt.get("xbm") is not None:
             _unpack_xbm(self, ckpt["xbm"])
 
@@ -822,7 +955,9 @@ class Trainer:
             _set_rng_state(ckpt["rng"])
 
         start_epoch = int(ckpt["epoch"]) + 1
-        tqdm.write(f"[RESUME] loaded <- {path} | start_epoch={start_epoch}, best_loss={self.best_loss:.6f}")
+        tqdm.write(
+            f"[RESUME] loaded <- {path} | start_epoch={start_epoch}, best_loss={self.best_loss:.6f}"
+        )
         return start_epoch
 
     @torch.no_grad()
@@ -849,10 +984,14 @@ class Trainer:
         total_loss = 0.0
         steps = 0
 
-        if hasattr(self.train_loader, "batch_sampler") and hasattr(self.train_loader.batch_sampler, "set_epoch"):
+        if hasattr(self.train_loader, "batch_sampler") and hasattr(
+            self.train_loader.batch_sampler, "set_epoch"
+        ):
             self.train_loader.batch_sampler.set_epoch(epoch)
 
-        pbar = tqdm(self.train_loader, desc=f"Train E{epoch}/{self.args.epochs}", leave=True)
+        pbar = tqdm(
+            self.train_loader, desc=f"Train E{epoch}/{self.args.epochs}", leave=True
+        )
         for batch in pbar:
             if batch is None:
                 continue
@@ -864,8 +1003,8 @@ class Trainer:
             view2 = view2.to(self.device, non_blocking=True)
             labels = labels.to(self.device, non_blocking=True)
 
-            images_q = torch.cat([view1, view2], dim=0)      # [2B, C, H, W]
-            labels2 = torch.cat([labels, labels], dim=0)     # [2B]
+            images_q = torch.cat([view1, view2], dim=0)  # [2B, C, H, W]
+            labels2 = torch.cat([labels, labels], dim=0)  # [2B]
 
             # -------------------------
             # (A) Make keys for enqueue (NO GRAD, momentum encoder)
@@ -873,7 +1012,9 @@ class Trainer:
             z1_k, z2_k = None, None
             if epoch >= self.args.xbm_start_epoch:
                 with torch.no_grad():
-                    with torch.amp.autocast(device_type=self.device.type, enabled=torch.cuda.is_available()):
+                    with torch.amp.autocast(
+                        device_type=self.device.type, enabled=torch.cuda.is_available()
+                    ):
                         # key embeddings for each view
                         z1_k = self.model_k(view1)  # [B, D]
                         if self.args.xbm_enqueue_both_views:
@@ -883,7 +1024,9 @@ class Trainer:
             # (B) Sample memory negatives (from XBM)
             # -------------------------
             z_mem, y_mem = None, None
-            if epoch >= self.args.xbm_start_epoch and self.xbm.ready(self.args.xbm_sample_per_class):
+            if epoch >= self.args.xbm_start_epoch and self.xbm.ready(
+                self.args.xbm_sample_per_class
+            ):
                 z_mem, y_mem = self.xbm.get_balanced(self.args.xbm_sample_per_class)
 
             self.optimizer.zero_grad(set_to_none=True)
@@ -891,7 +1034,9 @@ class Trainer:
             # -------------------------
             # (C) Forward query encoder + loss
             # -------------------------
-            with torch.amp.autocast(device_type=self.device.type, enabled=torch.cuda.is_available()):
+            with torch.amp.autocast(
+                device_type=self.device.type, enabled=torch.cuda.is_available()
+            ):
                 z_q = self.model_q(images_q)  # [2B, D] (already normalized in model)
                 loss = supcon_xbm_crossclass_only(
                     z=z_q,
@@ -919,8 +1064,8 @@ class Trainer:
                 with torch.no_grad():
                     if self.args.xbm_enqueue_both_views:
                         # enqueue both views as keys
-                        z_k_all = torch.cat([z1_k, z2_k], dim=0)       # [2B, D]
-                        y_k_all = torch.cat([labels, labels], dim=0)   # [2B]
+                        z_k_all = torch.cat([z1_k, z2_k], dim=0)  # [2B, D]
+                        y_k_all = torch.cat([labels, labels], dim=0)  # [2B]
                         self.xbm.enqueue(z_k_all, y_k_all)
                     else:
                         # enqueue view1 keys only
@@ -939,7 +1084,9 @@ class Trainer:
         total_loss = 0.0
         steps = 0
 
-        pbar = tqdm(self.val_loader, desc=f"Val   E{epoch}/{self.args.epochs}", leave=True)
+        pbar = tqdm(
+            self.val_loader, desc=f"Val   E{epoch}/{self.args.epochs}", leave=True
+        )
         with torch.no_grad():
             for batch in pbar:
                 if batch is None:
@@ -954,18 +1101,22 @@ class Trainer:
                 if self.args.channels_last:
                     view1 = view1.contiguous(memory_format=torch.channels_last)
                     view2 = view2.contiguous(memory_format=torch.channels_last)
-                    
+
                 labels = labels.to(self.device, non_blocking=True)
 
                 images = torch.cat([view1, view2], dim=0)
                 labels2 = torch.cat([labels, labels], dim=0)
 
-                with torch.amp.autocast(device_type=self.device.type, enabled=torch.cuda.is_available()):
+                with torch.amp.autocast(
+                    device_type=self.device.type, enabled=torch.cuda.is_available()
+                ):
                     z = self.model_q(images)
                     loss = supcon_xbm_crossclass_only(
-                        z=z, y=labels2,
-                        z_mem=None, y_mem=None,
-                        temperature=self.args.temp
+                        z=z,
+                        y=labels2,
+                        z_mem=None,
+                        y_mem=None,
+                        temperature=self.args.temp,
                     )
 
                 cur = float(loss.item())
@@ -1001,8 +1152,10 @@ class Trainer:
             if self.args.channels_last:
                 x = x.contiguous(memory_format=torch.channels_last)
 
-            with torch.amp.autocast(device_type=self.device.type, enabled=torch.cuda.is_available()):
-                f = self.model_q.encoder(x, return_map=False)   # [B,1024]
+            with torch.amp.autocast(
+                device_type=self.device.type, enabled=torch.cuda.is_available()
+            ):
+                f = self.model_q.encoder(x, return_map=False)  # [B,1024]
                 f = F.normalize(f, dim=1)
 
             feats_all.append(f.float().cpu())
@@ -1032,7 +1185,12 @@ class Trainer:
 
         # 2) linear head (fresh, deterministic init because seed fixed)
         head = nn.Linear(trX.size(1), 4).to(self.device)
-        opt = optim.SGD(head.parameters(), lr=float(self.args.probe_lr), momentum=0.9, weight_decay=float(self.args.probe_weight_decay))
+        opt = optim.SGD(
+            head.parameters(),
+            lr=float(self.args.probe_lr),
+            momentum=0.9,
+            weight_decay=float(self.args.probe_weight_decay),
+        )
         crit = nn.CrossEntropyLoss()
 
         # 3) quick training (3 epochs default)
@@ -1042,7 +1200,7 @@ class Trainer:
             idx = torch.randperm(trX.size(0), device=self.device)
             bs = int(self.args.batch_size)
             for i in range(0, trX.size(0), bs):
-                j = idx[i:i+bs]
+                j = idx[i : i + bs]
                 if j.numel() < 2:
                     continue
                 logits = head(trX[j])
@@ -1058,7 +1216,6 @@ class Trainer:
             acc = (pred == vaY).float().mean().item() * 100.0
         return float(acc)
 
-
     def run(self):
         logger.info(f"Starting Training on {self.device}")
         os.makedirs(self.args.save_dir, exist_ok=True)
@@ -1073,33 +1230,48 @@ class Trainer:
         for epoch in range(start_epoch, self.args.epochs + 1):
             tqdm.write(f"\n===== Epoch {epoch}/{self.args.epochs} =====")
 
-            if epoch == self.args.xbm_start_epoch and resumed_epoch < self.args.xbm_start_epoch:
+            if (
+                epoch == self.args.xbm_start_epoch
+                and resumed_epoch < self.args.xbm_start_epoch
+            ):
                 self.xbm.reset()
                 self._sync_key_encoder()
-                tqdm.write(f"[XBM+MoCo] Enabled from epoch {epoch}. Queue reset + key encoder synced.")
+                tqdm.write(
+                    f"[XBM+MoCo] Enabled from epoch {epoch}. Queue reset + key encoder synced."
+                )
 
             train_loss = self.train_epoch(epoch)
             val_loss = self.validate(epoch)
-            tqdm.write(f"Epoch {epoch:03d} | Train: {train_loss:.4f} | Val(SupCon): {val_loss:.4f}")
+            tqdm.write(
+                f"Epoch {epoch:03d} | Train: {train_loss:.4f} | Val(SupCon): {val_loss:.4f}"
+            )
 
             # ---- (NEW) Linear probe evaluation every N epochs ----
-            probe_ran = (epoch % self.args.probe_eval_every == 0)
+            probe_ran = epoch % self.args.probe_eval_every == 0
             probe_acc = None
             improved = False
 
             if probe_ran:
                 probe_acc = self.run_linear_probe()
-                tqdm.write(f"[PROBE] epoch={epoch:03d} | val_acc={probe_acc:.2f}% | best={self.best_probe_acc:.2f}%")
+                tqdm.write(
+                    f"[PROBE] epoch={epoch:03d} | val_acc={probe_acc:.2f}% | best={self.best_probe_acc:.2f}%"
+                )
 
                 improved = probe_acc > (self.best_probe_acc + 1e-6)
                 if improved:
                     self.best_probe_acc = probe_acc
                     self.probe_patience_counter = 0
-                    torch.save(self.model_q.state_dict(), self.best_path)  # best_model.pt by probe
-                    tqdm.write(f"  -> Saved Best Model by PROBE (best_probe_acc={self.best_probe_acc:.2f}%)")
+                    torch.save(
+                        self.model_q.state_dict(), self.best_path
+                    )  # best_model.pt by probe
+                    tqdm.write(
+                        f"  -> Saved Best Model by PROBE (best_probe_acc={self.best_probe_acc:.2f}%)"
+                    )
                 else:
                     self.probe_patience_counter += 1
-                    tqdm.write(f"  -> No probe improvement [{self.probe_patience_counter}/{self.args.probe_patience}]")
+                    tqdm.write(
+                        f"  -> No probe improvement [{self.probe_patience_counter}/{self.args.probe_patience}]"
+                    )
 
             # ---- scheduler step (same as before) ----
             if isinstance(self.scheduler, optim.lr_scheduler.CosineAnnealingLR):
@@ -1121,8 +1293,6 @@ class Trainer:
                 tqdm.write("Early Stopping Triggered (by Linear Probe)")
                 self.save_full_checkpoint(epoch)
                 break
-
-
 
 
 # ==============================================================================

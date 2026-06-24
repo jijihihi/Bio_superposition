@@ -24,30 +24,31 @@
 #     --output_dir /content/drive/MyDrive/Final_paper/lambda_labs_moco_only/scib_eval/plots
 # ==============================================================================
 
-import os
-import sys
-import json
-import glob
-import re
 import argparse
-import numpy as np
+import glob
+import json
+import os
+import re
+import sys
 from collections import defaultdict
 
 import matplotlib
+import numpy as np
+
 _IN_COLAB = ("google.colab" in sys.modules) or os.path.isdir("/content")
 if not _IN_COLAB:
     matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import matplotlib.patches as mpatches
+import matplotlib.pyplot as plt
 
 from sae_project.step02_logging_utils import get_logger
 
 logger = get_logger("scib_dot")
 
-plt.rcParams['svg.fonttype'] = 'none'
-plt.rcParams['pdf.fonttype'] = 42
-plt.rcParams['font.family'] = 'sans-serif'
+plt.rcParams["svg.fonttype"] = "none"
+plt.rcParams["pdf.fonttype"] = 42
+plt.rcParams["font.family"] = "sans-serif"
 
 
 # ── Metric display config ──
@@ -240,8 +241,7 @@ def plot_dot_heatmap(summary, output_path, dpi=200):
             std = std_mat[i, j]
 
             if np.isnan(val):
-                ax.text(j, i, "—", ha="center", va="center",
-                        fontsize=10, color="gray")
+                ax.text(j, i, "—", ha="center", va="center", fontsize=10, color="gray")
                 continue
 
             # Dot size: proportional to absolute value (0→1)
@@ -264,31 +264,50 @@ def plot_dot_heatmap(summary, output_path, dpi=200):
                 edge_color = cmap(min(0.15 + 0.75 * color_norm + 0.15, 1.0))
 
             # Draw dot
-            circle = plt.Circle((j, i), radius,
-                                facecolor=dot_color,
-                                edgecolor=edge_color,
-                                linewidth=1.5,
-                                zorder=3)
+            circle = plt.Circle(
+                (j, i),
+                radius,
+                facecolor=dot_color,
+                edgecolor=edge_color,
+                linewidth=1.5,
+                zorder=3,
+            )
             ax.add_patch(circle)
 
             # Text inside dot
-            luminance = (0.299 * mcolors.to_rgba(dot_color)[0] +
-                         0.587 * mcolors.to_rgba(dot_color)[1] +
-                         0.114 * mcolors.to_rgba(dot_color)[2])
+            luminance = (
+                0.299 * mcolors.to_rgba(dot_color)[0]
+                + 0.587 * mcolors.to_rgba(dot_color)[1]
+                + 0.114 * mcolors.to_rgba(dot_color)[2]
+            )
             text_color = "white" if luminance < 0.55 else "#222222"
 
             # Main value
-            ax.text(j, i - 0.08, f"{val:.3f}",
-                    ha="center", va="center",
-                    fontsize=9, fontweight="bold",
-                    color=text_color, zorder=4)
+            ax.text(
+                j,
+                i - 0.08,
+                f"{val:.3f}",
+                ha="center",
+                va="center",
+                fontsize=9,
+                fontweight="bold",
+                color=text_color,
+                zorder=4,
+            )
 
             # ±std (smaller, below)
             if std > 0 and n_mat[i, j] > 1:
                 std_color = "#dddddd" if luminance < 0.55 else "#777777"
-                ax.text(j, i + 0.22, f"±{std:.3f}",
-                        ha="center", va="center",
-                        fontsize=6.5, color=std_color, zorder=4)
+                ax.text(
+                    j,
+                    i + 0.22,
+                    f"±{std:.3f}",
+                    ha="center",
+                    va="center",
+                    fontsize=6.5,
+                    color=std_color,
+                    zorder=4,
+                )
 
     # ── Axis setup ──
     ax.set_xlim(-0.7, n_cols - 0.3)
@@ -297,8 +316,7 @@ def plot_dot_heatmap(summary, output_path, dpi=200):
     # Column labels (top)
     col_labels = [METRIC_DISPLAY.get(c, c) for c in cols]
     ax.set_xticks(range(n_cols))
-    ax.set_xticklabels(col_labels, fontsize=11, fontweight="bold",
-                       ha="center")
+    ax.set_xticklabels(col_labels, fontsize=11, fontweight="bold", ha="center")
     ax.xaxis.set_ticks_position("top")
     ax.xaxis.set_label_position("top")
 
@@ -308,8 +326,9 @@ def plot_dot_heatmap(summary, output_path, dpi=200):
     ax.set_yticklabels(row_labels, fontsize=11, fontweight="bold")
 
     # Separator line before "Overall" column
-    ax.axvline(x=n_cols - 1.5, color="#888888", linewidth=1.0,
-               linestyle="--", alpha=0.5)
+    ax.axvline(
+        x=n_cols - 1.5, color="#888888", linewidth=1.0, linestyle="--", alpha=0.5
+    )
 
     # Separator line before SAE row
     sae_idx = None
@@ -318,8 +337,9 @@ def plot_dot_heatmap(summary, output_path, dpi=200):
             sae_idx = i
             break
     if sae_idx is not None and sae_idx > 0:
-        ax.axhline(y=sae_idx - 0.5, color="#888888", linewidth=1.5,
-                   linestyle="-", alpha=0.6)
+        ax.axhline(
+            y=sae_idx - 0.5, color="#888888", linewidth=1.5, linestyle="-", alpha=0.6
+        )
 
     # Light grid
     for i in range(n_rows):
@@ -331,16 +351,24 @@ def plot_dot_heatmap(summary, output_path, dpi=200):
     for i, row_key in enumerate(rows):
         n = n_mat[i, 0]
         if n > 0:
-            ax.text(n_cols - 0.15, i, f"n={n}",
-                    ha="left", va="center", fontsize=8,
-                    color="#999999", style="italic")
+            ax.text(
+                n_cols - 0.15,
+                i,
+                f"n={n}",
+                ha="left",
+                va="center",
+                fontsize=8,
+                color="#999999",
+                style="italic",
+            )
 
     ax.set_frame_on(False)
     ax.tick_params(length=0)
 
     # Title
-    fig.suptitle("Representation Quality — scIB Metrics",
-                 fontsize=14, fontweight="bold", y=0.97)
+    fig.suptitle(
+        "Representation Quality — scIB Metrics", fontsize=14, fontweight="bold", y=0.97
+    )
 
     fig.tight_layout(rect=[0, 0, 1, 0.93])
 
@@ -400,10 +428,10 @@ def print_summary_table(summary):
 # Main
 # ==============================================================================
 def get_args():
-    p = argparse.ArgumentParser(
-        description="scIB Dot Heatmap — Nature Methods style")
-    p.add_argument("--base_dir", type=str, required=True,
-                   help="Root scib_eval directory")
+    p = argparse.ArgumentParser(description="scIB Dot Heatmap — Nature Methods style")
+    p.add_argument(
+        "--base_dir", type=str, required=True, help="Root scib_eval directory"
+    )
     p.add_argument("--output_dir", type=str, default="")
     p.add_argument("--dpi", type=int, default=200)
     return p.parse_args()
@@ -435,8 +463,12 @@ def main():
     csv_path = os.path.join(out_dir, "scib_aggregated.csv")
     with open(csv_path, "w", encoding="utf-8") as f:
         cols_all = METRIC_KEYS + ["overall"]
-        header = ["condition"] + [f"{c}_mean" for c in cols_all] + \
-                 [f"{c}_std" for c in cols_all] + ["n"]
+        header = (
+            ["condition"]
+            + [f"{c}_mean" for c in cols_all]
+            + [f"{c}_std" for c in cols_all]
+            + ["n"]
+        )
         f.write(",".join(header) + "\n")
         for row_key in ROW_ORDER:
             if row_key not in summary:

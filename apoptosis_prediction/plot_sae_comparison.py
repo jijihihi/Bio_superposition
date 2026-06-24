@@ -15,25 +15,24 @@
 #   main()
 # ==============================================================================
 
+import argparse
+import csv
 import os
 import sys
-import csv
-import argparse
 from collections import defaultdict
 
+import matplotlib
 import numpy as np
 
-import matplotlib
 if "google.colab" not in sys.modules:
     matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-
+import seaborn as sns
 from scipy import stats
 from scipy.stats import wilcoxon
-import seaborn as sns
 
-plt.rcParams['svg.fonttype'] = 'none'
-plt.rcParams['pdf.fonttype'] = 42      
+plt.rcParams["svg.fonttype"] = "none"
+plt.rcParams["pdf.fonttype"] = 42
 sns.set_style("ticks")
 
 # ==============================================================================
@@ -52,15 +51,17 @@ def read_sae_all_folds(csv_path):
     with open(csv_path, "r", newline="") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            rows.append({
-                "sae_seed": int(row["CNN_Seed"]),
-                "l2_norm": row["GAP_L2_Norm"],
-                "filter": row["Filter"],
-                "model": row["Model"],
-                "group": row["Group"],
-                "fold_idx": int(row["Fold_idx"]),
-                "r2": float(row["R2"]),
-            })
+            rows.append(
+                {
+                    "sae_seed": int(row["CNN_Seed"]),
+                    "l2_norm": row["GAP_L2_Norm"],
+                    "filter": row["Filter"],
+                    "model": row["Model"],
+                    "group": row["Group"],
+                    "fold_idx": int(row["Fold_idx"]),
+                    "r2": float(row["R2"]),
+                }
+            )
     return rows
 
 
@@ -72,14 +73,16 @@ def read_sae_pooled_perm(csv_path):
     with open(csv_path, "r", newline="") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            rows.append({
-                "l2_norm": row["GAP_L2_Norm"],
-                "filter": row["Filter"],
-                "model": row["Model"],
-                "group": row["Group"],
-                "null_mean_r2": float(row["Null_mean_R2"]),
-                "pooled_p_value": float(row["Pooled_p_value"]),
-            })
+            rows.append(
+                {
+                    "l2_norm": row["GAP_L2_Norm"],
+                    "filter": row["Filter"],
+                    "model": row["Model"],
+                    "group": row["Group"],
+                    "null_mean_r2": float(row["Null_mean_R2"]),
+                    "pooled_p_value": float(row["Pooled_p_value"]),
+                }
+            )
     return rows
 
 
@@ -136,8 +139,15 @@ def pval_to_stars(p):
 
 def draw_bracket(ax, x1, x2, y, h, text, fontsize=9):
     ax.plot([x1, x1, x2, x2], [y, y + h, y + h, y], lw=1.2, color="black")
-    ax.text((x1 + x2) / 2, y + h, text,
-            ha="center", va="bottom", fontsize=fontsize, fontweight="bold")
+    ax.text(
+        (x1 + x2) / 2,
+        y + h,
+        text,
+        ha="center",
+        va="bottom",
+        fontsize=fontsize,
+        fontweight="bold",
+    )
 
 
 # ==============================================================================
@@ -161,10 +171,12 @@ def plot_model_comparison(folds, results_dir, l2_norm, null_perm, filter_label=N
 
     colors = {"Ridge": "#4C72B0", "XGBoost": "#DD8452"}
 
-    for cond_idx, (label, stats_dict) in enumerate([
-        ("Ridge", stats_ridge),
-        ("XGBoost", stats_xgb),
-    ]):
+    for cond_idx, (label, stats_dict) in enumerate(
+        [
+            ("Ridge", stats_ridge),
+            ("XGBoost", stats_xgb),
+        ]
+    ):
         means, ci_lo_errs, ci_hi_errs, positions = [], [], [], []
 
         for grp_idx, grp in enumerate(GROUPS_OF_INTEREST):
@@ -180,8 +192,12 @@ def plot_model_comparison(folds, results_dir, l2_norm, null_perm, filter_label=N
             positions.append(x_centers[grp_idx] + offsets[cond_idx])
 
         ax.bar(
-            positions, means, width=bar_width,
-            color=colors[label], edgecolor="white", linewidth=0.5,
+            positions,
+            means,
+            width=bar_width,
+            color=colors[label],
+            edgecolor="white",
+            linewidth=0.5,
             label=label,
             yerr=[ci_lo_errs, ci_hi_errs],
             capsize=4,
@@ -191,14 +207,17 @@ def plot_model_comparison(folds, results_dir, l2_norm, null_perm, filter_label=N
 
     # ── Null permutation lines (per model per gene) ──
     for grp_idx, grp in enumerate(GROUPS_OF_INTEREST):
-        for cond_idx, (model_name, color) in enumerate([
-            ("Ridge", "#4C72B0"), ("XGBoost", "#DD8452")
-        ]):
-            matches = [r for r in null_perm
-                       if r["l2_norm"] == l2_norm
-                       and r["model"] == model_name
-                       and r["group"] == grp
-                       and (filter_label is None or r["filter"] == filter_label)]
+        for cond_idx, (model_name, color) in enumerate(
+            [("Ridge", "#4C72B0"), ("XGBoost", "#DD8452")]
+        ):
+            matches = [
+                r
+                for r in null_perm
+                if r["l2_norm"] == l2_norm
+                and r["model"] == model_name
+                and r["group"] == grp
+                and (filter_label is None or r["filter"] == filter_label)
+            ]
             if not matches:
                 continue
 
@@ -210,26 +229,41 @@ def plot_model_comparison(folds, results_dir, l2_norm, null_perm, filter_label=N
             x_right = bar_x + bar_width / 2
 
             ax.hlines(
-                null_clipped, x_left, x_right,
-                colors="#888888", linewidth=1.5, linestyles="--", zorder=4,
+                null_clipped,
+                x_left,
+                x_right,
+                colors="#888888",
+                linewidth=1.5,
+                linestyles="--",
+                zorder=4,
                 label="Null Permutation" if grp_idx == 0 and cond_idx == 0 else None,
             )
             ax.text(
-                x_right + 0.01, null_clipped,
+                x_right + 0.01,
+                null_clipped,
                 f"{null_mean:.3f}",
-                fontsize=6, color="#666666", va="center", ha="left",
+                fontsize=6,
+                color="#666666",
+                va="center",
+                ha="left",
             )
 
     ax.set_xticks(x_centers)
-    ax.set_xticklabels([GENE_LABELS[g] for g in GROUPS_OF_INTEREST],
-                       fontsize=12, fontweight="bold")
+    ax.set_xticklabels(
+        [GENE_LABELS[g] for g in GROUPS_OF_INTEREST], fontsize=12, fontweight="bold"
+    )
     ax.set_ylabel("R² (Cell Death Rate Prediction)", fontsize=11, fontweight="bold")
 
-    filt_str = f" | filter={filter_label}" if filter_label and filter_label != "no_filter" else ""
+    filt_str = (
+        f" | filter={filter_label}"
+        if filter_label and filter_label != "no_filter"
+        else ""
+    )
     ax.set_title(
-        f"SAE: Ridge vs XGBoost — Cell Death Prediction\n"
-        f"(L2={l2_norm}{filt_str})",
-        fontsize=13, fontweight="bold", pad=15,
+        f"SAE: Ridge vs XGBoost — Cell Death Prediction\n" f"(L2={l2_norm}{filt_str})",
+        fontsize=13,
+        fontweight="bold",
+        pad=15,
     )
 
     ax.legend(fontsize=10, loc="upper left", framealpha=0.9, edgecolor="gray")
@@ -246,11 +280,16 @@ def plot_model_comparison(folds, results_dir, l2_norm, null_perm, filter_label=N
     ax.spines["right"].set_visible(False)
     fig.tight_layout()
 
-    filt_tag = f"_{filter_label}" if filter_label and filter_label != "no_filter" else ""
+    filt_tag = (
+        f"_{filter_label}" if filter_label and filter_label != "no_filter" else ""
+    )
     base = f"sae_model_comparison_{l2_norm}{filt_tag}"
     for ext in ["pdf", "png", "svg"]:
-        fig.savefig(os.path.join(results_dir, f"{base}.{ext}"),
-                    dpi=300 if ext == "pdf" else 200, bbox_inches="tight")
+        fig.savefig(
+            os.path.join(results_dir, f"{base}.{ext}"),
+            dpi=300 if ext == "pdf" else 200,
+            bbox_inches="tight",
+        )
 
     plt.close(fig)
     print(f"\n  Saved model comparison: {base}.[pdf|png|svg]")
@@ -262,8 +301,10 @@ def plot_model_comparison(folds, results_dir, l2_norm, null_perm, filter_label=N
         r = stats_ridge.get(grp)
         x = stats_xgb.get(grp)
         if r and x:
-            print(f"  {GENE_LABELS[grp]:6s}  {r['mean']:>10.4f}  {x['mean']:>10.4f}  "
-                  f"{x['mean'] - r['mean']:>+14.4f}")
+            print(
+                f"  {GENE_LABELS[grp]:6s}  {r['mean']:>10.4f}  {x['mean']:>10.4f}  "
+                f"{x['mean'] - r['mean']:>+14.4f}"
+            )
 
 
 # ==============================================================================
@@ -330,10 +371,12 @@ def plot_l2norm_effect(folds, results_dir, model="XGBoost", filter_label=None):
     colors = {"off": "#7A9DC7", "on": "#E07B54"}
     max_heights = {}
 
-    for cond_idx, (label, stats_dict, color_key) in enumerate([
-        ("L2 OFF", stats_off, "off"),
-        ("L2 ON",  stats_on,  "on"),
-    ]):
+    for cond_idx, (label, stats_dict, color_key) in enumerate(
+        [
+            ("L2 OFF", stats_off, "off"),
+            ("L2 ON", stats_on, "on"),
+        ]
+    ):
         means, ci_lo_errs, ci_hi_errs, positions = [], [], [], []
 
         for grp_idx, grp in enumerate(GROUPS_OF_INTEREST):
@@ -354,8 +397,12 @@ def plot_l2norm_effect(folds, results_dir, model="XGBoost", filter_label=None):
                 max_heights[grp_idx] = top
 
         ax.bar(
-            positions, means, width=bar_width,
-            color=colors[color_key], edgecolor="white", linewidth=0.5,
+            positions,
+            means,
+            width=bar_width,
+            color=colors[color_key],
+            edgecolor="white",
+            linewidth=0.5,
             label=label,
             yerr=[ci_lo_errs, ci_hi_errs],
             capsize=4,
@@ -386,15 +433,21 @@ def plot_l2norm_effect(folds, results_dir, model="XGBoost", filter_label=None):
         draw_bracket(ax, x1, x2, bracket_y, bracket_h, p_text, fontsize=8)
 
     ax.set_xticks(x_centers)
-    ax.set_xticklabels([GENE_LABELS[g] for g in GROUPS_OF_INTEREST],
-                       fontsize=12, fontweight="bold")
+    ax.set_xticklabels(
+        [GENE_LABELS[g] for g in GROUPS_OF_INTEREST], fontsize=12, fontweight="bold"
+    )
     ax.set_ylabel("R² (Cell Death Rate Prediction)", fontsize=11, fontweight="bold")
 
-    filt_str = f" | filter={filter_label}" if filter_label and filter_label != "no_filter" else ""
+    filt_str = (
+        f" | filter={filter_label}"
+        if filter_label and filter_label != "no_filter"
+        else ""
+    )
     ax.set_title(
-        f"SAE: GAP L2 Norm Effect — {model}\n"
-        f"(Cell Death Prediction{filt_str})",
-        fontsize=13, fontweight="bold", pad=15,
+        f"SAE: GAP L2 Norm Effect — {model}\n" f"(Cell Death Prediction{filt_str})",
+        fontsize=13,
+        fontweight="bold",
+        pad=15,
     )
 
     ax.legend(fontsize=10, loc="upper left", framealpha=0.9, edgecolor="gray")
@@ -411,27 +464,36 @@ def plot_l2norm_effect(folds, results_dir, model="XGBoost", filter_label=None):
     ax.spines["right"].set_visible(False)
     fig.tight_layout()
 
-    filt_tag = f"_{filter_label}" if filter_label and filter_label != "no_filter" else ""
+    filt_tag = (
+        f"_{filter_label}" if filter_label and filter_label != "no_filter" else ""
+    )
     base = f"sae_l2norm_effect_{model}{filt_tag}"
     for ext in ["pdf", "png", "svg"]:
-        fig.savefig(os.path.join(results_dir, f"{base}.{ext}"),
-                    dpi=300 if ext == "pdf" else 200, bbox_inches="tight")
+        fig.savefig(
+            os.path.join(results_dir, f"{base}.{ext}"),
+            dpi=300 if ext == "pdf" else 200,
+            bbox_inches="tight",
+        )
 
     plt.close(fig)
     print(f"\n  Saved L2 norm effect: {base}.[pdf|png|svg]")
 
     # Print summary
     print(f"\n  Wilcoxon Signed-Rank Test (paired by CNN_seed × fold_idx):")
-    print(f"  {'Gene':6s}  {'N pairs':>8s}  {'L2 OFF':>8s}  {'L2 ON':>8s}  "
-          f"{'p-value':>10s}  {'Sig':>5s}")
+    print(
+        f"  {'Gene':6s}  {'N pairs':>8s}  {'L2 OFF':>8s}  {'L2 ON':>8s}  "
+        f"{'p-value':>10s}  {'Sig':>5s}"
+    )
     print("  " + "-" * 55)
     for grp in GROUPS_OF_INTEREST:
         off = stats_off.get(grp)
         on = stats_on.get(grp)
         w = wilcoxon_results.get(grp)
         if off and on and w:
-            print(f"  {GENE_LABELS[grp]:6s}  {w['n_pairs']:>8d}  {off['mean']:>8.4f}  "
-                  f"{on['mean']:>8.4f}  {w['p_value']:>10.6f}  {pval_to_stars(w['p_value']):>5s}")
+            print(
+                f"  {GENE_LABELS[grp]:6s}  {w['n_pairs']:>8d}  {off['mean']:>8.4f}  "
+                f"{on['mean']:>8.4f}  {w['p_value']:>10.6f}  {pval_to_stars(w['p_value']):>5s}"
+            )
 
 
 # ==============================================================================
@@ -442,21 +504,29 @@ def main():
         description="SAE comparison plots: Ridge vs XGBoost, GAP L2 norm effect"
     )
     parser.add_argument(
-        "--results_dir", type=str, required=True,
-        help="Path to SAE results directory containing sae_r2_all_folds.csv"
+        "--results_dir",
+        type=str,
+        required=True,
+        help="Path to SAE results directory containing sae_r2_all_folds.csv",
     )
     parser.add_argument(
-        "--l2_norm", type=str, default="l2norm",
+        "--l2_norm",
+        type=str,
+        default="l2norm",
         choices=["l2norm", "no_l2norm"],
-        help="L2 norm condition for Ridge vs XGBoost comparison (default: l2norm)"
+        help="L2 norm condition for Ridge vs XGBoost comparison (default: l2norm)",
     )
     parser.add_argument(
-        "--filter", type=str, default=None,
-        help="Filter label to use (default: None = use all filters)"
+        "--filter",
+        type=str,
+        default=None,
+        help="Filter label to use (default: None = use all filters)",
     )
     parser.add_argument(
-        "--l2_model", type=str, default="XGBoost",
-        help="Model for L2 norm effect plot (default: XGBoost)"
+        "--l2_model",
+        type=str,
+        default="XGBoost",
+        help="Model for L2 norm effect plot (default: XGBoost)",
     )
     args = parser.parse_args()
 

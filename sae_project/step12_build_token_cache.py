@@ -1,7 +1,11 @@
-import os, json, math, csv, random
-from dataclasses import dataclass
-from typing import Dict, List, Tuple, Optional
+import csv
+import json
+import math
+import os
+import random
 from collections import defaultdict
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -10,17 +14,23 @@ from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
 from sae_project.step01_configs import get_args, resolve_paths
-from sae_project.step02_logging_utils import get_logger, SUPERCLASS_MAP
-from sae_project.step03_data_shards import load_all_sample_refs, build_uid_to_refidx
-from sae_project.step04_data_bank import InMemoryTarBank, InMemorySixteenBitDataset, load_split_csv, seed_worker, collate_skip_none
-#from sae_project.step02_logging_utils 
-from sae_project.step05_model_encoder import SupMoCoModel, OUT_DIM, parse_int_list
-#from sae_project.step06_sae_core import PointwiseTopKSAE  # your SAE module (must expose .usage_ema and forward(tok)->(recon_main, acts_main, recon_aux, acts_aux))
+from sae_project.step02_logging_utils import SUPERCLASS_MAP, get_logger
+from sae_project.step03_data_shards import (build_uid_to_refidx,
+                                            load_all_sample_refs)
+from sae_project.step04_data_bank import (InMemorySixteenBitDataset,
+                                          InMemoryTarBank, collate_skip_none,
+                                          load_split_csv, seed_worker)
+# from sae_project.step02_logging_utils
+from sae_project.step05_model_encoder import (OUT_DIM, SupMoCoModel,
+                                              parse_int_list)
+# from sae_project.step06_sae_core import PointwiseTopKSAE  # your SAE module (must expose .usage_ema and forward(tok)->(recon_main, acts_main, recon_aux, acts_aux))
 from sae_project.step09_train_sae import set_seed
-#from collections import defaultdict
+
+# from collections import defaultdict
 
 
-logger =  get_logger(__name__)
+logger = get_logger(__name__)
+
 
 # ----------------------------
 # small helpers
@@ -30,6 +40,7 @@ def _rot90_batch(x: torch.Tensor, k: int) -> torch.Tensor:
     if k == 0:
         return x
     return torch.rot90(x, k, dims=(2, 3))
+
 
 @torch.no_grad()
 def extract_tokens(
@@ -44,7 +55,7 @@ def extract_tokens(
     """
     fmap = encoder.forward_feature_maps(x, which=which_layer)  # (B,C,H,W)
     B, C, H, W = fmap.shape
-    fmap = fmap.permute(0, 2, 3, 1).contiguous()              # (B,H,W,C)
+    fmap = fmap.permute(0, 2, 3, 1).contiguous()  # (B,H,W,C)
     tokens = fmap.view(B * H * W, C)
 
     if token_center:
@@ -64,10 +75,7 @@ def ensure_memmap(path: str, shape: Tuple[int, ...], dtype: np.dtype):
 # balanced image sampler by (class/line/plate)
 # ----------------------------
 def pick_balanced_images(
-    uids: List[str],
-    refs_by_uid: Dict[str, object],
-    images_target: int,
-    seed: int
+    uids: List[str], refs_by_uid: Dict[str, object], images_target: int, seed: int
 ) -> List[str]:
     """
     균형 기준:
@@ -78,7 +86,9 @@ def pick_balanced_images(
 
     for uid in uids:
         r = refs_by_uid[uid]
-        sup = getattr(r, "superclass", SUPERCLASS_MAP.get(getattr(r, "line", "UNK"), "UNK"))
+        sup = getattr(
+            r, "superclass", SUPERCLASS_MAP.get(getattr(r, "line", "UNK"), "UNK")
+        )
         line = getattr(r, "line", "UNK")
         plate = getattr(r, "plate", "UNK")
         groups[(sup, line, plate)].append(uid)
@@ -124,12 +134,7 @@ class CacheSpec:
 
 
 def build_cache_for_split(
-    args,
-    encoder,
-    refs,
-    uid_to_refidx,
-    spec: CacheSpec,
-    device: torch.device
+    args, encoder, refs, uid_to_refidx, spec: CacheSpec, device: torch.device
 ):
     if not os.path.exists(spec.split_csv):
         logger.info(f"[cache] missing {spec.split_name} split: {spec.split_csv} (skip)")
@@ -147,7 +152,9 @@ def build_cache_for_split(
     # decide how many images to draw
     tpi = int(spec.tokens_per_image)
     if tpi <= 0:
-        raise ValueError("For token-cache, tokens_per_image must be > 0 (avoid full 4096/image explosion).")
+        raise ValueError(
+            "For token-cache, tokens_per_image must be > 0 (avoid full 4096/image explosion)."
+        )
     images_target = int(math.ceil(spec.tokens_target / tpi))
 
     # pick balanced images
@@ -155,7 +162,8 @@ def build_cache_for_split(
         uids=uids_all,
         refs_by_uid=refs_by_uid,
         images_target=images_target,
-        seed=int(args.seed) + (0 if spec.split_name == "train" else (1 if spec.split_name == "val" else 2))
+        seed=int(args.seed)
+        + (0 if spec.split_name == "train" else (1 if spec.split_name == "val" else 2)),
     )
     if not picked_uids:
         raise RuntimeError(f"[cache] picked_uids empty for split={spec.split_name}")
@@ -166,7 +174,9 @@ def build_cache_for_split(
     # build RAM bank + loader (no augment here; we apply rot90 manually for caching)
     bank = InMemoryTarBank(refs, refidx, args.img_size)
     ib = list(range(len(refidx)))
-    ds = InMemorySixteenBitDataset(bank, ib, args.img_size, two_crops=False, augment=False)
+    ds = InMemorySixteenBitDataset(
+        bank, ib, args.img_size, two_crops=False, augment=False
+    )
 
     pin = torch.cuda.is_available()
     loader = DataLoader(
@@ -204,7 +214,11 @@ def build_cache_for_split(
         "model_state_path": str(args.model_state_path),
         "note": "This cache stores sampled tokens per image and imgid mapping for pooling.",
     }
-    with open(os.path.join(spec.out_dir, f"{spec.split_name}_meta.json"), "w", encoding="utf-8") as f:
+    with open(
+        os.path.join(spec.out_dir, f"{spec.split_name}_meta.json"),
+        "w",
+        encoding="utf-8",
+    ) as f:
         json.dump(meta, f, indent=2, ensure_ascii=False)
 
     # build mapping: local image index -> label
@@ -213,7 +227,9 @@ def build_cache_for_split(
 
     # caching loop
     encoder.eval()
-    autocast_kwargs = dict(device_type="cuda", enabled=torch.cuda.is_available(), dtype=torch.bfloat16)
+    autocast_kwargs = dict(
+        device_type="cuda", enabled=torch.cuda.is_available(), dtype=torch.bfloat16
+    )
 
     write_ptr = 0
     rng = random.Random(int(args.seed) + 777)
@@ -228,7 +244,9 @@ def build_cache_for_split(
 
         B = x_cpu.size(0)
         # move
-        x = x_cpu.to(device, non_blocking=True).contiguous(memory_format=torch.channels_last)
+        x = x_cpu.to(device, non_blocking=True).contiguous(
+            memory_format=torch.channels_last
+        )
 
         # rot90 aug at cache-time
         if spec.augment_rot90:
@@ -266,7 +284,7 @@ def build_cache_for_split(
                 idx = torch.randperm(hw, device=tokens.device)[:tpi]
                 sel = tokens[base + idx]  # (tpi,512)
             else:
-                sel = tokens[base:base+hw][:tpi]
+                sel = tokens[base : base + hw][:tpi]
 
             m = sel.size(0)
             if m == 0:
@@ -277,9 +295,11 @@ def build_cache_for_split(
                 m = N - write_ptr
                 sel = sel[:m]
 
-            tok_mm[write_ptr:write_ptr+m] = sel.detach().float().cpu().numpy().astype(np.float16)
-            imgid_mm[write_ptr:write_ptr+m] = np.int32(imgid)
-            y_mm[write_ptr:write_ptr+m] = np.int64(int(y_cpu[bi].item()))
+            tok_mm[write_ptr : write_ptr + m] = (
+                sel.detach().float().cpu().numpy().astype(np.float16)
+            )
+            imgid_mm[write_ptr : write_ptr + m] = np.int32(imgid)
+            y_mm[write_ptr : write_ptr + m] = np.int64(int(y_cpu[bi].item()))
 
             write_ptr += m
 
@@ -288,8 +308,12 @@ def build_cache_for_split(
             break
 
     # flush
-    tok_mm.flush(); imgid_mm.flush(); y_mm.flush()
-    logger.info(f"[cache] {spec.split_name} done. wrote {write_ptr}/{N} tokens -> {spec.out_dir}")
+    tok_mm.flush()
+    imgid_mm.flush()
+    y_mm.flush()
+    logger.info(
+        f"[cache] {spec.split_name} done. wrote {write_ptr}/{N} tokens -> {spec.out_dir}"
+    )
 
 
 def main():
@@ -298,10 +322,18 @@ def main():
 
     # ---- IMPORTANT: tune these in code (avoid argparse bloat) ----
     CACHE_DIR = os.path.join(args.save_dir, "token_cache")
-    TOKENS_TARGET_TRAIN = int(getattr(args, "cache_tokens_train", 100_000_000))  # 1e8 default
-    TOKENS_TARGET_VAL   = int(getattr(args, "cache_tokens_val",   10_000_000))   # 1e7 default
-    TOKENS_TARGET_TEST  = int(getattr(args, "cache_tokens_test",  10_000_000))   # 1e7 default
-    TOKENS_PER_IMAGE = int(getattr(args, "cache_tpi", 512))  # sampled per image, MUST be >0
+    TOKENS_TARGET_TRAIN = int(
+        getattr(args, "cache_tokens_train", 100_000_000)
+    )  # 1e8 default
+    TOKENS_TARGET_VAL = int(
+        getattr(args, "cache_tokens_val", 10_000_000)
+    )  # 1e7 default
+    TOKENS_TARGET_TEST = int(
+        getattr(args, "cache_tokens_test", 10_000_000)
+    )  # 1e7 default
+    TOKENS_PER_IMAGE = int(
+        getattr(args, "cache_tpi", 512)
+    )  # sampled per image, MUST be >0
     AUG_ROT90 = True
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -328,19 +360,41 @@ def main():
     )
     sd = torch.load(args.model_state_path, map_location="cpu")
     from sae_project.step05_model_encoder import robust_load_state_dict
+
     robust_load_state_dict(model, sd, strict=True)
     encoder = model.encoder.to(device).eval().to(memory_format=torch.channels_last)
 
     # splits
     train_csv = os.path.join(args.save_dir, "train_split.csv")
-    val_csv   = os.path.join(args.save_dir, "val_split.csv")
-    test_csv  = os.path.join(args.save_dir, "test_split.csv")
+    val_csv = os.path.join(args.save_dir, "val_split.csv")
+    test_csv = os.path.join(args.save_dir, "test_split.csv")
 
     # build per split
     specs = [
-        CacheSpec("train", train_csv, CACHE_DIR, TOKENS_TARGET_TRAIN, TOKENS_PER_IMAGE, augment_rot90=AUG_ROT90),
-        CacheSpec("val",   val_csv,   CACHE_DIR, TOKENS_TARGET_VAL,   TOKENS_PER_IMAGE, augment_rot90=AUG_ROT90),
-        CacheSpec("test",  test_csv,  CACHE_DIR, TOKENS_TARGET_TEST,  TOKENS_PER_IMAGE, augment_rot90=False),  # test는 보통 aug 끔
+        CacheSpec(
+            "train",
+            train_csv,
+            CACHE_DIR,
+            TOKENS_TARGET_TRAIN,
+            TOKENS_PER_IMAGE,
+            augment_rot90=AUG_ROT90,
+        ),
+        CacheSpec(
+            "val",
+            val_csv,
+            CACHE_DIR,
+            TOKENS_TARGET_VAL,
+            TOKENS_PER_IMAGE,
+            augment_rot90=AUG_ROT90,
+        ),
+        CacheSpec(
+            "test",
+            test_csv,
+            CACHE_DIR,
+            TOKENS_TARGET_TEST,
+            TOKENS_PER_IMAGE,
+            augment_rot90=False,
+        ),  # test는 보통 aug 끔
     ]
 
     for sp in specs:

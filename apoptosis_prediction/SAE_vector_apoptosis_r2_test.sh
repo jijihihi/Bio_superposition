@@ -55,7 +55,7 @@ for CNN_SEED in "${CNN_SEEDS[@]}"; do
                     --features_cache "$CACHE" \
                     --apoptosis_csv "$APOPTOSIS_CSV" \
                     --model "$MODEL" \
-                    --dead_threshold 5e-5 \
+                    --dead_threshold 1e-5 \
                     --seed 42 \
                     --cv_folds 5 \
                     --n_repeats 2 \

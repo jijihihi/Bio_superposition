@@ -34,34 +34,49 @@
 #       --results_dir /content/drive/MyDrive/Final_paper/lambda_labs_moco_only/apoptosis_r2_results
 # ==============================================================================
 
-import os
-import sys
-import json
 import argparse
 import csv
+import json
+import os
+import sys
 from collections import defaultdict
 
+import matplotlib
 import numpy as np
 
-import matplotlib
 if "google.colab" not in sys.modules:
     matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-
 
 # ==============================================================================
 # Config: which directories / seeds to scan
 # ==============================================================================
 CONFIGS = [
     # (label, directory_pattern, seeds, description)
-    ("MoCo_l2norm",  "MoCo_seed{}_l2norm",  [42, 87, 95, 123, 124, 256, 445, 457],
-     "MoCo (GAP L2 norm training), L2 norm ON"),
-    ("MoCo_raw",     "MoCo_seed{}_raw",     [42, 87, 95, 123, 124, 256, 445, 457],
-     "MoCo (GAP L2 norm training), L2 norm OFF"),
-    ("noNorm_l2norm", "noNorm_seed{}_l2norm", [42, 87, 124],
-     "MoCo (no GAP L2 norm training), L2 norm ON"),
-    ("noNorm_raw",    "noNorm_seed{}_raw",    [42, 87, 124],
-     "MoCo (no GAP L2 norm training), L2 norm OFF"),
+    (
+        "MoCo_l2norm",
+        "MoCo_seed{}_l2norm",
+        [42, 87, 95, 123, 124, 256, 445, 457],
+        "MoCo (GAP L2 norm training), L2 norm ON",
+    ),
+    (
+        "MoCo_raw",
+        "MoCo_seed{}_raw",
+        [42, 87, 95, 123, 124, 256, 445, 457],
+        "MoCo (GAP L2 norm training), L2 norm OFF",
+    ),
+    (
+        "noNorm_l2norm",
+        "noNorm_seed{}_l2norm",
+        [42, 87, 124],
+        "MoCo (no GAP L2 norm training), L2 norm ON",
+    ),
+    (
+        "noNorm_raw",
+        "noNorm_seed{}_raw",
+        [42, 87, 124],
+        "MoCo (no GAP L2 norm training), L2 norm OFF",
+    ),
 ]
 
 LAYERS = ["stage5_mid", "stage5_out", "refine_out"]
@@ -111,37 +126,41 @@ def collect_all_results(results_dir: str):
                     for res in data.get("results", []):
                         grp = res["group"]
                         r2_mean = res["r2_mean"]
-                        r2_std  = res.get("r2_std", 0.0)
+                        r2_std = res.get("r2_std", 0.0)
                         r2_scores = res.get("r2_scores", [])
                         perm_pval = res.get("perm_pval", None)
 
                         key = (cfg_label, model_tag, layer, grp)
                         agg[key].append(r2_mean)
 
-                        per_seed.append({
-                            "config": cfg_label,
-                            "seed": seed,
-                            "model": model_tag,
-                            "layer": layer,
-                            "group": grp,
-                            "r2_mean": r2_mean,
-                            "r2_std": r2_std,
-                            "r2_scores": r2_scores,
-                            "perm_pval": perm_pval,
-                            "perm_fold_r2s": res.get("perm_fold_r2s", []),
-                        })
-
-                        # Store individual fold R²s
-                        for fold_i, fold_r2 in enumerate(r2_scores):
-                            all_folds.append({
+                        per_seed.append(
+                            {
                                 "config": cfg_label,
                                 "seed": seed,
                                 "model": model_tag,
                                 "layer": layer,
                                 "group": grp,
-                                "fold_idx": fold_i,
-                                "r2": fold_r2,
-                            })
+                                "r2_mean": r2_mean,
+                                "r2_std": r2_std,
+                                "r2_scores": r2_scores,
+                                "perm_pval": perm_pval,
+                                "perm_fold_r2s": res.get("perm_fold_r2s", []),
+                            }
+                        )
+
+                        # Store individual fold R²s
+                        for fold_i, fold_r2 in enumerate(r2_scores):
+                            all_folds.append(
+                                {
+                                    "config": cfg_label,
+                                    "seed": seed,
+                                    "model": model_tag,
+                                    "layer": layer,
+                                    "group": grp,
+                                    "fold_idx": fold_i,
+                                    "r2": fold_r2,
+                                }
+                            )
 
     return dict(agg), per_seed, all_folds, missing
 
@@ -165,17 +184,25 @@ def print_aggregated_table(agg):
                 if not vals_exist:
                     continue
 
-                n_seeds = len([
-                    v for g in GROUPS_OF_INTEREST
-                    for v in agg.get((cfg_label, model_tag, layer, g), [])
-                ]) // max(
-                    sum(1 for g in GROUPS_OF_INTEREST
-                        if agg.get((cfg_label, model_tag, layer, g))),
-                    1
+                n_seeds = len(
+                    [
+                        v
+                        for g in GROUPS_OF_INTEREST
+                        for v in agg.get((cfg_label, model_tag, layer, g), [])
+                    ]
+                ) // max(
+                    sum(
+                        1
+                        for g in GROUPS_OF_INTEREST
+                        if agg.get((cfg_label, model_tag, layer, g))
+                    ),
+                    1,
                 )
 
                 print(f"\n  ── {desc} | {model_tag} | {layer} ({n_seeds} seeds) ──")
-                print(f"  {'Group':20s} {'Mean R²':>10s} {'±Std':>10s} {'Min':>10s} {'Max':>10s} {'N':>5s}")
+                print(
+                    f"  {'Group':20s} {'Mean R²':>10s} {'±Std':>10s} {'Min':>10s} {'Max':>10s} {'N':>5s}"
+                )
                 print("  " + "-" * 60)
 
                 for grp in GROUPS_OF_INTEREST:
@@ -186,7 +213,9 @@ def print_aggregated_table(agg):
                         s = np.std(vals)
                         mn = np.min(vals)
                         mx = np.max(vals)
-                        print(f"  {grp:20s} {m:>10.4f} {s:>10.4f} {mn:>10.4f} {mx:>10.4f} {len(vals):>5d}")
+                        print(
+                            f"  {grp:20s} {m:>10.4f} {s:>10.4f} {mn:>10.4f} {mx:>10.4f} {len(vals):>5d}"
+                        )
 
 
 # ==============================================================================
@@ -219,7 +248,8 @@ def print_per_seed_table(agg, per_seed):
                     row = f"  {seed:>6d}"
                     for grp in GROUPS_OF_INTEREST:
                         matches = [
-                            r for r in per_seed
+                            r
+                            for r in per_seed
                             if r["config"] == cfg_label
                             and r["seed"] == seed
                             and r["model"] == model_tag
@@ -234,16 +264,16 @@ def print_per_seed_table(agg, per_seed):
 
                 # Mean ± Std row
                 row_mean = f"  {'Mean':>6s}"
-                row_std  = f"  {'±Std':>6s}"
+                row_std = f"  {'±Std':>6s}"
                 for grp in GROUPS_OF_INTEREST:
                     key = (cfg_label, model_tag, layer, grp)
                     vals = agg.get(key, [])
                     if vals:
                         row_mean += f"  {np.mean(vals):>14.4f}"
-                        row_std  += f"  {np.std(vals):>14.4f}"
+                        row_std += f"  {np.std(vals):>14.4f}"
                     else:
                         row_mean += f"  {'N/A':>14s}"
-                        row_std  += f"  {'N/A':>14s}"
+                        row_std += f"  {'N/A':>14s}"
                 print("  " + "-" * (6 + 16 * len(GROUPS_OF_INTEREST)))
                 print(row_mean)
                 print(row_std)
@@ -270,15 +300,23 @@ def compute_ci95(all_folds):
         se = arr.std(ddof=1) / np.sqrt(n) if n > 1 else 0.0
 
         if n > 1:
-            ci_low, ci_high = stats.t.interval(0.95, df=n-1, loc=mean, scale=se)
+            ci_low, ci_high = stats.t.interval(0.95, df=n - 1, loc=mean, scale=se)
         else:
             ci_low, ci_high = mean, mean
 
-        ci_results.append({
-            "config": cfg, "model": model, "layer": layer, "group": grp,
-            "mean_r2": mean, "ci95_lower": ci_low, "ci95_upper": ci_high,
-            "n_folds": n, "std": arr.std(ddof=1) if n > 1 else 0.0,
-        })
+        ci_results.append(
+            {
+                "config": cfg,
+                "model": model,
+                "layer": layer,
+                "group": grp,
+                "mean_r2": mean,
+                "ci95_lower": ci_low,
+                "ci95_upper": ci_high,
+                "n_folds": n,
+                "std": arr.std(ddof=1) if n > 1 else 0.0,
+            }
+        )
 
     return ci_results
 
@@ -292,10 +330,12 @@ def print_ci_results(ci_results):
     for r in ci_results:
         if r["group"] not in GROUPS_OF_INTEREST:
             continue
-        print(f"  {r['config']:16s} | {r['model']:8s} | {r['layer']:12s} | "
-              f"{r['group']:12s}: "
-              f"{r['mean_r2']:.4f} [{r['ci95_lower']:.4f}, {r['ci95_upper']:.4f}]  "
-              f"(n={r['n_folds']})")
+        print(
+            f"  {r['config']:16s} | {r['model']:8s} | {r['layer']:12s} | "
+            f"{r['group']:12s}: "
+            f"{r['mean_r2']:.4f} [{r['ci95_lower']:.4f}, {r['ci95_upper']:.4f}]  "
+            f"(n={r['n_folds']})"
+        )
 
 
 # ==============================================================================
@@ -348,22 +388,24 @@ def compute_wilcoxon(all_folds):
                     except ValueError:
                         stat, pval = 0.0, 1.0
 
-                    results.append({
-                        "pair_desc": pair_desc,
-                        "config_on": cfg_on,
-                        "config_off": cfg_off,
-                        "model": model,
-                        "layer": layer,
-                        "group": grp,
-                        "n_pairs": len(common_keys),
-                        "median_l2on": float(np.median(r2_on)),
-                        "median_l2off": float(np.median(r2_off)),
-                        "mean_l2on": float(np.mean(r2_on)),
-                        "mean_l2off": float(np.mean(r2_off)),
-                        "median_diff": float(np.median(diff)),
-                        "W_stat": float(stat),
-                        "p_value": float(pval),
-                    })
+                    results.append(
+                        {
+                            "pair_desc": pair_desc,
+                            "config_on": cfg_on,
+                            "config_off": cfg_off,
+                            "model": model,
+                            "layer": layer,
+                            "group": grp,
+                            "n_pairs": len(common_keys),
+                            "median_l2on": float(np.median(r2_on)),
+                            "median_l2off": float(np.median(r2_off)),
+                            "mean_l2on": float(np.mean(r2_on)),
+                            "mean_l2off": float(np.mean(r2_off)),
+                            "median_diff": float(np.median(diff)),
+                            "W_stat": float(stat),
+                            "p_value": float(pval),
+                        }
+                    )
 
     return results
 
@@ -381,12 +423,18 @@ def print_wilcoxon_results(wilcoxon_results):
 
     for r in wilcoxon_results:
         sig = "✅ *" if r["p_value"] < 0.05 else "  "
-        print(f"\n  {sig} {r['pair_desc']} | {r['model']} | {r['layer']} | {r['group']}")
+        print(
+            f"\n  {sig} {r['pair_desc']} | {r['model']} | {r['layer']} | {r['group']}"
+        )
         print(f"    N pairs = {r['n_pairs']}")
-        print(f"    Median R²:  L2 ON = {r['median_l2on']:.4f},  "
-              f"L2 OFF = {r['median_l2off']:.4f},  Δ = {r['median_diff']:+.4f}")
-        print(f"    Mean R²:    L2 ON = {r['mean_l2on']:.4f},  "
-              f"L2 OFF = {r['mean_l2off']:.4f}")
+        print(
+            f"    Median R²:  L2 ON = {r['median_l2on']:.4f},  "
+            f"L2 OFF = {r['median_l2off']:.4f},  Δ = {r['median_diff']:+.4f}"
+        )
+        print(
+            f"    Mean R²:    L2 ON = {r['mean_l2on']:.4f},  "
+            f"L2 OFF = {r['mean_l2off']:.4f}"
+        )
         print(f"    W = {r['W_stat']:.1f},  p = {r['p_value']:.6f}")
 
     n_sig = sum(1 for r in wilcoxon_results if r["p_value"] < 0.05)
@@ -418,10 +466,12 @@ def print_perm_summary(per_seed):
             continue
         pvals = np.array(grouped[key])
         n_sig = np.sum(pvals < 0.05)
-        print(f"  {cfg:16s} | {model:8s} | {layer:12s} | {grp:12s}: "
-              f"mean p={pvals.mean():.4f}, median p={np.median(pvals):.4f} "
-              f"[{pvals.min():.4f}-{pvals.max():.4f}], "
-              f"sig={n_sig}/{len(pvals)}")
+        print(
+            f"  {cfg:16s} | {model:8s} | {layer:12s} | {grp:12s}: "
+            f"mean p={pvals.mean():.4f}, median p={np.median(pvals):.4f} "
+            f"[{pvals.min():.4f}-{pvals.max():.4f}], "
+            f"sig={n_sig}/{len(pvals)}"
+        )
 
 
 # ==============================================================================
@@ -457,15 +507,19 @@ def compute_pooled_perm_pval(per_seed, all_folds):
         real_mean = real_vals.mean()
         p_value = (np.sum(null_vals >= real_mean) + 1) / (len(null_vals) + 1)
 
-        results.append({
-            "config": key[0], "model": key[1],
-            "layer": key[2], "group": key[3],
-            "real_mean_r2": float(real_mean),
-            "n_real_folds": len(real_vals),
-            "null_mean_r2": float(null_vals.mean()),
-            "n_null_folds": len(null_vals),
-            "pooled_p_value": float(p_value),
-        })
+        results.append(
+            {
+                "config": key[0],
+                "model": key[1],
+                "layer": key[2],
+                "group": key[3],
+                "real_mean_r2": float(real_mean),
+                "n_real_folds": len(real_vals),
+                "null_mean_r2": float(null_vals.mean()),
+                "n_null_folds": len(null_vals),
+                "pooled_p_value": float(p_value),
+            }
+        )
 
     return results
 
@@ -484,62 +538,109 @@ def print_pooled_perm(pooled_perm):
         if r["group"] not in GROUPS_OF_INTEREST:
             continue
         sig = "✅" if r["pooled_p_value"] < 0.05 else "  "
-        print(f"  {sig} {r['config']:16s} | {r['model']:8s} | {r['layer']:12s} | "
-              f"{r['group']:12s}: "
-              f"p = {r['pooled_p_value']:.4f}  "
-              f"(real={r['real_mean_r2']:.4f}, null={r['null_mean_r2']:.4f}, "
-              f"n_real={r['n_real_folds']}, n_null={r['n_null_folds']})")
+        print(
+            f"  {sig} {r['config']:16s} | {r['model']:8s} | {r['layer']:12s} | "
+            f"{r['group']:12s}: "
+            f"p = {r['pooled_p_value']:.4f}  "
+            f"(real={r['real_mean_r2']:.4f}, null={r['null_mean_r2']:.4f}, "
+            f"n_real={r['n_real_folds']}, n_null={r['n_null_folds']})"
+        )
 
 
 # ==============================================================================
 # Save CSVs
 # ==============================================================================
-def save_csvs(results_dir, agg, per_seed, all_folds, ci_results, wilcoxon_results,
-              pooled_perm=None):
+def save_csvs(
+    results_dir,
+    agg,
+    per_seed,
+    all_folds,
+    ci_results,
+    wilcoxon_results,
+    pooled_perm=None,
+):
     """Save per-seed CSV, all-folds CSV, summary CSV, CI CSV, Wilcoxon CSV, pooled perm CSV."""
 
     # 1. Per-seed CSV
     per_seed_csv = os.path.join(results_dir, "aggregated_r2_per_seed.csv")
     rows_sorted = sorted(
-        per_seed,
-        key=lambda x: (x["config"], x["model"], x["layer"], x["seed"])
+        per_seed, key=lambda x: (x["config"], x["model"], x["layer"], x["seed"])
     )
     with open(per_seed_csv, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["Config", "Seed", "Model", "Layer", "Group",
-                     "R2_mean", "R2_std", "Perm_pval", "R2_fold_scores"])
+        w.writerow(
+            [
+                "Config",
+                "Seed",
+                "Model",
+                "Layer",
+                "Group",
+                "R2_mean",
+                "R2_std",
+                "Perm_pval",
+                "R2_fold_scores",
+            ]
+        )
         for r in rows_sorted:
-            w.writerow([
-                r["config"], r["seed"], r["model"], r["layer"], r["group"],
-                f"{r['r2_mean']:.6f}",
-                f"{r['r2_std']:.6f}",
-                f"{r['perm_pval']:.4f}" if r.get("perm_pval") is not None else "",
-                ";".join(f"{s:.6f}" for s in r["r2_scores"]) if r["r2_scores"] else ""
-            ])
+            w.writerow(
+                [
+                    r["config"],
+                    r["seed"],
+                    r["model"],
+                    r["layer"],
+                    r["group"],
+                    f"{r['r2_mean']:.6f}",
+                    f"{r['r2_std']:.6f}",
+                    f"{r['perm_pval']:.4f}" if r.get("perm_pval") is not None else "",
+                    (
+                        ";".join(f"{s:.6f}" for s in r["r2_scores"])
+                        if r["r2_scores"]
+                        else ""
+                    ),
+                ]
+            )
     print(f"\n  Saved per-seed CSV:  {per_seed_csv}")
 
     # 2. All-folds CSV
     folds_csv = os.path.join(results_dir, "aggregated_r2_all_folds.csv")
     folds_sorted = sorted(
         all_folds,
-        key=lambda x: (x["config"], x["model"], x["layer"], x["seed"], x["fold_idx"])
+        key=lambda x: (x["config"], x["model"], x["layer"], x["seed"], x["fold_idx"]),
     )
     with open(folds_csv, "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["Config", "Seed", "Model", "Layer", "Group", "Fold_idx", "R2"])
         for r in folds_sorted:
-            w.writerow([
-                r["config"], r["seed"], r["model"], r["layer"],
-                r["group"], r["fold_idx"], f"{r['r2']:.6f}",
-            ])
+            w.writerow(
+                [
+                    r["config"],
+                    r["seed"],
+                    r["model"],
+                    r["layer"],
+                    r["group"],
+                    r["fold_idx"],
+                    f"{r['r2']:.6f}",
+                ]
+            )
     print(f"  Saved all-folds CSV: {folds_csv}")
 
     # 3. Aggregated summary CSV
     agg_csv = os.path.join(results_dir, "aggregated_r2_summary.csv")
     with open(agg_csv, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["Config", "Model", "Layer", "Group",
-                     "Mean_R2", "Std_R2", "Min_R2", "Max_R2", "N_seeds"])
+        w.writerow(
+            [
+                "Config",
+                "Model",
+                "Layer",
+                "Group",
+                "Mean_R2",
+                "Std_R2",
+                "Min_R2",
+                "Max_R2",
+                "N_seeds",
+            ]
+        )
         for cfg_label, _, seeds, _ in CONFIGS:
             for model_tag in MODEL_TAGS:
                 for layer in LAYERS:
@@ -547,28 +648,52 @@ def save_csvs(results_dir, agg, per_seed, all_folds, ci_results, wilcoxon_result
                         key = (cfg_label, model_tag, layer, grp)
                         vals = agg.get(key, [])
                         if vals:
-                            w.writerow([
-                                cfg_label, model_tag, layer, grp,
-                                f"{np.mean(vals):.6f}",
-                                f"{np.std(vals):.6f}",
-                                f"{np.min(vals):.6f}",
-                                f"{np.max(vals):.6f}",
-                                len(vals),
-                            ])
+                            w.writerow(
+                                [
+                                    cfg_label,
+                                    model_tag,
+                                    layer,
+                                    grp,
+                                    f"{np.mean(vals):.6f}",
+                                    f"{np.std(vals):.6f}",
+                                    f"{np.min(vals):.6f}",
+                                    f"{np.max(vals):.6f}",
+                                    len(vals),
+                                ]
+                            )
     print(f"  Saved summary CSV:  {agg_csv}")
 
     # 4. 95% CI CSV
     ci_csv = os.path.join(results_dir, "aggregated_r2_ci95.csv")
     with open(ci_csv, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["Config", "Model", "Layer", "Group",
-                     "Mean_R2", "CI95_lower", "CI95_upper", "Std", "N_folds"])
+        w.writerow(
+            [
+                "Config",
+                "Model",
+                "Layer",
+                "Group",
+                "Mean_R2",
+                "CI95_lower",
+                "CI95_upper",
+                "Std",
+                "N_folds",
+            ]
+        )
         for r in ci_results:
-            w.writerow([
-                r["config"], r["model"], r["layer"], r["group"],
-                f"{r['mean_r2']:.6f}", f"{r['ci95_lower']:.6f}",
-                f"{r['ci95_upper']:.6f}", f"{r['std']:.6f}", r["n_folds"],
-            ])
+            w.writerow(
+                [
+                    r["config"],
+                    r["model"],
+                    r["layer"],
+                    r["group"],
+                    f"{r['mean_r2']:.6f}",
+                    f"{r['ci95_lower']:.6f}",
+                    f"{r['ci95_upper']:.6f}",
+                    f"{r['std']:.6f}",
+                    r["n_folds"],
+                ]
+            )
     print(f"  Saved 95% CI CSV:   {ci_csv}")
 
     # 5. Wilcoxon CSV
@@ -576,18 +701,43 @@ def save_csvs(results_dir, agg, per_seed, all_folds, ci_results, wilcoxon_result
         wilcoxon_csv = os.path.join(results_dir, "aggregated_r2_wilcoxon.csv")
         with open(wilcoxon_csv, "w", newline="") as f:
             w = csv.writer(f)
-            w.writerow(["Pair_Desc", "Config_ON", "Config_OFF", "Model", "Layer",
-                         "Group", "N_pairs", "Median_L2on", "Median_L2off",
-                         "Mean_L2on", "Mean_L2off", "Median_diff", "W_stat", "P_value"])
+            w.writerow(
+                [
+                    "Pair_Desc",
+                    "Config_ON",
+                    "Config_OFF",
+                    "Model",
+                    "Layer",
+                    "Group",
+                    "N_pairs",
+                    "Median_L2on",
+                    "Median_L2off",
+                    "Mean_L2on",
+                    "Mean_L2off",
+                    "Median_diff",
+                    "W_stat",
+                    "P_value",
+                ]
+            )
             for r in wilcoxon_results:
-                w.writerow([
-                    r["pair_desc"], r["config_on"], r["config_off"],
-                    r["model"], r["layer"], r["group"], r["n_pairs"],
-                    f"{r['median_l2on']:.6f}", f"{r['median_l2off']:.6f}",
-                    f"{r['mean_l2on']:.6f}", f"{r['mean_l2off']:.6f}",
-                    f"{r['median_diff']:.6f}",
-                    f"{r['W_stat']:.1f}", f"{r['p_value']:.6f}",
-                ])
+                w.writerow(
+                    [
+                        r["pair_desc"],
+                        r["config_on"],
+                        r["config_off"],
+                        r["model"],
+                        r["layer"],
+                        r["group"],
+                        r["n_pairs"],
+                        f"{r['median_l2on']:.6f}",
+                        f"{r['median_l2off']:.6f}",
+                        f"{r['mean_l2on']:.6f}",
+                        f"{r['mean_l2off']:.6f}",
+                        f"{r['median_diff']:.6f}",
+                        f"{r['W_stat']:.1f}",
+                        f"{r['p_value']:.6f}",
+                    ]
+                )
         print(f"  Saved Wilcoxon CSV: {wilcoxon_csv}")
 
     # 6. Pooled permutation p-value CSV
@@ -595,16 +745,33 @@ def save_csvs(results_dir, agg, per_seed, all_folds, ci_results, wilcoxon_result
         perm_csv = os.path.join(results_dir, "aggregated_r2_pooled_perm.csv")
         with open(perm_csv, "w", newline="") as f:
             w = csv.writer(f)
-            w.writerow(["Config", "Model", "Layer", "Group",
-                         "Real_mean_R2", "N_real_folds",
-                         "Null_mean_R2", "N_null_folds", "Pooled_p_value"])
+            w.writerow(
+                [
+                    "Config",
+                    "Model",
+                    "Layer",
+                    "Group",
+                    "Real_mean_R2",
+                    "N_real_folds",
+                    "Null_mean_R2",
+                    "N_null_folds",
+                    "Pooled_p_value",
+                ]
+            )
             for r in pooled_perm:
-                w.writerow([
-                    r["config"], r["model"], r["layer"], r["group"],
-                    f"{r['real_mean_r2']:.6f}", r["n_real_folds"],
-                    f"{r['null_mean_r2']:.6f}", r["n_null_folds"],
-                    f"{r['pooled_p_value']:.6f}",
-                ])
+                w.writerow(
+                    [
+                        r["config"],
+                        r["model"],
+                        r["layer"],
+                        r["group"],
+                        f"{r['real_mean_r2']:.6f}",
+                        r["n_real_folds"],
+                        f"{r['null_mean_r2']:.6f}",
+                        r["n_null_folds"],
+                        f"{r['pooled_p_value']:.6f}",
+                    ]
+                )
         print(f"  Saved pooled perm CSV: {perm_csv}")
 
 
@@ -652,14 +819,18 @@ def save_paper_table(results_dir, agg):
     lines = []
     lines.append(r"\begin{table}[htbp]")
     lines.append(r"\centering")
-    lines.append(r"\caption{Cross-validated $R^2$ for apoptosis rate prediction (mean $\pm$ std across CNN training seeds).}")
+    lines.append(
+        r"\caption{Cross-validated $R^2$ for apoptosis rate prediction (mean $\pm$ std across CNN training seeds).}"
+    )
     lines.append(r"\label{tab:r2_apoptosis}")
     lines.append(r"\resizebox{\textwidth}{!}{%")
     lines.append(r"\begin{tabular}{" + col_spec + "}")
     lines.append(r"\toprule")
 
-    h = " & ".join(["Config", "Model", "Layer"] +
-                    [g.replace("_", r"\_") for g in GROUPS_OF_INTEREST])
+    h = " & ".join(
+        ["Config", "Model", "Layer"]
+        + [g.replace("_", r"\_") for g in GROUPS_OF_INTEREST]
+    )
     lines.append(h + r" \\")
     lines.append(r"\midrule")
 
@@ -713,8 +884,10 @@ def print_best_conditions(agg):
             cfg, model, layer, _ = best_key
             vals = agg[best_key]
             s = np.std(vals)
-            print(f"  {grp:20s}: R² = {best_mean:.4f} ± {s:.4f}  "
-                  f"({cfg} | {model} | {layer}, N={len(vals)})")
+            print(
+                f"  {grp:20s}: R² = {best_mean:.4f} ± {s:.4f}  "
+                f"({cfg} | {model} | {layer}, N={len(vals)})"
+            )
 
 
 # ==============================================================================
@@ -732,16 +905,18 @@ def print_model_comparison(agg):
             header_printed = False
             for grp in GROUPS_OF_INTEREST:
                 ridge_key = (cfg_label, "Ridge", layer, grp)
-                xgb_key   = (cfg_label, "XGBoost", layer, grp)
+                xgb_key = (cfg_label, "XGBoost", layer, grp)
                 ridge_vals = agg.get(ridge_key, [])
-                xgb_vals   = agg.get(xgb_key, [])
+                xgb_vals = agg.get(xgb_key, [])
 
                 if not ridge_vals or not xgb_vals:
                     continue
 
                 if not header_printed:
                     print(f"\n  ── {desc} | {layer} ──")
-                    print(f"  {'Group':20s} {'Ridge':>12s} {'XGBoost':>12s} {'ΔR²':>10s}")
+                    print(
+                        f"  {'Group':20s} {'Ridge':>12s} {'XGBoost':>12s} {'ΔR²':>10s}"
+                    )
                     print("  " + "-" * 58)
                     header_printed = True
                     any_printed = True
@@ -779,13 +954,15 @@ def plot_paired_comparison(per_seed, results_dir):
                     elif r["config"] == cfg_off:
                         off_dict.setdefault(r["group"], {})[r["seed"]] = r["r2_mean"]
 
-                groups_present = [g for g in GROUPS_OF_INTEREST
-                                  if g in on_dict and g in off_dict]
+                groups_present = [
+                    g for g in GROUPS_OF_INTEREST if g in on_dict and g in off_dict
+                ]
                 if not groups_present:
                     continue
 
-                fig, axes = plt.subplots(1, len(groups_present),
-                                          figsize=(5 * len(groups_present), 5))
+                fig, axes = plt.subplots(
+                    1, len(groups_present), figsize=(5 * len(groups_present), 5)
+                )
                 if len(groups_present) == 1:
                     axes = [axes]
 
@@ -795,26 +972,46 @@ def plot_paired_comparison(per_seed, results_dir):
                     common_seeds = sorted(set(on_g.keys()) & set(off_g.keys()))
 
                     for seed in common_seeds:
-                        ax.plot([0, 1], [off_g[seed], on_g[seed]],
-                                "o-", color="#555555", alpha=0.5, markersize=6)
+                        ax.plot(
+                            [0, 1],
+                            [off_g[seed], on_g[seed]],
+                            "o-",
+                            color="#555555",
+                            alpha=0.5,
+                            markersize=6,
+                        )
 
                     if common_seeds:
                         mean_off = np.mean([off_g[s] for s in common_seeds])
                         mean_on = np.mean([on_g[s] for s in common_seeds])
-                        ax.plot([0, 1], [mean_off, mean_on],
-                                "s-", color="#E24A33", markersize=10, linewidth=2.5,
-                                label="Mean", zorder=5)
+                        ax.plot(
+                            [0, 1],
+                            [mean_off, mean_on],
+                            "s-",
+                            color="#E24A33",
+                            markersize=10,
+                            linewidth=2.5,
+                            label="Mean",
+                            zorder=5,
+                        )
 
                     ax.set_xticks([0, 1])
                     ax.set_xticklabels(["L2 OFF", "L2 ON"], fontsize=11)
                     ax.set_ylabel("R² (mean across folds)", fontsize=11)
-                    ax.set_title(f"{grp}\n{pair_label} | {model} | {layer}",
-                                 fontsize=12, fontweight="bold")
+                    ax.set_title(
+                        f"{grp}\n{pair_label} | {model} | {layer}",
+                        fontsize=12,
+                        fontweight="bold",
+                    )
                     ax.grid(True, alpha=0.2, axis="y")
                     ax.legend(fontsize=9)
 
-                fig.suptitle(f"CNN GAP: {pair_label} L2 Norm Effect (Paired by Seed)",
-                             fontsize=14, fontweight="bold", y=1.02)
+                fig.suptitle(
+                    f"CNN GAP: {pair_label} L2 Norm Effect (Paired by Seed)",
+                    fontsize=14,
+                    fontweight="bold",
+                    y=1.02,
+                )
                 fig.tight_layout()
                 safe = f"paired_{pair_label}_{model}_{layer}".replace(" ", "_")
                 save_path = os.path.join(results_dir, f"{safe}.png")
@@ -836,16 +1033,28 @@ def plot_forest_ci(ci_results, results_dir):
     for cfg_on, cfg_off, pair_label in config_pairs:
         for model in MODEL_TAGS:
             for layer in LAYERS:
-                on_results = [r for r in ci_results
-                              if r["config"] == cfg_on and r["model"] == model
-                              and r["layer"] == layer and r["group"] in GROUPS_OF_INTEREST]
-                off_results = [r for r in ci_results
-                               if r["config"] == cfg_off and r["model"] == model
-                               and r["layer"] == layer and r["group"] in GROUPS_OF_INTEREST]
+                on_results = [
+                    r
+                    for r in ci_results
+                    if r["config"] == cfg_on
+                    and r["model"] == model
+                    and r["layer"] == layer
+                    and r["group"] in GROUPS_OF_INTEREST
+                ]
+                off_results = [
+                    r
+                    for r in ci_results
+                    if r["config"] == cfg_off
+                    and r["model"] == model
+                    and r["layer"] == layer
+                    and r["group"] in GROUPS_OF_INTEREST
+                ]
                 if not on_results or not off_results:
                     continue
 
-                fig, ax = plt.subplots(figsize=(8, max(3, len(GROUPS_OF_INTEREST) * 1.2)))
+                fig, ax = plt.subplots(
+                    figsize=(8, max(3, len(GROUPS_OF_INTEREST) * 1.2))
+                )
                 y_positions = []
                 y_labels = []
                 y_offset = 0
@@ -859,15 +1068,30 @@ def plot_forest_ci(ci_results, results_dir):
                         if not matches:
                             continue
                         r = matches[0]
-                        ci_err = [[r["mean_r2"] - r["ci95_lower"]],
-                                  [r["ci95_upper"] - r["mean_r2"]]]
-                        ax.errorbar(r["mean_r2"], y_offset, xerr=ci_err,
-                                    fmt="o", color=color, markersize=8,
-                                    capsize=5, capthick=1.5, linewidth=1.5,
-                                    label=l2_label if y_offset < 2 else None)
-                        ax.text(r["ci95_upper"] + 0.002, y_offset,
-                                f"  {r['mean_r2']:.4f} [{r['ci95_lower']:.4f}, {r['ci95_upper']:.4f}]",
-                                va="center", fontsize=8, color=color)
+                        ci_err = [
+                            [r["mean_r2"] - r["ci95_lower"]],
+                            [r["ci95_upper"] - r["mean_r2"]],
+                        ]
+                        ax.errorbar(
+                            r["mean_r2"],
+                            y_offset,
+                            xerr=ci_err,
+                            fmt="o",
+                            color=color,
+                            markersize=8,
+                            capsize=5,
+                            capthick=1.5,
+                            linewidth=1.5,
+                            label=l2_label if y_offset < 2 else None,
+                        )
+                        ax.text(
+                            r["ci95_upper"] + 0.002,
+                            y_offset,
+                            f"  {r['mean_r2']:.4f} [{r['ci95_lower']:.4f}, {r['ci95_upper']:.4f}]",
+                            va="center",
+                            fontsize=8,
+                            color=color,
+                        )
                         y_positions.append(y_offset)
                         y_labels.append(f"{grp} ({l2_label})")
                         y_offset += 1
@@ -876,8 +1100,11 @@ def plot_forest_ci(ci_results, results_dir):
                 ax.set_yticks(y_positions)
                 ax.set_yticklabels(y_labels, fontsize=9)
                 ax.set_xlabel("R²", fontsize=11)
-                ax.set_title(f"CNN GAP {pair_label} | {model} | {layer}\n95% CI",
-                             fontsize=12, fontweight="bold")
+                ax.set_title(
+                    f"CNN GAP {pair_label} | {model} | {layer}\n95% CI",
+                    fontsize=12,
+                    fontweight="bold",
+                )
                 ax.axvline(0, color="gray", linewidth=0.5, linestyle="--", alpha=0.5)
                 ax.grid(True, alpha=0.15, axis="x")
                 ax.invert_yaxis()
@@ -902,12 +1129,17 @@ def main():
         description="Aggregate R² results across seeds — paper-ready summary"
     )
     parser.add_argument(
-        "--results_dir", type=str, required=True,
-        help="Path to apoptosis_r2_results directory"
+        "--results_dir",
+        type=str,
+        required=True,
+        help="Path to apoptosis_r2_results directory",
     )
     parser.add_argument(
-        "--groups", type=str, nargs="*", default=None,
-        help="Override groups of interest"
+        "--groups",
+        type=str,
+        nargs="*",
+        default=None,
+        help="Override groups of interest",
     )
     args = parser.parse_args()
 
@@ -926,10 +1158,12 @@ def main():
         print("ERROR: No results found. Check --results_dir path.")
         sys.exit(1)
 
-    total_jsons = len(set(
-        (r["config"], r["seed"], r["model"], r["layer"]) for r in per_seed
-    ))
-    print(f"\n  Loaded {total_jsons} JSON result files, {len(all_folds)} fold-level entries.")
+    total_jsons = len(
+        set((r["config"], r["seed"], r["model"], r["layer"]) for r in per_seed)
+    )
+    print(
+        f"\n  Loaded {total_jsons} JSON result files, {len(all_folds)} fold-level entries."
+    )
     if missing:
         print(f"  ⚠ {len(missing)} expected JSON files not found:")
         for m in missing[:10]:
@@ -962,8 +1196,15 @@ def main():
     print("\n" + "=" * 110)
     print("  SAVING OUTPUT FILES")
     print("=" * 110)
-    save_csvs(args.results_dir, agg, per_seed, all_folds, ci_results, wilcoxon_results,
-              pooled_perm)
+    save_csvs(
+        args.results_dir,
+        agg,
+        per_seed,
+        all_folds,
+        ci_results,
+        wilcoxon_results,
+        pooled_perm,
+    )
     save_paper_table(args.results_dir, agg)
 
     # ── Plots ──

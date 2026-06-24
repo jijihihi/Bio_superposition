@@ -1,0 +1,198 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="_레이어_1" data-name="레이어_1" xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 797.2 276.4">
+  <!-- Generator: Adobe Illustrator 30.3.0, SVG Export Plug-In . SVG Version: 2.1.3 Build 182)  -->
+  <defs>
+    <style>
+      .st0 {
+        font-family: Verdana, Verdana;
+        font-size: 9.5px;
+        isolation: isolate;
+      }
+
+      .st1 {
+        fill: none;
+      }
+
+      .st2 {
+        fill: #e6e6e6;
+      }
+
+      .st2, .st3, .st4 {
+        stroke: #000;
+      }
+
+      .st3 {
+        fill: #f2f2f2;
+      }
+
+      .st4 {
+        fill: #fff;
+      }
+    </style>
+  </defs>
+  <path class="st1" d="M0,282.7h1465.2V-5.3H0v288Z"/>
+  <path class="st3" d="M0,30.7h118.8V9.1H0v21.6Z"/>
+  <text class="st0" transform="translate(45.4 22.5)"><tspan x="0" y="0">Model</tspan></text>
+  <path class="st3" d="M118.9,30.7h71.3V9.1h-71.3v21.6Z"/>
+  <text class="st0" transform="translate(129.5 22.5)"><tspan x="0" y="0">Dimension</tspan></text>
+  <path class="st3" d="M190.2,30.7h47.5V9.1h-47.5v21.6Z"/>
+  <text class="st0" transform="translate(211.2 22.5)"><tspan x="0" y="0">λ</tspan></text>
+  <path class="st3" d="M237.7,30.7h103V9.1h-103v21.6Z"/>
+  <text class="st0" transform="translate(258 22.5)"><tspan x="0" y="0">L0 (Sparsity)</tspan></text>
+  <path class="st3" d="M340.7,30.7h142.6V9.1h-142.6v21.6Z"/>
+  <text class="st0" transform="translate(369.3 22.5)"><tspan x="0" y="0">Alive Feature Map</tspan></text>
+  <path class="st3" d="M483.2,30.7h118.8V9.1h-118.8v21.6Z"/>
+  <text class="st0" transform="translate(533.2 22.5)"><tspan x="0" y="0">FVU</tspan></text>
+  <path class="st3" d="M602,30.7h95V9.1h-95v21.6Z"/>
+  <text class="st0" transform="translate(619 22.5)"><tspan x="0" y="0">Test Acc (%)</tspan></text>
+  <path class="st3" d="M697.1,30.7h95V9.1h-95v21.6Z"/>
+  <text class="st0" transform="translate(712 22.5)"><tspan x="0" y="0">Inner Product</tspan></text>
+  <path class="st4" d="M0,52.3h118.8v-21.6H0v21.6Z"/>
+  <text class="st0" transform="translate(23.1 44.1)"><tspan x="0" y="0">Baseline (CNN)</tspan></text>
+  <path class="st4" d="M118.9,52.3h71.3v-21.6h-71.3v21.6Z"/>
+  <text class="st0" transform="translate(145.5 44.1)"><tspan x="0" y="0">512</tspan></text>
+  <path class="st4" d="M190.2,52.3h47.5v-21.6h-47.5v21.6Z"/>
+  <text class="st0" transform="translate(211.8 44.1)"><tspan x="0" y="0">-</tspan></text>
+  <path class="st4" d="M237.7,52.3h103v-21.6h-103v21.6Z"/>
+  <text class="st0" transform="translate(280.2 44.1)"><tspan x="0" y="0">N/A</tspan></text>
+  <path class="st4" d="M340.7,52.3h142.6v-21.6h-142.6v21.6Z"/>
+  <text class="st0" transform="translate(402.9 44.1)"><tspan x="0" y="0">512</tspan></text>
+  <path class="st4" d="M483.2,52.3h118.8v-21.6h-118.8v21.6Z"/>
+  <text class="st0" transform="translate(533.7 44.1)"><tspan x="0" y="0">N/A</tspan></text>
+  <path class="st4" d="M602,52.3h95v-21.6h-95v21.6Z"/>
+  <text class="st0" transform="translate(617.7 44.1)"><tspan x="0" y="0">90.31 ± 0.38</tspan></text>
+  <path class="st4" d="M697.1,52.3h95v-21.6h-95v21.6Z"/>
+  <text class="st0" transform="translate(735.6 44.1)"><tspan x="0" y="0">N/A</tspan></text>
+  <path class="st4" d="M0,73.9h118.8v-21.6H0v21.6Z"/>
+  <text class="st0" transform="translate(34 65.7)"><tspan x="0" y="0">CNN Proxy</tspan></text>
+  <path class="st4" d="M118.9,73.9h71.3v-21.6h-71.3v21.6Z"/>
+  <text class="st0" transform="translate(145.5 65.7)"><tspan x="0" y="0">600</tspan></text>
+  <path class="st4" d="M190.2,73.9h47.5v-21.6h-47.5v21.6Z"/>
+  <text class="st0" transform="translate(207.9 65.7)"><tspan x="0" y="0">50</tspan></text>
+  <path class="st4" d="M237.7,73.9h103v-21.6h-103v21.6Z"/>
+  <text class="st0" transform="translate(266.4 65.7)"><tspan x="0" y="0">4.9 ± 0.2</tspan></text>
+  <path class="st4" d="M340.7,73.9h142.6v-21.6h-142.6v21.6Z"/>
+  <text class="st0" transform="translate(383.2 65.7)"><tspan x="0" y="0">587.0 ± 4.8</tspan></text>
+  <path class="st4" d="M483.2,73.9h118.8v-21.6h-118.8v21.6Z"/>
+  <text class="st0" transform="translate(501.8 65.7)"><tspan x="0" y="0">0.3444 ± 0.0209</tspan></text>
+  <path class="st4" d="M602,73.9h95v-21.6h-95v21.6Z"/>
+  <text class="st0" transform="translate(617.7 65.7)"><tspan x="0" y="0">89.24 ± 0.50</tspan></text>
+  <path class="st4" d="M697.1,73.9h95v-21.6h-95v21.6Z"/>
+  <text class="st0" transform="translate(709.8 65.7)"><tspan x="0" y="0">0.160 ± 0.023</tspan></text>
+  <path class="st2" d="M0,95.5h792v-21.6H0v21.6Z"/>
+  <text class="st0" transform="translate(288.4 87.3)"><tspan x="0" y="0">Effect of Dictionary Expansion (Fixed λ=800)</tspan></text>
+  <path class="st4" d="M0,117.1h118.8v-21.6H0v21.6Z"/>
+  <text class="st0" transform="translate(34.1 108.9)"><tspan x="0" y="0">Gated SAE</tspan></text>
+  <path class="st4" d="M118.9,117.1h71.3v-21.6h-71.3v21.6Z"/>
+  <text class="st0" transform="translate(142.5 108.9)"><tspan x="0" y="0">1024</tspan></text>
+  <path class="st4" d="M190.2,117.1h47.5v-21.6h-47.5v21.6Z"/>
+  <text class="st0" transform="translate(204.9 108.9)"><tspan x="0" y="0">800</tspan></text>
+  <path class="st4" d="M237.7,117.1h103v-21.6h-103v21.6Z"/>
+  <text class="st0" transform="translate(266.4 108.9)"><tspan x="0" y="0">2.7 ± 0.2</tspan></text>
+  <path class="st4" d="M340.7,117.1h142.6v-21.6h-142.6v21.6Z"/>
+  <text class="st0" transform="translate(380.1 108.9)"><tspan x="0" y="0">1020.8 ± 3.1</tspan></text>
+  <path class="st4" d="M483.2,117.1h118.8v-21.6h-118.8v21.6Z"/>
+  <text class="st0" transform="translate(501.8 108.9)"><tspan x="0" y="0">0.7295 ± 0.0155</tspan></text>
+  <path class="st4" d="M602,117.1h95v-21.6h-95v21.6Z"/>
+  <text class="st0" transform="translate(617.7 108.9)"><tspan x="0" y="0">88.48 ± 1.27</tspan></text>
+  <path class="st4" d="M697.1,117.1h95v-21.6h-95v21.6Z"/>
+  <text class="st0" transform="translate(709.8 108.9)"><tspan x="0" y="0">0.104 ± 0.018</tspan></text>
+  <path class="st4" d="M0,138.7h118.8v-21.6H0v21.6Z"/>
+  <text class="st0" transform="translate(34.1 130.5)"><tspan x="0" y="0">Gated SAE</tspan></text>
+  <path class="st4" d="M118.9,138.7h71.3v-21.6h-71.3v21.6Z"/>
+  <text class="st0" transform="translate(142.5 130.5)"><tspan x="0" y="0">2048</tspan></text>
+  <path class="st4" d="M190.2,138.7h47.5v-21.6h-47.5v21.6Z"/>
+  <text class="st0" transform="translate(204.9 130.5)"><tspan x="0" y="0">800</tspan></text>
+  <path class="st4" d="M237.7,138.7h103v-21.6h-103v21.6Z"/>
+  <text class="st0" transform="translate(266.4 130.5)"><tspan x="0" y="0">4.2 ± 0.2</tspan></text>
+  <path class="st4" d="M340.7,138.7h142.6v-21.6h-142.6v21.6Z"/>
+  <text class="st0" transform="translate(380.1 130.5)"><tspan x="0" y="0">2034.6 ± 4.2</tspan></text>
+  <path class="st4" d="M483.2,138.7h118.8v-21.6h-118.8v21.6Z"/>
+  <text class="st0" transform="translate(501.8 130.5)"><tspan x="0" y="0">0.5306 ± 0.0151</tspan></text>
+  <path class="st4" d="M602,138.7h95v-21.6h-95v21.6Z"/>
+  <text class="st0" transform="translate(617.7 130.5)"><tspan x="0" y="0">89.63 ± 0.71</tspan></text>
+  <path class="st4" d="M697.1,138.7h95v-21.6h-95v21.6Z"/>
+  <text class="st0" transform="translate(709.8 130.5)"><tspan x="0" y="0">0.089 ± 0.008</tspan></text>
+  <path class="st4" d="M0,160.3h118.8v-21.6H0v21.6Z"/>
+  <text class="st0" transform="translate(34.1 152.1)"><tspan x="0" y="0">Gated SAE</tspan></text>
+  <path class="st4" d="M118.9,160.3h71.3v-21.6h-71.3v21.6Z"/>
+  <text class="st0" transform="translate(142.5 152.1)"><tspan x="0" y="0">4096</tspan></text>
+  <path class="st4" d="M190.2,160.3h47.5v-21.6h-47.5v21.6Z"/>
+  <text class="st0" transform="translate(204.9 152.1)"><tspan x="0" y="0">800</tspan></text>
+  <path class="st4" d="M237.7,160.3h103v-21.6h-103v21.6Z"/>
+  <text class="st0" transform="translate(266.4 152.1)"><tspan x="0" y="0">7.6 ± 0.2</tspan></text>
+  <path class="st4" d="M340.7,160.3h142.6v-21.6h-142.6v21.6Z"/>
+  <text class="st0" transform="translate(377.1 152.1)"><tspan x="0" y="0">3969.5 ± 39.4</tspan></text>
+  <path class="st4" d="M483.2,160.3h118.8v-21.6h-118.8v21.6Z"/>
+  <text class="st0" transform="translate(501.8 152.1)"><tspan x="0" y="0">0.3976 ± 0.0135</tspan></text>
+  <path class="st4" d="M602,160.3h95v-21.6h-95v21.6Z"/>
+  <text class="st0" transform="translate(617.7 152.1)"><tspan x="0" y="0">89.52 ± 0.51</tspan></text>
+  <path class="st4" d="M697.1,160.3h95v-21.6h-95v21.6Z"/>
+  <text class="st0" transform="translate(709.8 152.1)"><tspan x="0" y="0">0.082 ± 0.005</tspan></text>
+  <path class="st4" d="M0,181.9h118.8v-21.6H0v21.6Z"/>
+  <text class="st0" transform="translate(34.1 173.7)"><tspan x="0" y="0">Gated SAE</tspan></text>
+  <path class="st4" d="M118.9,181.9h71.3v-21.6h-71.3v21.6Z"/>
+  <text class="st0" transform="translate(142.5 173.7)"><tspan x="0" y="0">8192</tspan></text>
+  <path class="st4" d="M190.2,181.9h47.5v-21.6h-47.5v21.6Z"/>
+  <text class="st0" transform="translate(204.9 173.7)"><tspan x="0" y="0">800</tspan></text>
+  <path class="st4" d="M237.7,181.9h103v-21.6h-103v21.6Z"/>
+  <text class="st0" transform="translate(266.4 173.7)"><tspan x="0" y="0">9.8 ± 0.6</tspan></text>
+  <path class="st4" d="M340.7,181.9h142.6v-21.6h-142.6v21.6Z"/>
+  <text class="st0" transform="translate(374.1 173.7)"><tspan x="0" y="0">3733.4 ± 511.5</tspan></text>
+  <path class="st4" d="M483.2,181.9h118.8v-21.6h-118.8v21.6Z"/>
+  <text class="st0" transform="translate(501.8 173.7)"><tspan x="0" y="0">0.2953 ± 0.0145</tspan></text>
+  <path class="st4" d="M602,181.9h95v-21.6h-95v21.6Z"/>
+  <text class="st0" transform="translate(617.7 173.7)"><tspan x="0" y="0">89.91 ± 0.47</tspan></text>
+  <path class="st4" d="M697.1,181.9h95v-21.6h-95v21.6Z"/>
+  <text class="st0" transform="translate(709.8 173.7)"><tspan x="0" y="0">0.104 ± 0.012</tspan></text>
+  <path class="st2" d="M0,203.5h792v-21.6H0v21.6Z"/>
+  <text class="st0" transform="translate(290.2 195.3)"><tspan x="0" y="0">Effect of Sparsity Penalty (Fixed Dim=4096)</tspan></text>
+  <path class="st4" d="M0,225.1h118.8v-21.6H0v21.6Z"/>
+  <text class="st0" transform="translate(34.1 216.9)"><tspan x="0" y="0">Gated SAE</tspan></text>
+  <path class="st4" d="M118.9,225.1h71.3v-21.6h-71.3v21.6Z"/>
+  <text class="st0" transform="translate(142.5 216.9)"><tspan x="0" y="0">4096</tspan></text>
+  <path class="st4" d="M190.2,225.1h47.5v-21.6h-47.5v21.6Z"/>
+  <text class="st0" transform="translate(204.9 216.9)"><tspan x="0" y="0">200</tspan></text>
+  <path class="st4" d="M237.7,225.1h103v-21.6h-103v21.6Z"/>
+  <text class="st0" transform="translate(263.4 216.9)"><tspan x="0" y="0">13.2 ± 0.2</tspan></text>
+  <path class="st4" d="M340.7,225.1h142.6v-21.6h-142.6v21.6Z"/>
+  <text class="st0" transform="translate(377.1 216.9)"><tspan x="0" y="0">3850.1 ± 38.3</tspan></text>
+  <path class="st4" d="M483.2,225.1h118.8v-21.6h-118.8v21.6Z"/>
+  <text class="st0" transform="translate(501.8 216.9)"><tspan x="0" y="0">0.2414 ± 0.0140</tspan></text>
+  <path class="st4" d="M602,225.1h95v-21.6h-95v21.6Z"/>
+  <text class="st0" transform="translate(617.7 216.9)"><tspan x="0" y="0">89.52 ± 0.51</tspan></text>
+  <path class="st4" d="M697.1,225.1h95v-21.6h-95v21.6Z"/>
+  <text class="st0" transform="translate(709.8 216.9)"><tspan x="0" y="0">0.099 ± 0.007</tspan></text>
+  <path class="st4" d="M0,246.7h118.8v-21.6H0v21.6Z"/>
+  <text class="st0" transform="translate(34.1 238.5)"><tspan x="0" y="0">Gated SAE</tspan></text>
+  <path class="st4" d="M118.9,246.7h71.3v-21.6h-71.3v21.6Z"/>
+  <text class="st0" transform="translate(142.5 238.5)"><tspan x="0" y="0">4096</tspan></text>
+  <path class="st4" d="M190.2,246.7h47.5v-21.6h-47.5v21.6Z"/>
+  <text class="st0" transform="translate(204.9 238.5)"><tspan x="0" y="0">800</tspan></text>
+  <path class="st4" d="M237.7,246.7h103v-21.6h-103v21.6Z"/>
+  <text class="st0" transform="translate(266.4 238.5)"><tspan x="0" y="0">7.6 ± 0.2</tspan></text>
+  <path class="st4" d="M340.7,246.7h142.6v-21.6h-142.6v21.6Z"/>
+  <text class="st0" transform="translate(377.1 238.5)"><tspan x="0" y="0">3969.5 ± 39.4</tspan></text>
+  <path class="st4" d="M483.2,246.7h118.8v-21.6h-118.8v21.6Z"/>
+  <text class="st0" transform="translate(501.8 238.5)"><tspan x="0" y="0">0.3976 ± 0.0135</tspan></text>
+  <path class="st4" d="M602,246.7h95v-21.6h-95v21.6Z"/>
+  <text class="st0" transform="translate(617.7 238.5)"><tspan x="0" y="0">89.88 ± 0.59</tspan></text>
+  <path class="st4" d="M697.1,246.7h95v-21.6h-95v21.6Z"/>
+  <text class="st0" transform="translate(709.8 238.5)"><tspan x="0" y="0">0.082 ± 0.005</tspan></text>
+  <path class="st4" d="M0,268.3h118.8v-21.6H0v21.6Z"/>
+  <text class="st0" transform="translate(34.1 260.1)"><tspan x="0" y="0">Gated SAE</tspan></text>
+  <path class="st4" d="M118.9,268.3h71.3v-21.6h-71.3v21.6Z"/>
+  <text class="st0" transform="translate(142.5 260.1)"><tspan x="0" y="0">4096</tspan></text>
+  <path class="st4" d="M190.2,268.3h47.5v-21.6h-47.5v21.6Z"/>
+  <text class="st0" transform="translate(201.9 260.1)"><tspan x="0" y="0">3200</tspan></text>
+  <path class="st4" d="M237.7,268.3h103v-21.6h-103v21.6Z"/>
+  <text class="st0" transform="translate(266.4 260.1)"><tspan x="0" y="0">2.9 ± 0.2</tspan></text>
+  <path class="st4" d="M340.7,268.3h142.6v-21.6h-142.6v21.6Z"/>
+  <text class="st0" transform="translate(377.1 260.1)"><tspan x="0" y="0">3866.2 ± 89.7</tspan></text>
+  <path class="st4" d="M483.2,268.3h118.8v-21.6h-118.8v21.6Z"/>
+  <text class="st0" transform="translate(501.8 260.1)"><tspan x="0" y="0">0.7190 ± 0.0149</tspan></text>
+  <path class="st4" d="M602,268.3h95v-21.6h-95v21.6Z"/>
+  <text class="st0" transform="translate(617.7 260.1)"><tspan x="0" y="0">88.23 ± 1.30</tspan></text>
+  <path class="st4" d="M697.1,268.3h95v-21.6h-95v21.6Z"/>
+  <text class="st0" transform="translate(709.8 260.1)"><tspan x="0" y="0">0.052 ± 0.005</tspan></text>
+</svg>
