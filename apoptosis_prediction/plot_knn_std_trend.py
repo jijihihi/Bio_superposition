@@ -9,13 +9,13 @@
 #   de_sweep:          x-axis = DE log2FC threshold, y-axis = ratio at fixed K
 #
 # Usage (Colab):
-#   python -m apoptosis_prediction.plot_knn_std_trend \
+#   python -m cell_death_prediction.plot_knn_std_trend \
 #       --base_dir "/content/drive/MyDrive/Final_paper/.../local_linearity/raw" \
 #       --experiment raw \
 #       --output_dir "/content/drive/MyDrive/Final_paper/.../local_linearity/plots"
 #
 #   # DE sweep mode:
-#   python -m apoptosis_prediction.plot_knn_std_trend \
+#   python -m cell_death_prediction.plot_knn_std_trend \
 #       --base_dir "/content/drive/.../local_linearity/de_sweep" \
 #       --experiment de_sweep \
 #       --fixed_k 15 \
@@ -439,7 +439,7 @@ def plot_trend(
 
     sns.despine()
     fig.suptitle(
-        f"KNN Apoptosis Std Ratio — {metric_name} ({experiment})",
+        f"KNN cell_death Std Ratio — {metric_name} ({experiment})",
         fontsize=15,
         fontweight="bold",
         y=1.02,

@@ -1,7 +1,7 @@
 # ==============================================================================
 # Aggregate SAE R² results — SAE seed × GAP L2 × Filter mode summary
 #
-# Scans JSON result files from apoptosis_r2_test.py for SAE vectors.
+# Scans JSON result files from cell_death_r2_test.py for SAE vectors.
 # Directory pattern: SAE_seed{N}_{l2norm|no_l2norm}_{filter_label}/
 #
 # NEW: Collects per-fold R² scores (from RepeatedKFold), computes:
@@ -12,7 +12,7 @@
 #
 # Usage:
 #   python -m kendall_correlation_coefficient.aggregate_sae_r2_results \
-#       --results_dir /path/to/apoptosis_r2_results/SAE_vector
+#       --results_dir /path/to/cell_death_r2_results/SAE_vector
 # ==============================================================================
 
 
@@ -130,7 +130,7 @@ def collect_results(results_dir: str):
 def print_summary(agg, per_seed):
     """Print summary tables."""
     print("\n" + "=" * 100)
-    print("  SAE VECTOR APOPTOSIS R² SUMMARY (mean ± std across CNN seeds)")
+    print("  SAE VECTOR cell_death R² SUMMARY (mean ± std across CNN seeds)")
     print("=" * 100)
 
     l2_labels = sorted(set(k[0] for k in agg.keys()))
@@ -863,7 +863,7 @@ def print_ci_results(ci_results):
 # ==============================================================================
 def main():
     parser = argparse.ArgumentParser(
-        description="Aggregate SAE vector apoptosis R² results"
+        description="Aggregate SAE vector cell_death R² results"
     )
     parser.add_argument(
         "--results_dir",

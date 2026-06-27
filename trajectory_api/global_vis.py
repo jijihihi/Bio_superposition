@@ -7,7 +7,7 @@ import phate
 import scanpy as sc
 import seaborn as sns
 
-from sae_project.step02_logging_utils import get_logger
+from model_train.logging_utils import get_logger
 
 logger = get_logger("trajectory_api_global")
 

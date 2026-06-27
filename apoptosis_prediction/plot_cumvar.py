@@ -10,11 +10,11 @@
 #       "plot_cumvar",
 #       "--base_dir", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/effective_rank",
 #   ]
-#   from apoptosis_prediction.plot_cumvar import main
+#   from cell_death_prediction.plot_cumvar import main
 #   main()
 #
 # Usage (terminal):
-#   python -m apoptosis_prediction.plot_cumvar \
+#   python -m cell_death_prediction.plot_cumvar \
 #       --base_dir "/content/drive/.../effective_rank" \
 #       --condition raw \
 #       --output_dir "/content/drive/.../effective_rank/plots"

@@ -1,18 +1,18 @@
 # ==============================================================================
-# Local Linearity Verification — KNN Apoptosis Rate Standard Deviation
+# Local Linearity Verification — KNN cell_death Rate Standard Deviation
 #
 # Feature space에서 가까운 이미지들이 비슷한 세포사멸율을 가지는지 검증.
 # 이거 잘 보면 ridge regression에서 예측이 된다고 해서 local로 비슷한게 아닐 수 있다.
-# 이 스크립트는 KNN 이웃들의 apoptosis rate 표준편차가 해당 클래스 전체
+# 이 스크립트는 KNN 이웃들의 cell_death rate 표준편차가 해당 클래스 전체
 # 표준편차보다 유의미하게 작은지를 검증한다.
 #
 # CNN feature vector와 SAE feature vector 각각에 대해 수행.
 #
 # Usage (Colab):
-# !python -m apoptosis_prediction.local_knn_std \
+# !python -m cell_death_prediction.local_knn_std \
 #     --cnn_cache "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/CNN_GAP/cnn_gap_stage5_out_all.npz" \
 #     --sae_cache "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_seed856_no_L2norm_loss/features_cache_stage5_out_normrestored_all_no_SAE_GAP_L2_norm_again_d8192_sp800.npz" \
-#     --apoptosis_csv "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv" \
+#     --cell_death_csv "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv" \
 #     --k_neighbors 5 10 15 \
 #     --n_permutations 1000 \
 #     --gap_l2_norm \
@@ -41,7 +41,7 @@ import seaborn as sns
 from scipy import stats
 from sklearn.neighbors import NearestNeighbors
 
-from sae_project.step02_logging_utils import SUPERCLASS_MAP, get_logger
+from model_train.logging_utils import SUPERCLASS_MAP, get_logger
 
 logger = get_logger("local_knn_std")
 
@@ -52,7 +52,7 @@ sns.set_style("ticks")
 
 # KNN은 valid_mask로 필터된 셀들만으로 피팅됩니다.
 # 즉, 세포사멸 정보가 없는 이미지는 KNN 이웃 탐색 대상 자체에서 제외되어 있으므로,
-# 이웃의 apoptosis rate를 구할 때 NaN이 나올 일이 없습니다.
+# 이웃의 cell_death rate를 구할 때 NaN이 나올 일이 없습니다.
 
 
 # ==============================================================================
@@ -60,7 +60,7 @@ sns.set_style("ticks")
 # ==============================================================================
 def get_args():
     p = argparse.ArgumentParser(
-        description="Local linearity verification: KNN apoptosis rate std vs class global std"
+        description="Local linearity verification: KNN cell_death rate std vs class global std"
     )
     p.add_argument(
         "--cnn_cache", type=str, default="", help="Path to CNN GAP .npz cache (X_gap)"
@@ -71,7 +71,7 @@ def get_args():
         default="",
         help="Path to SAE .npz cache (X_all + usage_ema)",
     )
-    p.add_argument("--apoptosis_csv", type=str, required=True)
+    p.add_argument("--cell_death_csv", type=str, required=True)
     p.add_argument("--dead_threshold", type=float, default=1e-5)
     p.add_argument(
         "--gap_l2_norm",
@@ -188,7 +188,7 @@ def get_args():
         type=int,
         default=0,
         help="Max samples per class (0 = use ALL). "
-        "Prioritizes samples with valid apoptosis. "
+        "Prioritizes samples with valid cell_death. "
         "Set to 5000 to match dpt_kendall.py default.",
     )
 
@@ -201,7 +201,7 @@ def get_args():
 def load_cache(cache_path, dead_threshold):
     """Load feature cache. Returns X, lines, uids, label.
     No L2 norm here — handled uniformly in main() to match dpt_kendall.py."""
-    from kendall_correlation_coefficient.dpt_kendall import load_features_cache
+    from kendall_correlation_coefficient.dpt import load_features_cache
 
     data = np.load(cache_path, allow_pickle=True)
     cache_keys = list(data.keys())
@@ -230,22 +230,22 @@ def load_cache(cache_path, dead_threshold):
 # ==============================================================================
 # Core: compute KNN local std ratio for one feature set
 # ==============================================================================
-def compute_local_std_ratios(X, apoptosis, k):
+def compute_local_std_ratios(X, cell_death, k):
     """
     For each sample, find K nearest neighbors in feature space,
-    compute std of their apoptosis rates.
+    compute std of their cell_death rates.
     Return ratio = local_std / global_std for each sample.
 
     Parameters
     ----------
-    X : np.ndarray (N, d) — feature matrix (only valid apoptosis samples)
-    apoptosis : np.ndarray (N,) — apoptosis rates (no NaN)
+    X : np.ndarray (N, d) — feature matrix (only valid cell_death samples)
+    cell_death : np.ndarray (N,) — cell_death rates (no NaN)
     k : int — number of neighbors
 
     Returns
     -------
-    local_stds : np.ndarray (N,) — std of KNN neighbors' apoptosis rates
-    global_std : float — std of all apoptosis rates
+    local_stds : np.ndarray (N,) — std of KNN neighbors' cell_death rates
+    global_std : float — std of all cell_death rates
     ratios : np.ndarray (N,) — local_std / global_std
     """
     n = len(X)
@@ -262,10 +262,10 @@ def compute_local_std_ratios(X, apoptosis, k):
     neighbor_indices = indices[:, 1:]  # (N, k_actual)
 
     # Compute local std for each sample's neighbors
-    neighbor_apoptosis = apoptosis[neighbor_indices]  # (N, k_actual)
-    local_stds = np.std(neighbor_apoptosis, axis=1)  # (N,)
+    neighbor_cell_death = cell_death[neighbor_indices]  # (N, k_actual)
+    local_stds = np.std(neighbor_cell_death, axis=1)  # (N,)
 
-    global_std = np.std(apoptosis)
+    global_std = np.std(cell_death)
     ratios = local_stds / max(global_std, 1e-12)
 
     return local_stds, global_std, ratios
@@ -274,11 +274,11 @@ def compute_local_std_ratios(X, apoptosis, k):
 # ==============================================================================
 # Global Moran's I from KNN adjacency
 # ==============================================================================
-def compute_global_morans_i(X, apoptosis, k):
+def compute_global_morans_i(X, cell_death, k):
     """Compute Global Moran's I on KNN adjacency graph.
 
     Moran's I measures spatial autocorrelation: do neighbors in feature space
-    have similar apoptosis values?
+    have similar cell_death values?
 
     I = (N / W) * (sum_i sum_j w_ij (x_i - xbar)(x_j - xbar)) / (sum_i (x_i - xbar)^2)
 
@@ -299,8 +299,8 @@ def compute_global_morans_i(X, apoptosis, k):
     _, indices = nn.kneighbors(X)
     neighbor_indices = indices[:, 1:]  # exclude self
 
-    xbar = np.mean(apoptosis)
-    z_vals = apoptosis - xbar  # deviations
+    xbar = np.mean(cell_death)
+    z_vals = cell_death - xbar  # deviations
     denom = np.sum(z_vals**2)
 
     if denom < 1e-15:
@@ -342,7 +342,7 @@ def compute_global_morans_i(X, apoptosis, k):
 # ==============================================================================
 # Bootstrap paired test: Moran's I difference (CNN vs SAE)
 # ==============================================================================
-def bootstrap_morans_i_diff(X_a, X_b, apoptosis, k, n_boot=999, seed=42, ci_alpha=0.05):
+def bootstrap_morans_i_diff(X_a, X_b, cell_death, k, n_boot=999, seed=42, ci_alpha=0.05):
     """Bootstrap test for ΔI = I(B) - I(A) using paired resampling.
 
     Same images, different feature spaces → paired bootstrap.
@@ -354,9 +354,9 @@ def bootstrap_morans_i_diff(X_a, X_b, apoptosis, k, n_boot=999, seed=42, ci_alph
     ci_lo, ci_hi : float — confidence interval
     p_value : float — P(ΔI ≤ 0) from bootstrap (one-sided: is B > A?)
     """
-    n = len(apoptosis)
-    I_a = compute_global_morans_i(X_a, apoptosis, k)[0]
-    I_b = compute_global_morans_i(X_b, apoptosis, k)[0]
+    n = len(cell_death)
+    I_a = compute_global_morans_i(X_a, cell_death, k)[0]
+    I_b = compute_global_morans_i(X_b, cell_death, k)[0]
     delta_real = I_b - I_a
 
     rng = np.random.RandomState(seed)
@@ -364,8 +364,8 @@ def bootstrap_morans_i_diff(X_a, X_b, apoptosis, k, n_boot=999, seed=42, ci_alph
 
     for b in range(n_boot):
         idx = rng.choice(n, size=n, replace=True)
-        I_a_b = compute_global_morans_i(X_a[idx], apoptosis[idx], k)[0]
-        I_b_b = compute_global_morans_i(X_b[idx], apoptosis[idx], k)[0]
+        I_a_b = compute_global_morans_i(X_a[idx], cell_death[idx], k)[0]
+        I_b_b = compute_global_morans_i(X_b[idx], cell_death[idx], k)[0]
         delta_boots[b] = I_b_b - I_a_b
 
     lo = np.percentile(delta_boots, 100 * ci_alpha / 2)
@@ -379,9 +379,9 @@ def bootstrap_morans_i_diff(X_a, X_b, apoptosis, k, n_boot=999, seed=42, ci_alph
 # ==============================================================================
 # Permutation test
 # ==============================================================================
-def permutation_test_ratio(X, apoptosis, k, n_permutations, seed):
+def permutation_test_ratio(X, cell_death, k, n_permutations, seed):
     """
-    Permutation test: shuffle apoptosis labels, compute mean local_std/global_std.
+    Permutation test: shuffle cell_death labels, compute mean local_std/global_std.
     Compare real mean ratio against null distribution.
 
     Returns
@@ -390,15 +390,15 @@ def permutation_test_ratio(X, apoptosis, k, n_permutations, seed):
     null_ratios : np.ndarray (n_permutations,) — mean ratio under null
     p_value : float
     """
-    _, _, real_ratios = compute_local_std_ratios(X, apoptosis, k)
+    _, _, real_ratios = compute_local_std_ratios(X, cell_death, k)
     real_mean_ratio = np.nanmean(real_ratios)
 
     rng = np.random.RandomState(seed)
     null_mean_ratios = np.zeros(n_permutations)
 
     for i in range(n_permutations):
-        perm_apoptosis = rng.permutation(apoptosis)
-        _, _, perm_ratios = compute_local_std_ratios(X, perm_apoptosis, k)
+        perm_cell_death = rng.permutation(cell_death)
+        _, _, perm_ratios = compute_local_std_ratios(X, perm_cell_death, k)
         null_mean_ratios[i] = np.nanmean(perm_ratios)
 
     # p-value: fraction of null ≤ real (one-sided, lower is better)
@@ -683,9 +683,9 @@ def main():
 
     from sklearn.decomposition import PCA
 
-    from kendall_correlation_coefficient.dpt_kendall import (
+    from kendall_correlation_coefficient.dpt import (
         apply_normalization, compute_cv_per_neuron, compute_de_neurons,
-        load_and_match_apoptosis)
+        load_and_match_cell_death)
 
     if not args.cnn_cache and not args.sae_cache:
         raise ValueError("At least one of --cnn_cache or --sae_cache must be provided")
@@ -701,7 +701,7 @@ def main():
     # ── Load feature caches ──────────────────────────────────────────
     # Matches dpt_kendall.py main(): load raw → pre_l2_norm → divide_hw → gap_l2_norm
     # Both CNN and SAE go through the same pipeline.
-    sources = {}  # label → (X, superclasses, uids, apoptosis)
+    sources = {}  # label → (X, superclasses, uids, cell_death)
 
     def _load_and_preprocess(cache_path):
         """Load cache and apply pre-processing exactly like dpt_kendall.py main()."""
@@ -727,8 +727,8 @@ def main():
             logger.info(f"  Applied L2 normalization")
 
         superclasses = [SUPERCLASS_MAP.get(ln, ln) for ln in lines]
-        apoptosis = load_and_match_apoptosis(args.apoptosis_csv, uids)
-        return X, superclasses, uids, apoptosis, label
+        cell_death = load_and_match_cell_death(args.cell_death_csv, uids)
+        return X, superclasses, uids, cell_death, label
 
     if args.cnn_cache:
         logger.info("Loading CNN cache...")
@@ -751,21 +751,21 @@ def main():
     morans_sweep_data = {}  # mutation → {source → [(k, I, z, p), ...]}
     feature_cache = {}  # (source, mutation) → (X_mut, apop_mut) for paired bootstrap
 
-    for source_label, (X_raw, superclasses, uids, apoptosis) in sources.items():
+    for source_label, (X_raw, superclasses, uids, cell_death) in sources.items():
         logger.info(f"\n{'='*60}")
         logger.info(f"  Source: {source_label}")
         logger.info(f"{'='*60}")
 
         superclasses_arr = np.array(superclasses)
 
-        # ── Subsample per class (prioritize valid apoptosis) ──
+        # ── Subsample per class (prioritize valid cell_death) ──
         spc = args.samples_per_class
         if spc > 0:
             rng_sub = np.random.RandomState(args.seed)
             keep_indices = []
             for cls in sorted(np.unique(superclasses_arr)):
                 cls_idx = np.where(superclasses_arr == cls)[0]
-                valid_mask_cls = ~np.isnan(apoptosis[cls_idx])
+                valid_mask_cls = ~np.isnan(cell_death[cls_idx])
                 valid_idx = cls_idx[valid_mask_cls]
                 invalid_idx = cls_idx[~valid_mask_cls]
                 ordered = np.concatenate([valid_idx, invalid_idx])
@@ -784,7 +784,7 @@ def main():
             X_raw = X_raw[keep_indices]
             superclasses = [superclasses[i] for i in keep_indices]
             superclasses_arr = np.array(superclasses)
-            apoptosis = apoptosis[keep_indices]
+            cell_death = cell_death[keep_indices]
             uids = (
                 [uids[i] for i in keep_indices]
                 if isinstance(uids, list)
@@ -904,7 +904,7 @@ def main():
                 k_sweep_data[mut] = {}
 
             mut_mask = superclasses_arr == mut
-            valid_mask = mut_mask & np.isfinite(apoptosis)
+            valid_mask = mut_mask & np.isfinite(cell_death)
             n_valid = int(valid_mask.sum())
 
             if n_valid < 10:
@@ -1019,7 +1019,7 @@ def main():
                 plt.close(fig_sc)
 
             X_mut = X_use[valid_mask]
-            apop_mut = apoptosis[valid_mask]
+            apop_mut = cell_death[valid_mask]
             global_std = np.std(apop_mut)
             logger.info(
                 f"    n={n_valid}, features={X_mut.shape[1]}, global_std={global_std:.6f}"
@@ -1178,7 +1178,7 @@ def main():
             X_sae_mut, apop_sae_mut = feature_cache[key_sae]
 
             # Align samples: use intersection of valid indices
-            # (Both should use same valid_mask since apoptosis is same)
+            # (Both should use same valid_mask since cell_death is same)
             n_min = min(len(apop_cnn_mut), len(apop_sae_mut))
             if n_min < 20:
                 logger.warning(f"    {mut}: too few paired samples ({n_min}), skip")

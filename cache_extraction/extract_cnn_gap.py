@@ -28,13 +28,13 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
-from sae_project.step02_logging_utils import SUPERCLASS_MAP, get_logger
-from sae_project.step03_data_shards import (build_uid_to_refidx,
+from model_train.logging_utils import SUPERCLASS_MAP, get_logger
+from model_train.data_shards import (build_uid_to_refidx,
                                             load_all_sample_refs)
-from sae_project.step04_data_bank import (InMemorySixteenBitDataset,
+from model_train.data_bank import (InMemorySixteenBitDataset,
                                           InMemoryTarBank, collate_skip_none,
                                           load_split_csv, seed_worker)
-from sae_project.step05_model_encoder import (SupMoCoModel, parse_int_list,
+from model_train.model_encoder import (SupMoCoModel, parse_int_list,
                                               renorm_unit_per_out_channel_,
                                               robust_load_state_dict)
 

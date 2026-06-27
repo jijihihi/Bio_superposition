@@ -3,12 +3,12 @@
 # Simplified UMAP Cell Death Visualization
 #
 # SAE cache를 입력받아 지정된 각 mutation(e.g., SNCA, GBA, LRRK2)별로
-# 독립적으로 UMAP을 수행한 뒤, 세포사멸율(Apoptosis rate)을 색상으로 표시합니다.
+# 독립적으로 UMAP을 수행한 뒤, 세포사멸율(cell_death rate)을 색상으로 표시합니다.
 #
 # Usage:
-# !python apoptosis_prediction/3D_cell_death_plot.py \
+# !python cell_death_prediction/3D_cell_death_plot.py \
 #     --sae_cache "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/caches_per_image_centering/SAE_vector_per_image_centering/CNN_seed123_SAE/sae_gap_d8192_lam800_normrestored_withnewclass.npz" \
-#     --apoptosis_csv "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv" \
+#     --cell_death_csv "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv" \
 #     --classes SNCA LRRK2 GBA \
 #     --umap_n_neighbors 15 \
 #     --umap_min_dist 0.2 \
@@ -42,10 +42,10 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from matplotlib.colors import Normalize, PowerNorm
 
-from apoptosis_prediction.local_knn_std import load_cache
-from kendall_correlation_coefficient.dpt_kendall import \
-    load_and_match_apoptosis
-from sae_project.step02_logging_utils import SUPERCLASS_MAP, get_logger
+from cell_death_prediction.local_knn_std import load_cache
+from kendall_correlation_coefficient.dpt import \
+    load_and_match_cell_death
+from model_train.logging_utils import SUPERCLASS_MAP, get_logger
 
 try:
     import umap as umap_lib
@@ -79,10 +79,10 @@ def get_args():
         "--sae_cache", type=str, required=True, help="Path to SAE .npz cache"
     )
     p.add_argument(
-        "--apoptosis_csv",
+        "--cell_death_csv",
         type=str,
         required=True,
-        help="Path to per-image apoptosis rate CSV",
+        help="Path to per-image cell_death rate CSV",
     )
     p.add_argument(
         "--rate_col",
@@ -120,7 +120,7 @@ def get_args():
         "--cmap_mean",
         type=str,
         default="magma_r",
-        help="Colormap for apoptosis rate. Default: magma_r",
+        help="Colormap for cell_death rate. Default: magma_r",
     )
     p.add_argument(
         "--cmap_std",
@@ -173,13 +173,13 @@ def get_args():
     return p.parse_args()
 
 
-def plot_mutation_umap(embedding, apoptosis, mutation, args, out_dir):
+def plot_mutation_umap(embedding, cell_death, mutation, args, out_dir):
     is_dark = args.bg_color.lower() not in ("white", "#ffffff", "w")
     txt_color = "white" if is_dark else "black"
 
     # vmin/vmax with percentile robust scaling (mutation-specific)
-    vmin = float(np.percentile(apoptosis, 100 - args.vmax_pctl))
-    vmax = float(np.percentile(apoptosis, args.vmax_pctl))
+    vmin = float(np.percentile(cell_death, 100 - args.vmax_pctl))
+    vmax = float(np.percentile(cell_death, args.vmax_pctl))
     logger.info(
         f"    [{mutation}] Drawing UMAP scatter: vmin={vmin:.4f}, vmax={vmax:.4f}, gamma={args.gamma}"
     )
@@ -204,7 +204,7 @@ def plot_mutation_umap(embedding, apoptosis, mutation, args, out_dir):
     sc = ax.scatter(
         embedding[:, 0],
         embedding[:, 1],
-        c=apoptosis,
+        c=cell_death,
         cmap=actual_cmap,
         s=args.dot_size,
         alpha=args.alpha,
@@ -214,7 +214,7 @@ def plot_mutation_umap(embedding, apoptosis, mutation, args, out_dir):
     )
 
     ax.set_title(
-        f"{mutation} UMAP — Apoptosis Rate",
+        f"{mutation} UMAP — cell_death Rate",
         fontsize=14,
         fontweight="bold",
         color=txt_color,
@@ -228,7 +228,7 @@ def plot_mutation_umap(embedding, apoptosis, mutation, args, out_dir):
         spine.set_edgecolor(txt_color if is_dark else "black")
 
     cbar = fig.colorbar(
-        sc, ax=ax, shrink=0.8, pad=0.03, label=f"Apoptosis Rate{gamma_label}"
+        sc, ax=ax, shrink=0.8, pad=0.03, label=f"cell_death Rate{gamma_label}"
     )
     cbar.ax.yaxis.set_tick_params(color=txt_color)
     cbar.ax.yaxis.label.set_color(txt_color)
@@ -240,7 +240,7 @@ def plot_mutation_umap(embedding, apoptosis, mutation, args, out_dir):
     param_suffix = (
         f"nn{args.umap_n_neighbors}_md{args.umap_min_dist}_{args.umap_metric}"
     )
-    base_path = os.path.join(out_dir, f"umap_apoptosis_{mutation}_{param_suffix}")
+    base_path = os.path.join(out_dir, f"umap_cell_death_{mutation}_{param_suffix}")
 
     fig.savefig(
         f"{base_path}.png", dpi=args.dpi, bbox_inches="tight", facecolor=args.bg_color
@@ -286,29 +286,29 @@ def main():
 
     superclasses = np.array([SUPERCLASS_MAP.get(ln, ln) for ln in lines])
 
-    # Load Apoptosis rates
-    logger.info(f"Loading Apoptosis rates from: {args.apoptosis_csv}")
-    apoptosis = load_and_match_apoptosis(
-        args.apoptosis_csv, uids, rate_col=args.rate_col
+    # Load cell_death rates
+    logger.info(f"Loading cell_death rates from: {args.cell_death_csv}")
+    cell_death = load_and_match_cell_death(
+        args.cell_death_csv, uids, rate_col=args.rate_col
     )
 
     # Compute global color scale percentiles (same for all mutations)
-    valid_apop_all = apoptosis[np.isfinite(apoptosis)]
+    valid_apop_all = cell_death[np.isfinite(cell_death)]
     if len(valid_apop_all) > 0:
         args.global_vmin = float(np.percentile(valid_apop_all, 100 - args.vmax_pctl))
         args.global_vmax = float(np.percentile(valid_apop_all, args.vmax_pctl))
         logger.info(
-            f"Global apoptosis color scale: vmin={args.global_vmin:.4f}, vmax={args.global_vmax:.4f}"
+            f"Global cell_death color scale: vmin={args.global_vmin:.4f}, vmax={args.global_vmax:.4f}"
         )
     else:
         args.global_vmin = 0.0
         args.global_vmax = 1.0
-        logger.warning("No valid apoptosis values found for global scaling.")
+        logger.warning("No valid cell_death values found for global scaling.")
 
-    valid_apop = apoptosis[np.isfinite(apoptosis)]
+    valid_apop = cell_death[np.isfinite(cell_death)]
     if len(valid_apop) > 0:
         logger.info(
-            f"  Apoptosis rates: min={valid_apop.min():.4f}, max={valid_apop.max():.4f}, "
+            f"  cell_death rates: min={valid_apop.min():.4f}, max={valid_apop.max():.4f}, "
             f"mean={valid_apop.mean():.4f}, median={np.median(valid_apop):.4f}"
         )
 
@@ -316,10 +316,10 @@ def main():
     for mutation in args.classes:
         logger.info(f"\n{'-'*50}\nProcessing mutation: {mutation}\n{'-'*50}")
 
-        # Filter for this mutation and finite apoptosis values
-        mask = (superclasses == mutation) & np.isfinite(apoptosis)
+        # Filter for this mutation and finite cell_death values
+        mask = (superclasses == mutation) & np.isfinite(cell_death)
         X_mut = X_sae[mask]
-        apop_mut = apoptosis[mask]
+        apop_mut = cell_death[mask]
 
         if len(X_mut) < 10:
             logger.warning(
@@ -328,7 +328,7 @@ def main():
             continue
 
         logger.info(
-            f"  Apoptosis rates for {mutation}: min={apop_mut.min():.4f}, max={apop_mut.max():.4f}, "
+            f"  cell_death rates for {mutation}: min={apop_mut.min():.4f}, max={apop_mut.max():.4f}, "
             f"mean={apop_mut.mean():.4f}, median={np.median(apop_mut):.4f}"
         )
 

@@ -35,7 +35,7 @@ if not _IN_COLAB:
     matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from sae_project.step02_logging_utils import SUPERCLASS_MAP, get_logger
+from model_train.logging_utils import SUPERCLASS_MAP, get_logger
 
 logger = get_logger("verify_gap_means")
 

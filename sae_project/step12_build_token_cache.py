@@ -14,14 +14,14 @@ from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
 from sae_project.step01_configs import get_args, resolve_paths
-from sae_project.step02_logging_utils import SUPERCLASS_MAP, get_logger
-from sae_project.step03_data_shards import (build_uid_to_refidx,
+from model_train.logging_utils import SUPERCLASS_MAP, get_logger
+from model_train.data_shards import (build_uid_to_refidx,
                                             load_all_sample_refs)
-from sae_project.step04_data_bank import (InMemorySixteenBitDataset,
+from model_train.data_bank import (InMemorySixteenBitDataset,
                                           InMemoryTarBank, collate_skip_none,
                                           load_split_csv, seed_worker)
-# from sae_project.step02_logging_utils
-from sae_project.step05_model_encoder import (OUT_DIM, SupMoCoModel,
+# from model_train.step02_logging_utils
+from model_train.model_encoder import (OUT_DIM, SupMoCoModel,
                                               parse_int_list)
 # from sae_project.step06_sae_core import PointwiseTopKSAE  # your SAE module (must expose .usage_ema and forward(tok)->(recon_main, acts_main, recon_aux, acts_aux))
 from sae_project.step09_train_sae import set_seed
@@ -359,7 +359,7 @@ def main():
         proj_dropout=args.proj_dropout,
     )
     sd = torch.load(args.model_state_path, map_location="cpu")
-    from sae_project.step05_model_encoder import robust_load_state_dict
+    from model_train.model_encoder import robust_load_state_dict
 
     robust_load_state_dict(model, sd, strict=True)
     encoder = model.encoder.to(device).eval().to(memory_format=torch.channels_last)

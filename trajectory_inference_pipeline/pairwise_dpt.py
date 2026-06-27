@@ -139,7 +139,7 @@ def plot_dpt_scatter(
             )
 
     ax.set_xlabel("Diffusion Pseudotime →", fontsize=12)
-    ax.set_ylabel("Apoptosis rate", fontsize=12)
+    ax.set_ylabel("cell_death rate", fontsize=12)
     ax.set_xlim(pct_lo, pct_hi)
     ax.set_xticks([])
     ax.grid(True, alpha=0.2, axis="y")
@@ -385,14 +385,14 @@ def plot_sliding_metrics(
         gam_t = None
         gam_t_pred = None
 
-    # 3. DPT vs Apoptosis
+    # 3. DPT vs cell_death
     ax = axes[2]
     ax.scatter(dpts, apops, color=color, alpha=0.85, s=30)
     rho_da, p_da = spearmanr(dpts, apops)
     rho_da = rho_da if not np.isnan(rho_da) else 0.0
-    ax.set_title(f"DPT vs Apoptosis (ρ={rho_da:.2f}, p={p_da:.2e})", fontsize=11)
+    ax.set_title(f"DPT vs cell_death (ρ={rho_da:.2f}, p={p_da:.2e})", fontsize=11)
     ax.set_xlabel("Mean Pseudotime (Window)", fontsize=10)
-    ax.set_ylabel("Mean Apoptosis", fontsize=10)
+    ax.set_ylabel("Mean cell_death", fontsize=10)
 
     try:
         gam_a = LinearGAM(s_term(0, n_splines=min(8, max(4, len(dpts) // 5)))).fit(
@@ -404,33 +404,33 @@ def plot_sliding_metrics(
         gam_a = None
         gam_a_pred = None
 
-    # 4. ERank vs Apoptosis
+    # 4. ERank vs cell_death
     ax = axes[3]
     ax.scatter(eranks, apops, color=color, alpha=0.85, s=30)
     rho_ea, p_ea = spearmanr(eranks, apops)
     rho_ea = rho_ea if not np.isnan(rho_ea) else 0.0
-    ax.set_title(f"ERank vs Apoptosis (ρ={rho_ea:.2f}, p={p_ea:.2e})", fontsize=11)
+    ax.set_title(f"ERank vs cell_death (ρ={rho_ea:.2f}, p={p_ea:.2e})", fontsize=11)
     ax.set_xlabel("Effective Rank", fontsize=10)
-    ax.set_ylabel("Mean Apoptosis", fontsize=10)
+    ax.set_ylabel("Mean cell_death", fontsize=10)
 
     if len(eranks) > 1 and np.std(eranks) > 0:
         z = np.polyfit(eranks, apops, 1)
         x_line_e = np.linspace(eranks.min(), eranks.max(), 100)
         ax.plot(x_line_e, np.polyval(z, x_line_e), "--", color="black", lw=2)
 
-    # 5. Combined Plot (DPT vs ERank, Two-NN & Apoptosis)
+    # 5. Combined Plot (DPT vs ERank, Two-NN & cell_death)
     ax_c = axes[4]
     ax_c.set_title(f"DPT Trajectory Overlay", fontsize=11)
     ax_c.set_xlabel("Mean Pseudotime (Window)", fontsize=10)
 
     ax_erank = ax_c.twinx()
 
-    # Plot Apoptosis on left Y
+    # Plot cell_death on left Y
     ax_c.scatter(dpts, apops, color="#DD8452", alpha=0.5, s=15)
-    ax_c.set_ylabel("Mean Apoptosis", color="#DD8452", fontsize=10, fontweight="bold")
+    ax_c.set_ylabel("Mean cell_death", color="#DD8452", fontsize=10, fontweight="bold")
     ax_c.tick_params(axis="y", labelcolor="#DD8452")
     if gam_a is not None:
-        ax_c.plot(x_line, gam_a_pred, color="#A55628", lw=2.5, label="Apoptosis (GAM)")
+        ax_c.plot(x_line, gam_a_pred, color="#A55628", lw=2.5, label="cell_death (GAM)")
 
     # Plot ERank and Two-NN on right Y
     ax_erank.scatter(dpts, eranks_perm, color="gray", alpha=0.3, s=10)
@@ -480,7 +480,7 @@ def plot_sliding_metrics(
 
 def run_pairwise_dpt(args):
     np.random.seed(args.seed)
-    X, superclasses, apoptosis, which_layer, X_log = load_and_preprocess(args)
+    X, superclasses, cell_death, which_layer, X_log = load_and_preprocess(args)
     out_dir = args.output_dir or os.path.join(
         os.path.dirname(args.features_cache), "pairwise_dpt"
     )
@@ -519,7 +519,7 @@ def run_pairwise_dpt(args):
             continue
 
         pair_sc = superclasses[pair_mask]
-        pair_apop = apoptosis[pair_mask]
+        pair_apop = cell_death[pair_mask]
         pair_eval_mask = eval_mask[pair_mask]
 
         if args.de_mode == "per_mut":
@@ -646,7 +646,7 @@ def run_pairwise_dpt(args):
             )
 
             # Compute and Plot Sliding ERank
-            # ERank only needs features and DPT order. We don't need to filter out cells missing apoptosis labels!
+            # ERank only needs features and DPT order. We don't need to filter out cells missing cell_death labels!
             valid_erank = np.isfinite(dpt_mut)
             X_mut_raw = X_log[pair_mask][pair_mut_eval]
 

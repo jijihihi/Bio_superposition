@@ -51,8 +51,8 @@ import matplotlib.pyplot as plt
 
 from activation_maximization_file.activation_maximization import (
     get_spatial_activation_map, run_activation_maximization)
-from sae_project.step02_logging_utils import get_logger
-from sae_project.step05_model_encoder import (SupMoCoModel, parse_int_list,
+from model_train.logging_utils import get_logger
+from model_train.model_encoder import (SupMoCoModel, parse_int_list,
                                               renorm_unit_per_out_channel_,
                                               robust_load_state_dict)
 from sae_project.step06_gated_sae import GatedSAE

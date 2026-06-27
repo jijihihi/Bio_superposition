@@ -1,5 +1,5 @@
 # ==============================================================================
-# Apoptosis R² Test — SAE features에 apoptosis 정보가 있는가?
+# cell_death R² Test — SAE features에 cell_death 정보가 있는가?
 #
 # Ridge regression (5-fold CV)으로 R² 측정.
 # Feature selection: Ctrl+Mut 전체로 DE/CV mask 확정 → 같은 mask로 Mut-only도 평가.
@@ -10,25 +10,25 @@
 #   import logging; logging.basicConfig(level=logging.INFO, force=True)
 #   import sys
 #   sys.argv = [
-#       "apoptosis_r2_test",
+#       "cell_death_r2_test",
 #       "--features_cache", "/path/to/features_cache.npz",
-#       "--apoptosis_csv", "/path/to/apoptosis.csv",
+#       "--cell_death_csv", "/path/to/cell_death.csv",
 #       "--filter_mode", "cv", "de",
 #       "--min_cv", "0.5",
 #       "--de_top_k", "100",
 #   ]
-#   from apoptosis_prediction.apoptosis_r2_test import main
+#   from cell_death_prediction.cell_death_r2_test import main
 #   main()
 # ==============================================================================
 
 # --features_cache에 SAE 벡터 넣으면 그냥 SAE 벡터로 R^2 예측 가능한다.
 
-# !python -m apoptosis_prediction.apoptosis_r2_test \
+# !python -m cell_death_prediction.cell_death_r2_test \
 #     --features_cache "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_no_L2norm_loss/features_cache_stage5_out_d8192_sparsity800_normrestored.npz" \
-#     --apoptosis_csv "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv" \
+#     --cell_death_csv "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv" \
 #     --model "ridge" \
 #     --gap_l1_norm \
-#     --output_dir "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/apoptosis_r2_results \
+#     --output_dir "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/cell_death_r2_results \
 #     --seed 42
 #     --cv_folds 5
 
@@ -60,9 +60,9 @@ from sklearn.model_selection import KFold, RepeatedKFold
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
-from sae_project.step02_logging_utils import SUPERCLASS_MAP, get_logger
+from model_train.logging_utils import SUPERCLASS_MAP, get_logger
 
-logger = get_logger("apoptosis_r2_test")
+logger = get_logger("cell_death_r2_test")
 
 
 def _fmt_p(pval):
@@ -75,7 +75,7 @@ def _fmt_p(pval):
 # ==============================================================================
 def get_args():
     p = argparse.ArgumentParser(
-        description="Test if SAE features predict apoptosis rate (Ridge R² or XGBoost R²)"
+        description="Test if SAE features predict cell_death rate (Ridge R² or XGBoost R²)"
     )
     p.add_argument(
         "--features_cache",
@@ -83,7 +83,7 @@ def get_args():
         required=True,
         help="Path to .npz cache (SAE: X_all+usage_ema, or CNN GAP: X_gap)",
     )
-    p.add_argument("--apoptosis_csv", type=str, required=True)
+    p.add_argument("--cell_death_csv", type=str, required=True)
     p.add_argument("--dead_threshold", type=float, default=1e-5)  # 기본 threshold 1e-5
     p.add_argument(
         "--gap_l2_norm",
@@ -188,7 +188,7 @@ def select_features_global(
     When filter_mode != ['none'], consider moving this call inside each
     CV fold to avoid information leakage.
     """
-    from kendall_correlation_coefficient.dpt_kendall import (
+    from kendall_correlation_coefficient.dpt import (
         compute_cv_per_neuron, compute_de_neurons)
 
     d = X.shape[1]
@@ -282,7 +282,7 @@ def plot_r2_summary(results, output_path, dpi=200):
     ax.axhline(0, color="gray", linewidth=0.5, linestyle="--")
     ax.set_ylabel("R² (5-fold CV)", fontsize=12)
     ax.set_title(
-        "SAE Features → Apoptosis Rate (Ridge Regression)",
+        "SAE Features → cell_death Rate (Ridge Regression)",
         fontsize=13,
         fontweight="bold",
     )
@@ -309,7 +309,7 @@ def plot_r2_summary(results, output_path, dpi=200):
 # Plot: Predicted vs Actual scatter
 # ==============================================================================
 def plot_pred_vs_actual(y_true, y_pred, group, r2, pval, output_path, dpi=200):
-    """Scatter of predicted vs actual apoptosis."""
+    """Scatter of predicted vs actual cell_death."""
     fig, ax = plt.subplots(figsize=(6, 6))
     colors = {"SNCA": "#E24A33", "GBA": "#348ABD", "LRRK2": "#988ED5"}
     c = colors.get(group, "#2CA02C")
@@ -329,8 +329,8 @@ def plot_pred_vs_actual(y_true, y_pred, group, r2, pval, output_path, dpi=200):
     r, _ = pearsonr(y_true, y_pred)
     tau, _ = kendalltau(y_true, y_pred)
 
-    ax.set_xlabel("Actual Apoptosis Rate", fontsize=11)
-    ax.set_ylabel("Predicted Apoptosis Rate", fontsize=11)
+    ax.set_xlabel("Actual cell_death Rate", fontsize=11)
+    ax.set_ylabel("Predicted cell_death Rate", fontsize=11)
     ax.set_title(f"{group} (R²={r2:.4f})", fontsize=13, fontweight="bold")
     ax.grid(True, alpha=0.2)
 
@@ -404,7 +404,7 @@ def evaluate_r2(
     Parameters
     ----------
     X : np.ndarray — features (already filtered)
-    y : np.ndarray — apoptosis rates
+    y : np.ndarray — cell_death rates
     seed : int
     cv_folds : int
     n_permutations : int — 0 to skip permutation test
@@ -864,8 +864,8 @@ def main():
     args = get_args()
     np.random.seed(args.seed)
 
-    from kendall_correlation_coefficient.dpt_kendall import (
-        load_and_match_apoptosis, load_features_cache)
+    from kendall_correlation_coefficient.dpt import (
+        load_and_match_cell_death, load_features_cache)
 
     # ── Load features (auto-detect SAE vs GAP cache) ──
     logger.info(f"\n{'='*60}")
@@ -903,10 +903,10 @@ def main():
     sc_arr = np.array(superclasses)
     logger.info(f"  Features: {X.shape} ({alive_info})")
 
-    logger.info("Loading apoptosis")
-    apoptosis = load_and_match_apoptosis(args.apoptosis_csv, uids)
-    n_valid = np.sum(~np.isnan(apoptosis))
-    logger.info(f"  Matched: {n_valid}/{len(apoptosis)}")
+    logger.info("Loading cell_death")
+    cell_death = load_and_match_cell_death(args.cell_death_csv, uids)
+    n_valid = np.sum(~np.isnan(cell_death))
+    logger.info(f"  Matched: {n_valid}/{len(cell_death)}")
 
     # Optional: L1 normalize feature vectors (library-size normalization)
     if args.gap_l1_norm:
@@ -929,7 +929,7 @@ def main():
         out_dir = args.output_dir
     else:
         out_dir = os.path.join(
-            os.path.dirname(args.features_cache), "apoptosis_r2_test"
+            os.path.dirname(args.features_cache), "cell_death_r2_test"
         )
     os.makedirs(out_dir, exist_ok=True)
 
@@ -1012,7 +1012,7 @@ def main():
 
         # Mut only (features from Ctrl+Mut selection)
         logger.info(f"\n  ── {mut} only, {n_features} features ──")
-        res = eval_fn(X[mut_mask][:, feat_mask], apoptosis[mut_mask])
+        res = eval_fn(X[mut_mask][:, feat_mask], cell_death[mut_mask])
         res["group"] = f"{mut} only"
         results.append(res)
         logger.info(
@@ -1089,7 +1089,7 @@ def main():
                 "model": model_tag,
                 "layer": which_layer,
                 "features_cache": args.features_cache,
-                "apoptosis_csv": args.apoptosis_csv,
+                "cell_death_csv": args.cell_death_csv,
                 "output_dir": out_dir,
                 # ── Feature info ──
                 "n_features_raw": int(X.shape[1]),

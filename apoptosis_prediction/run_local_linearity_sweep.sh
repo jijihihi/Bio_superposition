@@ -15,7 +15,7 @@ set -e
 # ──────────────────────────────────────────────────────────────
 CNN_CACHE_TEMPLATE="/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed{CNN_SEED}/CNN_GAP/cnn_gap_stage5_out_all.npz"
 SAE_CACHE_TEMPLATE="/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_seed{SAE_SEED}_no_L2norm_loss/features_cache_stage5_out_normrestored_all_no_SAE_GAP_L2_norm_again_d8192_sp800.npz"
-APOPTOSIS_CSV="/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv"
+cell_death_CSV="/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv"
 BASE_OUT="/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/local_linearity"
 
 # K neighbors — KNN std vs Ridge 분리
@@ -45,10 +45,10 @@ get_sae_cache() {
 
 
 
-# !python -m apoptosis_prediction.local_knn_std \
+# !python -m cell_death_prediction.local_knn_std \
 #     --cnn_cache "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/CNN_GAP/cnn_gap_stage5_out_all.npz" \
 #     --sae_cache "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_seed856_no_L2norm_loss/features_cache_stage5_out_normrestored_all_no_SAE_GAP_L2_norm_again_d8192_sp800.npz" \
-#     --apoptosis_csv "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv" \
+#     --cell_death_csv "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv" \
 #     --k_neighbors 5 10 15 \
 #     --n_permutations 0 \
 #     --filter none \
@@ -75,9 +75,9 @@ run_raw() {
         OUT="$BASE_OUT/raw/cnn_seed_${CNN_SEED}"
 
         echo "── KNN Std: CNN (cnn_seed=$CNN_SEED) ──"
-        python -m apoptosis_prediction.local_knn_std \
+        python -m cell_death_prediction.local_knn_std \
             --cnn_cache "$CNN_CACHE" \
-            --apoptosis_csv "$APOPTOSIS_CSV" \
+            --cell_death_csv "$cell_death_CSV" \
             --k_neighbors $K_NEIGHBORS_KNN \
             --gap_l2_norm \
             --dead_threshold $DEAD_THRESHOLD \
@@ -88,9 +88,9 @@ run_raw() {
             --output_dir "${OUT}/knn_std_cnn"
 
     #     echo "── Local Ridge: CNN (cnn_seed=$CNN_SEED) ──"
-    #     python -m apoptosis_prediction.local_vs_global_ridge \
+    #     python -m cell_death_prediction.local_vs_global_ridge \
     #         --cnn_cache "$CNN_CACHE" \
-    #         --apoptosis_csv "$APOPTOSIS_CSV" \
+    #         --cell_death_csv "$cell_death_CSV" \
     #         --k_neighbors $K_NEIGHBORS_RIDGE \
     #         --gap_l2_norm \
     #         --dead_threshold $DEAD_THRESHOLD \
@@ -103,10 +103,10 @@ run_raw() {
     done
 
 
-# !python -m apoptosis_prediction.local_knn_std \
+# !python -m cell_death_prediction.local_knn_std \
 #     --cnn_cache "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/CNN_GAP/cnn_gap_stage5_out_all.npz" \
 #     --sae_cache "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_seed856_no_L2norm_loss/features_cache_stage5_out_normrestored_all_no_SAE_GAP_L2_norm_again_d8192_sp800.npz" \
-#     --apoptosis_csv "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv" \
+#     --cell_death_csv "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv" \
 #     --k_neighbors 5 10 15 \
 #     --n_permutations 0 \
 #     --filter none \
@@ -122,9 +122,9 @@ run_raw() {
         OUT="$BASE_OUT/raw/sae_seed_${SAE_SEED}"
 
         echo "── KNN Std: SAE (sae_seed=$SAE_SEED) ──"
-        python -m apoptosis_prediction.local_knn_std \
+        python -m cell_death_prediction.local_knn_std \
             --sae_cache "$SAE_CACHE" \
-            --apoptosis_csv "$APOPTOSIS_CSV" \
+            --cell_death_csv "$cell_death_CSV" \
             --k_neighbors $K_NEIGHBORS_KNN \
             --dead_threshold $DEAD_THRESHOLD \
             --gap_l2_norm \
@@ -135,9 +135,9 @@ run_raw() {
             --output_dir "${OUT}/knn_std_sae"
 
     #     echo "── Local Ridge: SAE (sae_seed=$SAE_SEED) ──"
-    #     python -m apoptosis_prediction.local_vs_global_ridge \
+    #     python -m cell_death_prediction.local_vs_global_ridge \
     #         --sae_cache "$SAE_CACHE" \
-    #         --apoptosis_csv "$APOPTOSIS_CSV" \
+    #         --cell_death_csv "$cell_death_CSV" \
     #         --k_neighbors $K_NEIGHBORS_RIDGE \
     #         --dead_threshold $DEAD_THRESHOLD \
     #         --gap_l2_norm \
@@ -151,10 +151,10 @@ run_raw() {
 }
 
 
-# !python -m apoptosis_prediction.local_vs_global_ridge \
+# !python -m cell_death_prediction.local_vs_global_ridge \
 #     --cnn_cache "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/CNN_GAP/cnn_gap_stage5_out_all.npz" \
 #     --sae_cache "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_seed856_no_L2norm_loss/features_cache_stage5_out_normrestored_all_no_SAE_GAP_L2_norm_again_d8192_sp800.npz" \
-#     --apoptosis_csv "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv" \
+#     --cell_death_csv "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv" \
 #     --k_neighbors 20 \
 #     --gap_l2_norm \
 #     --dead_threshold 5e-5 \
@@ -193,9 +193,9 @@ run_de_sweep() {
             echo "── CNN: cnn_seed=$CNN_SEED, DE log2fc=$LOG2FC ──"
 
             # KNN Std
-            python -m apoptosis_prediction.local_knn_std \
+            python -m cell_death_prediction.local_knn_std \
                 --cnn_cache "$CNN_CACHE" \
-                --apoptosis_csv "$APOPTOSIS_CSV" \
+                --cell_death_csv "$cell_death_CSV" \
                 --k_neighbors $K_NEIGHBORS_KNN \
                 --gap_l2_norm \
                 --dead_threshold $DEAD_THRESHOLD \
@@ -210,9 +210,9 @@ run_de_sweep() {
                 --output_dir "${OUT}/knn_log_std_cnn_test"
 
             # Local Ridge
-    #         python -m apoptosis_prediction.local_vs_global_ridge \
+    #         python -m cell_death_prediction.local_vs_global_ridge \
     #             --cnn_cache "$CNN_CACHE" \
-    #             --apoptosis_csv "$APOPTOSIS_CSV" \
+    #             --cell_death_csv "$cell_death_CSV" \
     #             --k_neighbors $K_NEIGHBORS_RIDGE \
     #             --gap_l2_norm \
     #             --dead_threshold $DEAD_THRESHOLD \
@@ -278,9 +278,9 @@ run_dpt_matched() {
             OUT="$BASE_OUT/dpt_matched/cnn_seed_${CNN_SEED}/log2fc_${LOG2FC}"
 
             echo "── KNN Std: CNN (cnn_seed=$CNN_SEED, log2fc=$LOG2FC) ──"
-            python -m apoptosis_prediction.local_knn_std \
+            python -m cell_death_prediction.local_knn_std \
                 --cnn_cache "$CNN_CACHE" \
-                --apoptosis_csv "$APOPTOSIS_CSV" \
+                --cell_death_csv "$cell_death_CSV" \
                 --k_neighbors $K_NEIGHBORS_KNN \
                 --gap_l2_norm \
                 --dead_threshold 5e-5 \
@@ -292,9 +292,9 @@ run_dpt_matched() {
                 --output_dir "${OUT}/knn_std_cnn"
 
             # echo "── Local Ridge: CNN (cnn_seed=$CNN_SEED, log2fc=$LOG2FC) ──"
-            # python -m apoptosis_prediction.local_vs_global_ridge \
+            # python -m cell_death_prediction.local_vs_global_ridge \
             #     --cnn_cache "$CNN_CACHE" \
-            #     --apoptosis_csv "$APOPTOSIS_CSV" \
+            #     --cell_death_csv "$cell_death_CSV" \
             #     --k_neighbors $K_NEIGHBORS_RIDGE \
             #     --gap_l2_norm \
             #     --dead_threshold 5e-5 \
@@ -314,9 +314,9 @@ run_dpt_matched() {
             OUT="$BASE_OUT/dpt_matched/sae_seed_${SAE_SEED}/log2fc_${LOG2FC}"
 
             echo "── KNN Std: SAE (sae_seed=$SAE_SEED, log2fc=$LOG2FC) ──"
-            python -m apoptosis_prediction.local_knn_std \
+            python -m cell_death_prediction.local_knn_std \
                 --sae_cache "$SAE_CACHE" \
-                --apoptosis_csv "$APOPTOSIS_CSV" \
+                --cell_death_csv "$cell_death_CSV" \
                 --k_neighbors $K_NEIGHBORS_KNN \
                 --dead_threshold 5e-5 \
                 --de_adj_p 0.05 \
@@ -327,9 +327,9 @@ run_dpt_matched() {
                 --output_dir "${OUT}/knn_std_sae"
 
             # echo "── Local Ridge: SAE (sae_seed=$SAE_SEED, log2fc=$LOG2FC) ──"
-            # python -m apoptosis_prediction.local_vs_global_ridge \
+            # python -m cell_death_prediction.local_vs_global_ridge \
             #     --sae_cache "$SAE_CACHE" \
-            #     --apoptosis_csv "$APOPTOSIS_CSV" \
+            #     --cell_death_csv "$cell_death_CSV" \
             #     --k_neighbors $K_NEIGHBORS_RIDGE \
             #     --dead_threshold 5e-5 \
             #     $COMMON_BASE \

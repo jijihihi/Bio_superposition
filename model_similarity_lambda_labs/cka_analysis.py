@@ -24,15 +24,15 @@ from torch.utils.data import DataLoader, Dataset
 from tqdm.auto import tqdm
 
 # Import from sae_project modules
-from sae_project.step02_logging_utils import (CLASS_TO_LABEL,
+from model_train.logging_utils import (CLASS_TO_LABEL,
                                               DEFAULT_SHARD_ROOT, OUT_DIM,
                                               get_logger)
-from sae_project.step03_data_shards import (SampleRef, build_uid_to_refidx,
+from model_train.data_shards import (SampleRef, build_uid_to_refidx,
                                             load_all_sample_refs)
-from sae_project.step04_data_bank import (InMemorySixteenBitDataset,
+from model_train.data_bank import (InMemorySixteenBitDataset,
                                           InMemoryTarBank, collate_skip_none,
                                           load_split_csv, seed_worker)
-from sae_project.step05_model_encoder import (Encoder, SupMoCoModel,
+from model_train.model_encoder import (Encoder, SupMoCoModel,
                                               parse_int_list,
                                               renorm_unit_per_out_channel_,
                                               robust_load_state_dict)

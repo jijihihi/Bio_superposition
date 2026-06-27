@@ -142,7 +142,7 @@ def plot_phate(phate_coords, labels, output_path, dpi=200, point_size=1.5, alpha
 
 def run_global_vis(args):
     np.random.seed(args.seed)
-    X, superclasses, apoptosis, which_layer = load_and_preprocess(args)
+    X, superclasses, cell_death, which_layer = load_and_preprocess(args)
 
     out_dir = args.output_dir or os.path.join(
         os.path.dirname(args.features_cache), "global_vis"

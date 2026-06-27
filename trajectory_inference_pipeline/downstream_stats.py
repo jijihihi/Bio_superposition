@@ -217,8 +217,8 @@ def plot_jt_terciles(dpt_vals, apop_vals, mutation, output_path, dpi=200, n_terc
     ax_jt.set_xticks(x_pos)
     ax_jt.set_xticklabels(tercile_labels, fontsize=11)
     ax_jt.set_xlabel("DPT stage", fontsize=12)
-    ax_jt.set_ylabel("Mean apoptosis rate", fontsize=12)
-    ax_jt.set_title(f"Apoptosis by DPT Tercile ({mutation})")
+    ax_jt.set_ylabel("Mean cell_death rate", fontsize=12)
+    ax_jt.set_title(f"cell_death by DPT Tercile ({mutation})")
 
     bar_tops = [means[k] + sems[k] for k in range(n_terciles_jt)]
     y_max = max(bar_tops) if bar_tops else 0
@@ -270,7 +270,7 @@ def plot_jt_terciles(dpt_vals, apop_vals, mutation, output_path, dpi=200, n_terc
 
 def run_downstream_stats(args):
     np.random.seed(args.seed)
-    X, superclasses, apoptosis, which_layer = load_and_preprocess(args)
+    X, superclasses, cell_death, which_layer = load_and_preprocess(args)
     out_dir = args.output_dir or os.path.join(
         os.path.dirname(args.features_cache), "downstream_stats"
     )
@@ -291,7 +291,7 @@ def run_downstream_stats(args):
 
         X_pair_pca = X_pca[pair_mask]
         pair_sc = superclasses[pair_mask]
-        pair_apop = apoptosis[pair_mask]
+        pair_apop = cell_death[pair_mask]
 
         adata_pair = sc.AnnData(X_pair_pca.astype(np.float32))
         adata_pair.obsm["X_pca"] = X_pair_pca.astype(np.float32)

@@ -1,0 +1,5 @@
+Group,Filename,Channel,Intensity,Laplacian_Variance
+test_MIP,test_gray.tif,Ch0,32666.4384,7248140435.8025465
+test_MIP,test_rgb.tif,Ch0,32507.4005,7171237823.69652
+test_MIP,test_rgb.tif,Ch1,32953.7115,7114329808.418684
+test_MIP,test_rgb.tif,Ch2,32893.5813,7181661330.277997

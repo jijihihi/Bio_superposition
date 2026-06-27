@@ -1,12 +1,12 @@
 #!/bin/bash
 # ==============================================================================
-# SAE vector → Apoptosis R² prediction sweep (Iterating over CNN Seeds)
+# SAE vector → cell_death R² prediction sweep (Iterating over CNN Seeds)
 # ==============================================================================
 
 set -e
 
 BASE="/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/caches_per_image_centering"
-APOPTOSIS_CSV="/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv"
+cell_death_CSV="/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv"
 OUTPUT_BASE="/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/caches_per_image_centering/SAE_vector_per_image_centering"
 CNN_SEEDS=(42 87 95 123 124 256 445 457)
 GAP_L2_LIST=("--gap_l2_norm")
@@ -51,9 +51,9 @@ for CNN_SEED in "${CNN_SEEDS[@]}"; do
 
                 echo -ne "\r[$TOTAL] cnn_seed=$CNN_SEED l2=$L2_LABEL model=$MODEL filter=$FILTER_LABEL   \n"
 
-                python -m apoptosis_prediction.apoptosis_r2_test \
+                python -m cell_death_prediction.cell_death_r2_test \
                     --features_cache "$CACHE" \
-                    --apoptosis_csv "$APOPTOSIS_CSV" \
+                    --cell_death_csv "$cell_death_CSV" \
                     --model "$MODEL" \
                     --dead_threshold 1e-5 \
                     --seed 42 \

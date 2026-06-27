@@ -11,7 +11,7 @@ import torch.optim as optim
 from sklearn.model_selection import train_test_split
 from tqdm import tqdm
 
-from sae_project.step04_data_bank import load_split_csv
+from model_train.data_bank import load_split_csv
 from sae_project.step09_sae_eval import train_linear_probe
 
 

@@ -7,7 +7,7 @@ import scanpy as sc
 from scipy.stats import mannwhitneyu
 from statsmodels.stats.multitest import multipletests
 
-from sae_project.step02_logging_utils import SUPERCLASS_MAP, get_logger
+from model_train.logging_utils import SUPERCLASS_MAP, get_logger
 
 logger = get_logger("trajectory_api_data")
 
@@ -146,8 +146,8 @@ def apply_normalization(X: np.ndarray, norm_method: str):
     return X_out
 
 
-def load_and_match_apoptosis(apoptosis_csv: str, uids: list, rate_col=None):
-    df = pd.read_csv(apoptosis_csv)
+def load_and_match_cell_death(cell_death_csv: str, uids: list, rate_col=None):
+    df = pd.read_csv(cell_death_csv)
     uid_col = df.columns[0]
     for c in ["filename", "uid", "image_uid", "UID"]:
         if c in df.columns:
@@ -161,7 +161,7 @@ def load_and_match_apoptosis(apoptosis_csv: str, uids: list, rate_col=None):
         use_col = rate_col
     else:
         use_col = df.columns[1]
-        for c in ["intensity_rate", "apoptosis_rate", "rate"]:
+        for c in ["intensity_rate", "cell_death_rate", "rate"]:
             if c in df.columns:
                 use_col = c
                 break
@@ -178,13 +178,13 @@ def load_and_match_apoptosis(apoptosis_csv: str, uids: list, rate_col=None):
         return os.path.splitext(uid_str.replace("_mask", ""))[0]
 
     cache_uids_norm = [_normalize_cache_uid(str(u)) for u in uids]
-    apoptosis = np.full(len(uids), np.nan)
+    cell_death = np.full(len(uids), np.nan)
     for i, norm_uid in enumerate(cache_uids_norm):
         if norm_uid in uid_to_rate:
-            apoptosis[i] = uid_to_rate[norm_uid]
+            cell_death[i] = uid_to_rate[norm_uid]
 
-    logger.info(f"Apoptosis matched: {np.sum(~np.isnan(apoptosis))}/{len(uids)}")
-    return apoptosis
+    logger.info(f"cell_death matched: {np.sum(~np.isnan(cell_death))}/{len(uids)}")
+    return cell_death
 
 
 # ==============================================================================
@@ -195,8 +195,8 @@ def load_and_preprocess(
     dead_threshold: float = 1e-5,
     gap_l2_norm: bool = False,
     norm_method: str = "log_std",
-    apoptosis_csv: str = None,
-    apoptosis_rate_col: str = None,
+    cell_death_csv: str = None,
+    cell_death_rate_col: str = None,
     filter_modes: list = [],
     min_cv: float = 0.0,
     de_mutation: str = "SNCA",
@@ -216,10 +216,10 @@ def load_and_preprocess(
     )
     superclasses = np.array([SUPERCLASS_MAP.get(ln, "Control") for ln in lines])
 
-    # 2. Apoptosis Match
-    apoptosis = None
-    if apoptosis_csv and os.path.exists(apoptosis_csv):
-        apoptosis = load_and_match_apoptosis(apoptosis_csv, uids, apoptosis_rate_col)
+    # 2. cell_death Match
+    cell_death = None
+    if cell_death_csv and os.path.exists(cell_death_csv):
+        cell_death = load_and_match_cell_death(cell_death_csv, uids, cell_death_rate_col)
 
     # 3. L2 Norm (Optional)
     if gap_l2_norm:
@@ -266,14 +266,14 @@ def load_and_preprocess(
             X = X[subset]
             superclasses = superclasses[subset]
             uids = uids[subset]
-            if apoptosis is not None:
-                apoptosis = apoptosis[subset]
+            if cell_death is not None:
+                cell_death = cell_death[subset]
             logger.info(f"Subsampled to {len(subset)} cells")
 
     # 7. Create AnnData
     obs_dict = {"mutation": superclasses, "uid": uids}
-    if apoptosis is not None:
-        obs_dict["apoptosis"] = apoptosis
+    if cell_death is not None:
+        obs_dict["cell_death"] = cell_death
 
     adata = sc.AnnData(X=X.astype(np.float32), obs=pd.DataFrame(obs_dict))
     adata.uns["which_layer"] = which_layer

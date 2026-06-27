@@ -247,7 +247,7 @@ def plot_feature_trend(
 
 def run_dpt_heatmap(args):
     np.random.seed(args.seed)
-    X, superclasses, apoptosis, which_layer = load_and_preprocess(args)
+    X, superclasses, cell_death, which_layer = load_and_preprocess(args)
 
     # We also need RAW features for single feature trend if requested
     X_raw_norm = None

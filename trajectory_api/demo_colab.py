@@ -11,7 +11,7 @@ from trajectory_api import (load_and_preprocess, plot_feature_trends,
 
 # 1. 설정
 CACHE_PATH = "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/caches_dynamic_batch_centering/features_cache_gap_refine_out.npz"
-APOPTOSIS_CSV = "/content/drive/MyDrive/Final_paper/Data/apoptosis_rate_table.csv"
+cell_death_CSV = "/content/drive/MyDrive/Final_paper/Data/cell_death_rate_table.csv"
 OUT_DIR = "./trajectory_results"
 
 mutations = ["SNCA", "GBA", "LRRK2"]
@@ -20,7 +20,7 @@ mutations = ["SNCA", "GBA", "LRRK2"]
 print("Loading data...")
 adata = load_and_preprocess(
     cache_path=CACHE_PATH,
-    apoptosis_csv=APOPTOSIS_CSV,
+    cell_death_csv=cell_death_CSV,
     norm_method="log_std",
     gap_l2_norm=True,
     filter_modes=["de"],  # DE filter 적용

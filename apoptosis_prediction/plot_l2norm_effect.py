@@ -9,12 +9,12 @@
 #   import sys
 #   sys.argv = [
 #       "plot_l2norm_effect",
-#       "--results_dir", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/apoptosis_r2_results",
+#       "--results_dir", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/cell_death_r2_results",
 #       "--training_config", "MoCo",
 #       "--layer", "stage5_out",
 #       "--model", "XGBoost",
 #   ]
-#   from apoptosis_prediction.plot_l2norm_effect import main
+#   from cell_death_prediction.plot_l2norm_effect import main
 #   main()
 # ==============================================================================
 

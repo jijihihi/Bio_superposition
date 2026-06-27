@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import umap.umap_ as umap
 
-from sae_project.step02_logging_utils import get_logger
+from model_train.logging_utils import get_logger
 
 logger = get_logger("plot_umap_cnn_vs_sae")
 

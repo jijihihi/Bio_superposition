@@ -9,9 +9,9 @@
 #   import sys
 #   sys.argv = [
 #       "plot_sae_comparison",
-#       "--results_dir", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/apoptosis_r2_results",
+#       "--results_dir", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/cell_death_r2_results",
 #   ]
-#   from apoptosis_prediction.plot_sae_comparison import main
+#   from cell_death_prediction.plot_sae_comparison import main
 #   main()
 # ==============================================================================
 

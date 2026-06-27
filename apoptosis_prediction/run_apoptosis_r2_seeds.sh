@@ -1,6 +1,6 @@
 #!/bin/bash
 # ==============================================================================
-# Run apoptosis R² test across all CNN seeds — Colab version
+# Run cell_death R² test across all CNN seeds — Colab version
 #
 # MoCo (GAP L2 norm):       9 seeds × 3 layers × 2 models = 54 runs
 # MoCo (no GAP L2 norm):    5 seeds × 3 layers × 2 models = 30 runs
@@ -8,13 +8,13 @@
 # + aggregation at the end
 #
 # Usage:
-#   bash /content/apoptosis_prediction/run_apoptosis_r2_seeds.sh
+#   bash /content/cell_death_prediction/run_cell_death_r2_seeds.sh
 # ==============================================================================
 
 # 여기서는 뉴런 필터링 없다.
 
 BASE_DIR="/content/drive/MyDrive/Final_paper/lambda_labs_moco_only"
-APOPTOSIS_CSV="/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv"
+cell_death_CSV="/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv"
 
 # ── MoCo (GAP L2 norm) seeds ──
 MOCO_SEEDS=(42 87 95 123 124 256 445 457)
@@ -27,11 +27,11 @@ NO_NORM_SEEDS=(42 87 124)
 LAYERS=("stage5_mid" "stage5_out" "refine_out")
 MODELS=("ridge" "xgboost") #"ridge" "xgboost"
 
-OUT_ROOT="${BASE_DIR}/apoptosis_r2_results"
+OUT_ROOT="${BASE_DIR}/cell_death_r2_results"
 mkdir -p "${OUT_ROOT}"
 
 echo "═══════════════════════════════════════════════════════"
-echo "  Apoptosis R² Test"
+echo "  cell_death R² Test"
 echo "  MoCo seeds:    ${MOCO_SEEDS[*]}"
 echo "  No-norm seeds: ${NO_NORM_SEEDS[*]}"
 echo "  Layers: ${LAYERS[*]}"
@@ -60,9 +60,9 @@ for MODEL in "${MODELS[@]}"; do
             echo ""
             echo "▶ MoCo seed=${SEED} | ${LAYER} | ${MODEL} | L2norm=ON"
 
-            python -m apoptosis_prediction.apoptosis_r2_test \
+            python -m cell_death_prediction.cell_death_r2_test \
                 --features_cache "${CACHE}" \
-                --apoptosis_csv "${APOPTOSIS_CSV}" \
+                --cell_death_csv "${cell_death_CSV}" \
                 --model "${MODEL}" \
                 --gap_l2_norm \
                 --output_dir "${SEED_OUT}" \
@@ -79,9 +79,9 @@ for MODEL in "${MODELS[@]}"; do
             echo ""
             echo "▶ MoCo seed=${SEED} | ${LAYER} | ${MODEL} | L2norm=OFF"
 
-            python -m apoptosis_prediction.apoptosis_r2_test \
+            python -m cell_death_prediction.cell_death_r2_test \
                 --features_cache "${CACHE}" \
-                --apoptosis_csv "${APOPTOSIS_CSV}" \
+                --cell_death_csv "${cell_death_CSV}" \
                 --model "${MODEL}" \
                 --output_dir "${SEED_OUT}" \
                 --seed 42 \
@@ -113,9 +113,9 @@ for MODEL in "${MODELS[@]}"; do
             echo ""
             echo "▶ noNorm seed=${SEED} | ${LAYER} | ${MODEL} | L2norm=ON"
 
-            python -m apoptosis_prediction.apoptosis_r2_test \
+            python -m cell_death_prediction.cell_death_r2_test \
                 --features_cache "${CACHE}" \
-                --apoptosis_csv "${APOPTOSIS_CSV}" \
+                --cell_death_csv "${cell_death_CSV}" \
                 --model "${MODEL}" \
                 --gap_l2_norm \
                 --output_dir "${SEED_OUT}" \
@@ -132,9 +132,9 @@ for MODEL in "${MODELS[@]}"; do
             echo ""
             echo "▶ noNorm seed=${SEED} | ${LAYER} | ${MODEL} | L2norm=OFF"
 
-            python -m apoptosis_prediction.apoptosis_r2_test \
+            python -m cell_death_prediction.cell_death_r2_test \
                 --features_cache "${CACHE}" \
-                --apoptosis_csv "${APOPTOSIS_CSV}" \
+                --cell_death_csv "${cell_death_CSV}" \
                 --model "${MODEL}" \
                 --output_dir "${SEED_OUT}" \
                 --seed 42 \
@@ -160,7 +160,7 @@ import os, json
 import numpy as np
 import csv
 
-base = "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/apoptosis_r2_results"
+base = "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/cell_death_r2_results"
 
 configs = [
     # (label, dir_pattern, seeds)

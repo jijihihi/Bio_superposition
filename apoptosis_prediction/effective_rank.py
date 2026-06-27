@@ -13,7 +13,7 @@
 #   6) CV+DE filter → std → PCA
 #
 # Usage (CNN only):
-# !python -m apoptosis_prediction.effective_rank \
+# !python -m cell_death_prediction.effective_rank \
 #     --cnn_cache "..." \
 #     --dead_threshold 5e-5 --gap_l2_norm \
 #     --pca_dim 50 \
@@ -22,7 +22,7 @@
 #     --seed 856 --output_dir "/content/erank"
 #
 # Usage (SAE only):
-# !python -m apoptosis_prediction.effective_rank \
+# !python -m cell_death_prediction.effective_rank \
 #     --sae_cache "..." \
 #     --dead_threshold 5e-5 \
 #     --pca_dim 50 \
@@ -46,11 +46,11 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.decomposition import PCA
 
-from kendall_correlation_coefficient.dpt_kendall import (apply_normalization,
+from kendall_correlation_coefficient.dpt import (apply_normalization,
                                                          compute_cv_per_neuron,
                                                          compute_de_neurons,
                                                          load_features_cache)
-from sae_project.step02_logging_utils import SUPERCLASS_MAP, get_logger
+from model_train.logging_utils import SUPERCLASS_MAP, get_logger
 
 logger = get_logger("effective_rank")
 

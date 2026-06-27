@@ -1,7 +1,7 @@
 # ==============================================================================
 # Aggregate R² results across all CNN seeds — Paper-ready summary
 #
-# Scans all JSON result files produced by apoptosis_r2_test.py,
+# Scans all JSON result files produced by cell_death_r2_test.py,
 # computes per-(config, model, layer, group) statistics:
 #   - Mean R² ± Std across seeds
 #   - 95% confidence intervals (from per-fold R²s)
@@ -24,14 +24,14 @@
 #   import sys
 #   sys.argv = [
 #       "aggregate_r2_results",
-#       "--results_dir", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/apoptosis_r2_results",
+#       "--results_dir", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/cell_death_r2_results",
 #   ]
 #   from kendall_correlation_coefficient.aggregate_r2_results import main
 #   main()
 #
 # Usage (terminal):
 #   python -m kendall_correlation_coefficient.aggregate_r2_results \
-#       --results_dir /content/drive/MyDrive/Final_paper/lambda_labs_moco_only/apoptosis_r2_results
+#       --results_dir /content/drive/MyDrive/Final_paper/lambda_labs_moco_only/cell_death_r2_results
 # ==============================================================================
 
 import argparse
@@ -820,9 +820,9 @@ def save_paper_table(results_dir, agg):
     lines.append(r"\begin{table}[htbp]")
     lines.append(r"\centering")
     lines.append(
-        r"\caption{Cross-validated $R^2$ for apoptosis rate prediction (mean $\pm$ std across CNN training seeds).}"
+        r"\caption{Cross-validated $R^2$ for cell_death rate prediction (mean $\pm$ std across CNN training seeds).}"
     )
-    lines.append(r"\label{tab:r2_apoptosis}")
+    lines.append(r"\label{tab:r2_cell_death}")
     lines.append(r"\resizebox{\textwidth}{!}{%")
     lines.append(r"\begin{tabular}{" + col_spec + "}")
     lines.append(r"\toprule")
@@ -1132,7 +1132,7 @@ def main():
         "--results_dir",
         type=str,
         required=True,
-        help="Path to apoptosis_r2_results directory",
+        help="Path to cell_death_r2_results directory",
     )
     parser.add_argument(
         "--groups",

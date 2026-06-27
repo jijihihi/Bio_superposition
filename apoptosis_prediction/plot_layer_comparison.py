@@ -12,11 +12,11 @@
 #   import sys
 #   sys.argv = [
 #       "plot_layer_comparison",
-#       "--results_dir", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/apoptosis_r2_results",
+#       "--results_dir", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/cell_death_r2_results",
 #       "--config", "noNorm_raw",
 #       "--model", "XGBoost"
 #   ]
-#   from apoptosis_prediction.plot_layer_comparison import main
+#   from cell_death_prediction.plot_layer_comparison import main
 #   main()
 # ==============================================================================
 

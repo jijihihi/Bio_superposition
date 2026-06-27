@@ -7,7 +7,7 @@ import pandas as pd
 from sklearn.decomposition import PCA
 from sklearn.neighbors import NearestNeighbors
 
-from sae_project.step02_logging_utils import SUPERCLASS_MAP, get_logger
+from model_train.logging_utils import SUPERCLASS_MAP, get_logger
 
 logger = get_logger("trajectory_utils")
 
@@ -30,7 +30,7 @@ def add_trajectory_arguments(p):
         required=True,
         help="Path to .npz cache (SAE: X_all+usage_ema, or CNN GAP: X_gap)",
     )
-    p.add_argument("--apoptosis_csv", type=str, required=True)
+    p.add_argument("--cell_death_csv", type=str, required=True)
     p.add_argument("--output_dir", type=str, default="")
     p.add_argument("--dead_threshold", type=float, default=1e-5)
 
@@ -104,7 +104,7 @@ def add_trajectory_arguments(p):
         "--samples_per_class",
         type=int,
         default=15000,
-        help="Max samples per class (0 = use ALL). Prioritizes valid apoptosis.",
+        help="Max samples per class (0 = use ALL). Prioritizes valid cell_death.",
     )
 
     return p
@@ -257,10 +257,10 @@ def compute_de_neurons(
 
 
 # ==============================================================================
-# Load Apoptosis
+# Load cell_death
 # ==============================================================================
-def load_and_match_apoptosis(apoptosis_csv: str, uids: list, rate_col=None):
-    df = pd.read_csv(apoptosis_csv)
+def load_and_match_cell_death(cell_death_csv: str, uids: list, rate_col=None):
+    df = pd.read_csv(cell_death_csv)
     uid_col = next(
         (c for c in ["filename", "uid", "image_uid", "UID"] if c in df.columns),
         df.columns[0],
@@ -275,7 +275,7 @@ def load_and_match_apoptosis(apoptosis_csv: str, uids: list, rate_col=None):
         use_col = next(
             (
                 c
-                for c in ["intensity_rate", "apoptosis_rate", "rate"]
+                for c in ["intensity_rate", "cell_death_rate", "rate"]
                 if c in df.columns
             ),
             df.columns[1],
@@ -292,15 +292,15 @@ def load_and_match_apoptosis(apoptosis_csv: str, uids: list, rate_col=None):
         return os.path.splitext(uid_str.replace("_mask", ""))[0]
 
     cache_uids_norm = [_normalize_cache_uid(str(u)) for u in uids]
-    apoptosis = np.full(len(uids), np.nan)
+    cell_death = np.full(len(uids), np.nan)
     n_matched = 0
     for i, norm_uid in enumerate(cache_uids_norm):
         if norm_uid in uid_to_rate:
-            apoptosis[i] = uid_to_rate[norm_uid]
+            cell_death[i] = uid_to_rate[norm_uid]
             n_matched += 1
 
-    logger.info(f"  Apoptosis matched: {n_matched}/{len(uids)}")
-    return apoptosis
+    logger.info(f"  cell_death matched: {n_matched}/{len(uids)}")
+    return cell_death
 
 
 # ==============================================================================
@@ -467,7 +467,7 @@ def load_and_preprocess(args):
             else [uids[i] for i, m in enumerate(mask) if m]
         )
 
-    apoptosis = load_and_match_apoptosis(args.apoptosis_csv, uids)
+    cell_death = load_and_match_cell_death(args.cell_death_csv, uids)
 
     # Filtering (union applied only)
     has_de = "de" in args.filter_mode
@@ -511,7 +511,7 @@ def load_and_preprocess(args):
         keep_indices = []
         for cls in np.unique(superclasses_arr):
             cls_idx = np.where(superclasses_arr == cls)[0]
-            valid_mask = ~np.isnan(apoptosis[cls_idx])
+            valid_mask = ~np.isnan(cell_death[cls_idx])
             valid_idx = cls_idx[valid_mask]
             invalid_idx = cls_idx[~valid_mask]
             ordered = np.concatenate([valid_idx, invalid_idx])
@@ -526,12 +526,12 @@ def load_and_preprocess(args):
         X = X[keep_indices]
         X_log = X_log[keep_indices]
         superclasses_arr = superclasses_arr[keep_indices]
-        apoptosis = apoptosis[keep_indices]
+        cell_death = cell_death[keep_indices]
 
     if args.norm and args.norm != "none":
         X = apply_normalization(X, args.norm)
 
-    return X, superclasses_arr, apoptosis, which_layer, X_log
+    return X, superclasses_arr, cell_death, which_layer, X_log
 
 
 # ==============================================================================

@@ -8,7 +8,7 @@
 set -e
 
 BASE="/content/drive/MyDrive/Final_paper/lambda_labs_moco_only"
-APOPTOSIS_CSV="${BASE}/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv"
+cell_death_CSV="${BASE}/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv"
 OUT_BASE="${BASE}/local_linearity_dim_and_k_sweep"
 
 SEEDS=(42 87 95 123 124 256 445 457)
@@ -46,10 +46,10 @@ for SEED in "${SEEDS[@]}"; do
         OUT_DIR="${OUT_BASE}/seed_${SEED}/d${D}"
         mkdir -p "$OUT_DIR"
 
-        python -m apoptosis_prediction.local_knn_std \
+        python -m cell_death_prediction.local_knn_std \
             --cnn_cache "$CNN_CACHE" \
             --sae_cache "$SAE_CACHE" \
-            --apoptosis_csv "$APOPTOSIS_CSV" \
+            --cell_death_csv "$cell_death_CSV" \
             --k_neighbors $K_NEIGHBORS \
             --dead_threshold 1e-5 \
             --filter_mode none \
@@ -67,5 +67,5 @@ done
 
 echo "=================================================================="
 echo "📈 Generating Multi-Seed K-Sweep Trend Plots (.svg)..."
-python -m apoptosis_prediction.plot_trend_sweep_multiseed
+python -m cell_death_prediction.plot_trend_sweep_multiseed
 echo "✅ All complete! Check the plots in ${OUT_BASE}/plots"

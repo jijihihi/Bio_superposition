@@ -58,7 +58,7 @@ from statsmodels.stats.multitest import multipletests
 # ── step14에서 import (일관성 유지) ──
 from concept_visulaize.step14_visualize_concept_activations import (
     compute_gini_impurity, load_gap_csv, select_concepts_by_gap_csv_de)
-from sae_project.step02_logging_utils import SUPERCLASS_MAP, get_logger
+from model_train.logging_utils import SUPERCLASS_MAP, get_logger
 
 logger = get_logger("volcano_plot")
 

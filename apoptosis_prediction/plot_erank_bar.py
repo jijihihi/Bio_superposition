@@ -5,11 +5,11 @@
 # Deduplicates SAE results that were duplicated across CNN seeds.
 #
 # Usage:
-#   python -m apoptosis_prediction.plot_erank_bar \
+#   python -m cell_death_prediction.plot_erank_bar \
 #       --base_dir "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/caches_per_image_centering/erank" \
 #       --output_dir "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/caches_per_image_centering/erank/plots/CNN_layer"
 
-# !python -m apoptosis_prediction.plot_erank_bar \
+# !python -m cell_death_prediction.plot_erank_bar \
 #       --base_dir "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/caches_per_image_centering/erank" \
 #       --output_dir "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/caches_per_image_centering/erank/plots/CNN_layer"
 # ==============================================================================

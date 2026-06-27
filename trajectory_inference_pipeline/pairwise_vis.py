@@ -1,6 +1,6 @@
 # !python -m trajectory_inference_pipeline.pairwise_vis \
 # --features_cache "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/caches_per_image_centering/CNN_seed445_SAE/sae_gap_d8192_lam800_normrestored_withnewclass.npz" \
-# --apoptosis_csv "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv" \
+# --cell_death_csv "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv" \
 # --output_dir "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/caches_per_image_centering/pairwise_phate_seed445" \
 # --phate_decay 100 \
 # --n_neighbors 5 \
@@ -129,10 +129,10 @@ def get_args():
     return p.parse_args()
 
 
-def plot_phate_apoptosis_gradient(
+def plot_phate_cell_death_gradient(
     phate_coords: np.ndarray,
     pair_sc: np.ndarray,
-    apoptosis_pair: np.ndarray,
+    cell_death_pair: np.ndarray,
     mutation: str,
     out_dir: str,
     prefix: str,
@@ -165,7 +165,7 @@ def plot_phate_apoptosis_gradient(
     )
 
     # Mutation
-    apop_mut = apoptosis_pair[mut_mask]
+    apop_mut = cell_death_pair[mut_mask]
     valid_apop = ~np.isnan(apop_mut)
     phate_mut = phate_coords[mut_mask]
 
@@ -194,7 +194,7 @@ def plot_phate_apoptosis_gradient(
             zorder=3,
         )
         cbar = fig.colorbar(sc_plot, ax=ax, shrink=0.55, aspect=30, pad=0.02)
-        cbar.set_label("Apoptosis rate", fontsize=10)
+        cbar.set_label("cell_death rate", fontsize=10)
 
     ax.set_xticks([])
     ax.set_yticks([])
@@ -214,7 +214,7 @@ def plot_phate_apoptosis_gradient(
 
 def run_pairwise_vis(args):
     np.random.seed(args.seed)
-    X, superclasses, apoptosis, which_layer = load_and_preprocess(args)
+    X, superclasses, cell_death, which_layer = load_and_preprocess(args)
     out_dir = args.output_dir or os.path.join(
         os.path.dirname(args.features_cache), "pairwise_vis"
     )
@@ -235,7 +235,7 @@ def run_pairwise_vis(args):
         logger.info(f"\n  ── Pairwise Vis: Control + {mut} ──")
         X_pair_pca = X_pca[pair_mask]
         pair_sc = superclasses[pair_mask]
-        pair_apop = apoptosis[pair_mask]
+        pair_apop = cell_death[pair_mask]
 
         # 1. DiffMap
         adata_pair = sc.AnnData(X_pair_pca.astype(np.float32))
@@ -249,7 +249,7 @@ def run_pairwise_vis(args):
         dc_2d = np.column_stack(
             [diffmap_coords[:, 1], diffmap_coords[:, 2]]
         )  # DC1 vs DC2 (0-indexed internally but Scanpy returns from DC1=idx1)
-        plot_phate_apoptosis_gradient(
+        plot_phate_cell_death_gradient(
             dc_2d,
             pair_sc,
             pair_apop,
@@ -372,7 +372,7 @@ def run_pairwise_vis(args):
                 verbose=0,
             )
             X_phate_pair = phate_op.fit_transform(X_pair_pca)
-            plot_phate_apoptosis_gradient(
+            plot_phate_cell_death_gradient(
                 X_phate_pair,
                 pair_sc,
                 pair_apop,

@@ -4,7 +4,7 @@ import numpy as np
 import torch
 
 from cache_extraction.extract_features_lambda_labs import make_balanced_loader
-from sae_project.step04_data_bank import (build_uid_to_refidx,
+from model_train.data_bank import (build_uid_to_refidx,
                                           load_all_sample_refs)
 
 

@@ -7,7 +7,7 @@ import scanpy as sc
 import seaborn as sns
 from scipy.stats import pearsonr, spearmanr
 
-from sae_project.step02_logging_utils import get_logger
+from model_train.logging_utils import get_logger
 
 logger = get_logger("trajectory_api_stats")
 
@@ -54,8 +54,8 @@ def plot_trajectory_statistics(
     # 2. Root Perturbation
     if n_root_perturb > 0:
         apop = (
-            adata_pair.obs["apoptosis"].values
-            if "apoptosis" in adata_pair.obs
+            adata_pair.obs["cell_death"].values
+            if "cell_death" in adata_pair.obs
             else None
         )
         if apop is not None:
@@ -114,7 +114,7 @@ def _diagnose_dpt_distribution(dpt_vals, superclasses, mutation, out_dir, prefix
 
 
 def _run_root_perturbation(
-    adata, superclasses, apoptosis, mutation, out_dir, prefix, dpi, n_roots=10, n_dcs=10
+    adata, superclasses, cell_death, mutation, out_dir, prefix, dpi, n_roots=10, n_dcs=10
 ):
     logger.info(f"\n--- Root Perturbation Robustness Test ({mutation}) ---")
 
@@ -137,7 +137,7 @@ def _run_root_perturbation(
 
         mut_mask = superclasses == mutation
         dpt_m = dpt_vals[mut_mask]
-        apop_m = apoptosis[mut_mask]
+        apop_m = cell_death[mut_mask]
 
         valid = np.isfinite(dpt_m) & ~np.isnan(apop_m)
         if valid.sum() > 10:

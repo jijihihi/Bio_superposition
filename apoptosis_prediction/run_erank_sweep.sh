@@ -50,7 +50,7 @@ run_condition() {
                     SAE_OUT="${BASE_OUT}/${cond_name}/SAE_${CONFIG}/${SEED}"
 
                     echo "── SAE ${cond_name^^} ($CONFIG): seed=$SEED ──"
-                    python -m apoptosis_prediction.effective_rank \
+                    python -m cell_death_prediction.effective_rank \
                         --sae_cache "$SAE_CACHE" \
                         --gap_l2_norm \
                         --dead_threshold $DEAD_THRESHOLD \
@@ -70,7 +70,7 @@ run_condition() {
             CNN_OUT="${BASE_OUT}/${cond_name}/${LAYER}/${SEED}"
             if [ -f "$CNN_CACHE" ]; then
                 echo "── CNN ${cond_name^^} (${LAYER}): seed=$SEED ──"
-                python -m apoptosis_prediction.effective_rank \
+                python -m cell_death_prediction.effective_rank \
                     --cnn_cache "$CNN_CACHE" \
                     --gap_l2_norm \
                     --dead_threshold $DEAD_THRESHOLD \

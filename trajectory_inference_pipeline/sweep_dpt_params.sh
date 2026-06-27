@@ -28,7 +28,7 @@ for SEED in "${SEEDS[@]}"; do
       
       python -m trajectory_inference_pipeline.pairwise_dpt \
         --features_cache "$CACHE_FILE" \
-        --apoptosis_csv "$APOP_CSV" \
+        --cell_death_csv "$APOP_CSV" \
         --output_dir "$OUT_DIR" \
         --n_neighbors $K \
         --pca_dim $PCA \

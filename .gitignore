@@ -1,0 +1,7 @@
+Bio_AI_paper.venv/
+venv/
+**/__pycache__/
+
+
+z_ignore/
+.venv/

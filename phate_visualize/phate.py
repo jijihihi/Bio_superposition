@@ -46,7 +46,7 @@ import matplotlib.pyplot as plt
 import phate
 import seaborn as sns
 
-from sae_project.step02_logging_utils import SUPERCLASS_MAP, get_logger
+from model_train.logging_utils import SUPERCLASS_MAP, get_logger
 
 logger = get_logger("phate_vis")
 
@@ -371,7 +371,7 @@ def extract_sae_gap_features(
 # ==============================================================================
 def make_balanced_loader(args, refs, uid_to_refidx, samples_per_class: int, seed: int):
     """Load val+test, sample up to `samples_per_class` per class, return DataLoader."""
-    from sae_project.step04_data_bank import (InMemorySixteenBitDataset,
+    from model_train.data_bank import (InMemorySixteenBitDataset,
                                               InMemoryTarBank,
                                               collate_skip_none,
                                               load_split_csv, seed_worker)
@@ -440,7 +440,7 @@ def make_balanced_loader(args, refs, uid_to_refidx, samples_per_class: int, seed
 # ==============================================================================
 # Plot PHATE
 # ==============================================================================
-from sae_project.step02_logging_utils import CLASS_TO_LABEL
+from model_train.logging_utils import CLASS_TO_LABEL
 
 LABEL_TO_CLASS = {v: k for k, v in CLASS_TO_LABEL.items()}
 
@@ -893,13 +893,13 @@ def main():
         import torch.nn.functional as F
         from torch.utils.data import DataLoader
 
-        from sae_project.step03_data_shards import (build_uid_to_refidx,
+        from model_train.data_shards import (build_uid_to_refidx,
                                                     load_all_sample_refs)
-        from sae_project.step04_data_bank import (InMemorySixteenBitDataset,
+        from model_train.data_bank import (InMemorySixteenBitDataset,
                                                   InMemoryTarBank,
                                                   collate_skip_none,
                                                   load_split_csv, seed_worker)
-        from sae_project.step05_model_encoder import (
+        from model_train.model_encoder import (
             SupMoCoModel, parse_int_list, renorm_unit_per_out_channel_,
             robust_load_state_dict)
         from sae_project.step06_gated_sae import GatedSAE

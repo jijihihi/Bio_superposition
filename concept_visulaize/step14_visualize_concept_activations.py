@@ -38,13 +38,13 @@ except ImportError:
     raise RuntimeError("matplotlib not installed. pip install matplotlib")
 
 from sae_project.step01_configs import get_args, resolve_paths
-from sae_project.step02_logging_utils import SUPERCLASS_MAP, get_logger
-from sae_project.step03_data_shards import (build_uid_to_refidx,
+from model_train.logging_utils import SUPERCLASS_MAP, get_logger
+from model_train.data_shards import (build_uid_to_refidx,
                                             load_all_sample_refs)
-from sae_project.step04_data_bank import (InMemoryTarBank,
+from model_train.data_bank import (InMemoryTarBank,
                                           SafeInstanceNormalize,
                                           load_split_csv)
-from sae_project.step05_model_encoder import (SupMoCoModel, parse_int_list,
+from model_train.model_encoder import (SupMoCoModel, parse_int_list,
                                               renorm_unit_per_out_channel_,
                                               robust_load_state_dict)
 from sae_project.step06_gated_sae import GatedSAE
@@ -94,7 +94,7 @@ spatial activation map에 L2 norm을 적용하는 것은 의미가 없습니다.
 #     "step14",
 #     "--features_cache","/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_sparsity3200_loss_L2norm곱해줌/features_cache_stage5_out_normrestored_all.npz",   # L2 norm 된 상태. gap_csv 만들때와 동일하게. strict 사용.
 #     "--sae_ckpt", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_sparsity3200_loss_L2norm곱해줌/stage5_out_d4096_gated_sp3200.0_aux0.03125_tied_ep008.pt",
-#     "--apoptosis_csv", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv",
+#     "--cell_death_csv", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv",
 #     "--model_state_path", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/best_model.pt",
 #     "--shard_root", "/content/wds_shards",
 #     "--save_dir", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87",
@@ -122,7 +122,7 @@ spatial activation map에 L2 norm을 적용하는 것은 의미가 없습니다.
 #     "step14",
 #     "--features_cache","/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_sparsity3200_loss_L2norm곱해줌/features_cache_stage5_out_normrestored_all.npz",   # L2 norm 된 상태. gap_csv 만들때와 동일하게. strict 사용.
 #     "--sae_ckpt", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_sparsity3200_loss_L2norm곱해줌/stage5_out_d4096_gated_sp3200.0_aux0.03125_tied_ep008.pt",
-#     "--apoptosis_csv", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv",
+#     "--cell_death_csv", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv",
 #     "--model_state_path", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/best_model.pt",
 #     "--shard_root", "/content/wds_shards",
 #     "--save_dir", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87",
@@ -149,7 +149,7 @@ spatial activation map에 L2 norm을 적용하는 것은 의미가 없습니다.
 #     "step14",
 #     "--features_cache","/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_seed856_no_L2norm_loss/features_cache_stage5_out_normrestored_all_no_SAE_GAP_L2_norm_again_d8192_sp800.npz",   # L2 norm 된 상태. gap_csv 만들때와 동일하게. strict 사용.
 #     "--sae_ckpt", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_seed856_no_L2norm_loss/stage5_out_d8192_gated_sp800.0_aux0.03125_tied_ep008.pt",
-#     "--apoptosis_csv", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv",
+#     "--cell_death_csv", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv",
 #     "--model_state_path", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/best_model.pt",
 #     "--shard_root", "/content/wds_shards",
 #     "--save_dir", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87",
@@ -408,7 +408,7 @@ def compute_gap_info_from_cache(
         'max_class': str, 'class_diff': float, 'entropy': float
     }
     """
-    from sae_project.step02_logging_utils import SUPERCLASS_MAP
+    from model_train.logging_utils import SUPERCLASS_MAP
 
     data = np.load(features_cache_path, allow_pickle=True)
     X_all = data["X_all"]  # (N, d_sae)
@@ -548,7 +548,7 @@ def compute_de_neurons_local(
 
 def select_concepts_by_de(
     features_cache_path: str,
-    apoptosis_csv_path: str,
+    cell_death_csv_path: str,
     min_cv: float = 0.2,
     de_adj_p: float = 0.05,
     de_min_log2fc: float = 1.5,
@@ -558,7 +558,7 @@ def select_concepts_by_de(
     Select class-specific concepts using DE analysis.
     Returns list of (concept_id, dominant_class, log2fc_value, direction).
     """
-    from sae_project.step02_logging_utils import SUPERCLASS_MAP
+    from model_train.logging_utils import SUPERCLASS_MAP
 
     # Load features
     data = np.load(features_cache_path, allow_pickle=True)
@@ -575,12 +575,12 @@ def select_concepts_by_de(
     else:
         alive_indices = np.arange(X.shape[1])
 
-    # Load superclasses from apoptosis CSV (same matching logic as dpt_kendall.py)
+    # Load superclasses from cell_death CSV (same matching logic as dpt_kendall.py)
     import csv as csv_mod
 
-    # Build uid_to_superclass from apoptosis CSV
+    # Build uid_to_superclass from cell_death CSV
     uid_to_sc = {}
-    with open(apoptosis_csv_path, "r", encoding="utf-8") as f:
+    with open(cell_death_csv_path, "r", encoding="utf-8") as f:
         reader = csv_mod.DictReader(f)
         for row in reader:
             # Get filename and normalize (strip _mask, extension)
@@ -600,7 +600,7 @@ def select_concepts_by_de(
             if fn and sc:
                 uid_to_sc[fn] = sc
 
-    logger.info(f"  Apoptosis CSV entries: {len(uid_to_sc)}")
+    logger.info(f"  cell_death CSV entries: {len(uid_to_sc)}")
     if uid_to_sc:
         sample_keys = list(uid_to_sc.keys())[:3]
         logger.info(f"  Sample CSV keys: {sample_keys}")
@@ -1319,10 +1319,10 @@ def get_visualization_args():
         help="Path to features_cache.npz (required for de_filter)",
     )
     parser.add_argument(
-        "--apoptosis_csv",
+        "--cell_death_csv",
         type=str,
         default="",
-        help="Path to apoptosis CSV with line/UID info (required for de_filter)",
+        help="Path to cell_death CSV with line/UID info (required for de_filter)",
     )
     parser.add_argument(
         "--min_cv",
@@ -1462,12 +1462,12 @@ def main():
         )
     elif args.concept_ids == "de_filter":
         # DE-based class-specific concept selection (requires features_cache)
-        if not args.features_cache or not args.apoptosis_csv:
-            logger.error("de_filter requires --features_cache and --apoptosis_csv")
+        if not args.features_cache or not args.cell_death_csv:
+            logger.error("de_filter requires --features_cache and --cell_death_csv")
             return
         de_concepts = select_concepts_by_de(
             args.features_cache,
-            args.apoptosis_csv,
+            args.cell_death_csv,
             min_cv=args.min_cv,
             de_adj_p=args.de_adj_p,
             de_min_log2fc=args.de_min_log2fc,
@@ -1601,7 +1601,7 @@ def main():
 
     if len(bank.labels) > 0:
         sample_labels = bank.labels[: min(100, len(bank.labels))]
-        from sae_project.step02_logging_utils import SUPERCLASS_MAP
+        from model_train.logging_utils import SUPERCLASS_MAP
 
         label_counts = Counter(sample_labels)
         mapped = Counter(SUPERCLASS_MAP.get(l, f"UNMAPPED:{l}") for l in sample_labels)

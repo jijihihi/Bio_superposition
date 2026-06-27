@@ -3,14 +3,14 @@
 #
 # Per mutation subplot, K values as stacked rows.
 # Each row: CNN (blue) and SAE (orange) KDE overlaid.
-# X-axis : local_std of KNN apoptosis neighbors
+# X-axis : local_std of KNN cell_death neighbors
 # Y-rows  : k values (small k at bottom, large k at top)
 # Annotation: MWU p-value (pooled per-sample across seeds) + median dashed line
 #
 # Data source: ratios_*.npz files (local_stds arrays)
 #
 # Usage (Colab):
-# !python -m apoptosis_prediction.plot_knn_std_ridge \
+# !python -m cell_death_prediction.plot_knn_std_ridge \
 #         --base_dir "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/local_linearity/raw" \
 #         --output_dir "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/local_linearity/plots" \
 #         --experiment raw
@@ -365,7 +365,7 @@ def plot_ridgeline(
         ax.set_xticklabels(tick_labels)
 
         ax.set_ylim(-0.08 * RH, n_rows * RH)
-        ax.set_xlabel("Local Apoptosis Std (Transformed: log10(10x + 1))", fontsize=11)
+        ax.set_xlabel("Local cell_death Std (Transformed: log10(10x + 1))", fontsize=11)
         ax.set_title(mut, fontsize=14, fontweight="bold", pad=8)
 
         # ── Legend (first subplot only) ───────
@@ -385,7 +385,7 @@ def plot_ridgeline(
         sns.despine(ax=ax, left=True)
 
     fig.suptitle(
-        f"Local Apoptosis Std Distribution — CNN vs SAE  [{experiment}]\n"
+        f"Local cell_death Std Distribution — CNN vs SAE  [{experiment}]\n"
         f"(lower std → tighter neighbourhood → better feature organisation)",
         fontsize=12,
         fontweight="bold",

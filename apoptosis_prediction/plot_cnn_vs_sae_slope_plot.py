@@ -9,13 +9,13 @@
 #   import sys
 #   sys.argv = [
 #       "plot_cnn_vs_sae",
-#       "--cnn_results_dir", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/apoptosis_r2_results",
+#       "--cnn_results_dir", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/cell_death_r2_results",
 #       "--sae_results_dir", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/caches_per_image_centering/SAE_vector_per_image_centering",
 #       "--cnn_config", "MoCo_l2norm",
 #       "--cnn_layer", "stage5_out",
 #       "--sae_l2norm", "l2norm",
 #   ]
-#   from apoptosis_prediction.plot_cnn_vs_sae_slope_plot import main
+#   from cell_death_prediction.plot_cnn_vs_sae_slope_plot import main
 #   main()
 # ==============================================================================
 import argparse

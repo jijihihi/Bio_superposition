@@ -8,7 +8,7 @@ import scanpy as sc
 import seaborn as sns
 from scipy.stats import pearsonr, spearmanr
 
-from sae_project.step02_logging_utils import get_logger
+from model_train.logging_utils import get_logger
 
 logger = get_logger("trajectory_api_pairwise")
 
@@ -103,9 +103,9 @@ def run_pairwise_trajectory(
 
     logger.info(f"Root DPT = {dpt_pair[root_in_pair]:.6f}")
 
-    # Evaluate Apoptosis Correlation
-    if "apoptosis" in adata_pair.obs:
-        apop = adata_pair.obs["apoptosis"].values
+    # Evaluate cell_death Correlation
+    if "cell_death" in adata_pair.obs:
+        apop = adata_pair.obs["cell_death"].values
         mut_mask = pair_sc == mutation
         valid_mask = mut_mask & ~np.isnan(apop)
 
@@ -157,9 +157,9 @@ def _plot_diffmap(adata_pair, diffmap_dc, mutation, out_dir, prefix, dpi):
         rasterized=True,
     )
 
-    # Mutation (apoptosis gradient)
-    if "apoptosis" in adata_pair.obs:
-        apop = adata_pair.obs["apoptosis"].values[mut_mask]
+    # Mutation (cell_death gradient)
+    if "cell_death" in adata_pair.obs:
+        apop = adata_pair.obs["cell_death"].values[mut_mask]
         sc = ax.scatter(
             x_vals[mut_mask],
             y_vals[mut_mask],
@@ -169,7 +169,7 @@ def _plot_diffmap(adata_pair, diffmap_dc, mutation, out_dir, prefix, dpi):
             alpha=0.8,
             rasterized=True,
         )
-        plt.colorbar(sc, ax=ax, label="Apoptosis Rate")
+        plt.colorbar(sc, ax=ax, label="cell_death Rate")
     else:
         ax.scatter(
             x_vals[mut_mask],
