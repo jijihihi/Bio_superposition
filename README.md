@@ -18,7 +18,7 @@ We utilized gated sparse autoencoder (SAE) to resolve the superposition. By usin
   <img src="FIG1.jpg" width="80%" />
 </div>
 
-# Superposition contaminates representation space.
+## Superposition Contamination
 
 To verify this framework, we quantify the semantic similarity through the standard deviation of cell death rate.
 
@@ -27,98 +27,92 @@ To verify this framework, we quantify the semantic similarity through the standa
 </div>
 
 
+## Adaptation of scRNA-seq analysis method
+
+SAE representation faithfully reflects the data intrinsic sturcture by disentangling the superposition. Intriguingly, the L0/L1 regularization imposed on SAEs
+mathematically mirrors the evolutionary constraints of energy-efficient, sparse molecular expression, yielding similarly skewed, zero-inflated activation distributions. Leveraging this geometric purification and structural similarity,
+we directly adapted scRNA-seq analytical frameworks to the image domain
+
+<div align="center">
+  <img src="phate,PAGA,DPT_compressed.png" width="80%" />
+</div>
 
 
-## The toy model
+## GW-map
+We introduce GW-map, coupling the image and authentic scRNA-seq via gromov-wasserstein. High label transfer accuracy and predictability indicates the robust coupling.
 
-We use Anthropic's toy model of superposition, adding weight decay or growth to control the degree of superposition.
 
-<p align="center" width="100%">
-<img src="./figures/Fig-2-2.png" alt="Alt Text" style="width:100%; min-width: 200px; display: block; margin: auto;">
-</p>
+<div align="center">
+  <img src="Fig5_GW_map_accuracy_simple.png" width="80%" />
+</div>
 
-## Weight decay
 
-Weight decay (or growth when the value is negative) can control superposition reflected by the fraction of represented features.
+## Code Implementation
 
-The code of the following figure is ['./exp/exp-10.py'](./exp/exp-10.py) and ['./exp/exp-10-3.py'](./exp/exp-10-3.py)
+### Hardware & Requirements
 
-<p align="center" width="100%">
-<img src="./figures/Fig-3-3.png" alt="Alt Text" style="width:100%; min-width: 200px; display: block; margin: auto;">
-</p>
+We used 1x NVIDIA GH200 (96 GB), ARM64 + H100, 64 vCPUs, 432 GiB RAM, and a 4 TiB SSD for CNN and SAE training.
 
-## Rich phenomena
-
-We need to answer when the loss is a power law with model dimension, and what control the power law exponent (we call it model exponent here).
-
-We analyze the data from ['./exp/exp-17.py'](./exp/exp-17.py), ['./exp/exp-10.py'](./exp/exp-10.py) and ['./exp/exp-10-3.py'](./exp/exp-10-3.py) in the following figure.
-
-<p align="center" width="100%">
-<img src="./figures/Fig-4-3.png" alt="Alt Text" style="width:100%; min-width: 200px; display: block; margin: auto;">
-</p>
-
-## Weak superposition regime
-
-In the weak superposition regime (weight decay is large), the loss is well described by the expected number of activated but unlearned features, which is a power law once the feature distribution is.
-
-The data are from ['./exp/exp-10.py'](./exp/exp-10.py) and ['./exp/exp-10-3.py'](./exp/exp-10-3.py).
-
-<p align="center" width="100%">
-<img src="./figures/Fig-4-4.png" alt="Alt Text" style="width:100%; min-width: 200px; display: block; margin: auto;">
-</p>
-
-## Strong superposition
-
-Scaling behavior in the strong superposition regime is robust due to generic geometric fact that when many more vectors are squeezed into a lower dimensional space, their overlaps scale inversely proportional to square root of dimension.
-
-The data are from ['./exp/exp-10.py'](./exp/exp-10.py) and ['./exp/exp-10-3.py'](./exp/exp-10-3.py).
-
-<p align="center" width="100%">
-<img src="./figures/Fig-5-2.png" alt="Alt Text" style="width:100%; min-width: 200px; display: block; margin: auto;">
-</p>
-
-## Activation density
-
-The scaling exponents are robust to the number of expected activated features in one data point.
-
-The data are from ['./exp/exp-15.py'](./exp/exp-15.py).
-
-<p align="center" width="100%">
-<img src="./figures/Fig-7-2.png" alt="Alt Text" style="width:100%; min-width: 200px; display: block; margin: auto;">
-</p>
-
-## LLMs
-
-LLMs agree with the toy model results in the strong superposition regime from underlying overlaps between representations to loss scaling with model dimension.
-
-Analysis of overlaps is in ['./LLMs/overlap-0.py'](./LLMs/overlap-0.py). We also analyzed norm distribution in ['./LLMs/norm-0.py'](./LLMs/norm-0.py) and token frequencies in ['./LLMs/token-freq-0.py'](./LLMs/token-freq-0.py) (see Appendix in the paper). Loss evaluation can be found in ['./LLMs/cali-1.py'](./LLMs/cali-1.py).
-
-<p align="center" width="100%">
-<img src="./figures/Fig-8-2.png" alt="Alt Text" style="width:100%; min-width: 200px; display: block; margin: auto;">
-</p>
-
-## Citation
-```
-@article{liu2025superposition,
-  title={Superposition Yields Robust Neural Scaling},
-  author={Liu, Yizhou and Liu, Ziming and Gore, Jeff},
-  journal={Advances in Neural Information Processing Systems},
-  volume={38},
-  pages={159269--159305},
-  year={2025}
-}
-```
-or
-```
-@article{liu2025superposition,
-  title={Superposition Yields Robust Neural Scaling},
-  author={Liu, Yizhou and Liu, Ziming and Gore, Jeff},
-  journal={arXiv preprint arXiv:2505.10465},
-  year={2025}
-}
+```bash
+conda create -n our_model python=3.12 -y
+conda activate our_model
+pip install -r requirements.txt
 ```
 
-## Interested in Other Neural Scaling Laws?
+### Reproducing the Paper's Results
+You can reproduce the main results and figures of our paper by running the provided bash scripts sequentially:
 
-- Depth Scaling Due to Limited Transformation: Inverse Depth Scaling From Most Layers Being Similar ([paper link](https://arxiv.org/abs/2602.05970), [code link](https://github.com/liuyz0/DepthScaling))
-- Time Scaling Due to Limited Training: Universal One-third Time Scaling in Learning Peaked Distributions ([paper link](https://arxiv.org/abs/2602.03685), [code link](https://github.com/liuyz0/TimeScaling))
+*   **Data preprocessing**
+    ```bash
+    bash script/01_preprocessing.sh
+    ```
+
+*   **Figure 2. CNN training and evaluation:**
+    ```bash
+    bash script/02_run_cnn_models.sh
+    ```
+*   **Table 1, Figure 3. SAE training and evaluation:**
+    ```bash
+    bash script/03_SAE.sh
+    ```
+*   **Figure 5. Geometric contamination analysis:**
+    ```bash
+    bash script/04_geometric_contamination.sh
+    ```
+*   **Figure 6. scRNA-seq analysis adaptation:**
+    ```bash
+    bash script/05_scRNA_adapt.sh
+    ```  
+
+
+### Model Training Details
+The above bash scripts automatically execute the training routines. For reference, the core Python commands and hyperparameters used for our models are as follows:
+
+For CNN training
+```bash
+python -m run_CNN.train \
+    --epochs 100 \
+    --batch_size 512 \
+    --moco_m 0.995 \
+    --temp 0.07 \
+    --use_bf16 \
+    --lr 0.1 \
+    --sgd_nesterov \
+    --symmetric_loss \
+    --queue_dtype_fp16
+```  
+
+For SAE training on CNN:
+```bash
+python -m sae_project.step09_train_gated_sae \
+    --model_state_path "${MODEL_DIR}/best_model.pt" \
+    --use_bf16 \
+    --batch_size 64 \
+    --epochs 8 \
+    --d_sae 8192 \
+    --final_sparsity_coeff 800 \
+    --tie_gate_weights
+```  
+
+
+
