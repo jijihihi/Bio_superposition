@@ -11,7 +11,7 @@ Therefore, although superposition has been critically overlooked in biological A
 
 We utilized gated sparse autoencoder (SAE) to resolve the superposition. By using geometrically purified SAE representaion, we deployed single-cell RNA sequencing (scRNA-seq) analysis methodologeis to evaluate the SAE representations. Intriguingly, the L0/L1 regularization imposed on SAEs mathematically mirrors the evolutionary constraints of energy-efficient, sparse molecular expression, yielding similarly skewed, zero-inflated activation distributions. This structural similarity justify the adaptation of scRNA-seq methodologies. Finally we , we developed GW-map, utilizing Gromov-Wasserstein optimal transport to align these image representationswith authentic scRNA-seq data de novo.
 
-
+!https://github.com/user-attachments/files/29467621/FIG1.pdf
 
 
 
