@@ -18,7 +18,13 @@ We utilized gated sparse autoencoder (SAE) to resolve the superposition. By usin
   <img src="FIG1.jpg" width="80%" />
 </div>
 
+# Superposition contaminates representation space.
 
+To verify this framework, we quantify the semantic similarity through the standard deviation of cell death rate.
+
+<div align="center">
+  <img src="local_isometry_prediction.png" width="80%" />
+</div>
 
 
 
