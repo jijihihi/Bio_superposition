@@ -1,3 +1,29 @@
+# !python -m trajectory_inference_pipeline.pairwise_dpt \
+# --features_cache "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/caches_per_image_centering/CNN_seed445_SAE/sae_gap_d8192_lam800_normrestored_withnewclass.npz" \
+# --cell_death_csv "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv" \
+# --output_dir "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/caches_per_image_centering/DPT_445" \
+#   --n_neighbors 15 \
+#   --pca_dim 50 \
+#   --filter_mode "none" \
+#   --min_cv 0.2 \
+#   --de_adj_p 1.0 \
+#   --de_min_log2fc 0.0 \
+#   --dead_threshold 1e-5 \
+#   --norm "log_std" \
+#   --gap_l2_norm \
+#   --root_mode "diffmap" \
+#   --gam_splines 5 \
+#   --gam_trim_pctl 5 95 \
+#   --de_eval_split 0.5 \
+#   --de_mode "per_mut" \
+#   --erank_pca_dim 100 \
+#   --samples_per_class 15000 \
+#   --dpt_window_size 0.2 \
+#   --dpt_step 0.02 \
+#   --density_samples 800 \
+#   --de_eval_split 0.5
+
+
 import argparse
 import csv
 import os
@@ -33,9 +59,8 @@ def get_args():
     p = argparse.ArgumentParser(description="Pairwise DPT, Correlation, GAM fitting")
     p = add_trajectory_arguments(p)
     p.add_argument(
-        "--root_mode", type=str, default="mnn", choices=["pca", "diffmap", "mnn"]
+        "--root_mode", type=str, default="diffmap", choices=["diffmap"]
     )
-    p.add_argument("--mnn_k", type=int, default=30)
     p.add_argument(
         "--gpu", action="store_true", help="Use GPU for DPT via rapids-singlecell"
     )
@@ -43,27 +68,7 @@ def get_args():
     p.add_argument("--gam_trim_pctl", type=float, nargs=2, default=[5, 95])
     p.add_argument("--no_plot", action="store_true")
     p.add_argument("--de_eval_split", type=float, default=0.5)
-    p.add_argument(
-        "--dpt_window_size",
-        type=float,
-        default=0.1,
-        help="Width of sliding window in DPT space",
-    )
-    p.add_argument(
-        "--dpt_step", type=float, default=0.02, help="Step size for DPT sliding window"
-    )
-    p.add_argument(
-        "--density_samples",
-        type=int,
-        default=1000,
-        help="Fixed number of cells to sample per DPT window",
-    )
-    p.add_argument(
-        "--erank_pca_dim",
-        type=int,
-        default=0,
-        help="If > 0, apply PCA before ERank sliding window to remove high-dim noise",
-    )
+
     return p.parse_args()
 
 
@@ -168,314 +173,6 @@ def plot_dpt_scatter(
 
     logger.info(f"    Saved DPT scatter: {output_path}")
     return gam_dev_expl
-
-
-def compute_gam_r2_only(dpt_vals, apop_vals, gam_splines=20, gam_trim_pctl=(1, 99)):
-    try:
-        from pygam import LinearGAM
-        from pygam import s as s_term
-
-        pct_lo, pct_hi = np.percentile(dpt_vals, list(gam_trim_pctl))
-        dense_mask = (dpt_vals >= pct_lo) & (dpt_vals <= pct_hi)
-        dpt_dense = dpt_vals[dense_mask]
-        apop_dense = apop_vals[dense_mask]
-        if len(dpt_dense) < 20:
-            return 0.0
-        n_sp = min(gam_splines, max(5, len(dpt_dense) // 50))
-        gam = LinearGAM(s_term(0, n_splines=n_sp, spline_order=3)).fit(
-            dpt_dense.reshape(-1, 1), apop_dense
-        )
-        ss_res = np.sum((apop_dense - gam.predict(dpt_dense.reshape(-1, 1))) ** 2)
-        ss_tot = np.sum((apop_dense - apop_dense.mean()) ** 2)
-        n, p = len(apop_dense), gam.statistics_["edof"]
-        return (
-            1 - (ss_res / (n - p - 1)) / (ss_tot / (n - 1))
-            if ss_tot > 0 and n > p + 1
-            else 0.0
-        )
-    except ImportError:
-        return 0.0
-
-
-def compute_twonn_id(X):
-    import numpy as np
-    from sklearn.neighbors import NearestNeighbors
-
-    if len(X) < 3:
-        return 0.0
-    nn = NearestNeighbors(n_neighbors=3, algorithm="auto").fit(X)
-    distances, _ = nn.kneighbors(X)
-    r1 = distances[:, 1]
-    r2 = distances[:, 2]
-    valid = r1 > 1e-12
-    if valid.sum() < 3:
-        return 0.0
-    r1, r2 = r1[valid], r2[valid]
-    mu = r2 / r1
-    mu_sorted = np.sort(mu)
-    N = len(mu_sorted)
-    F_mu = np.arange(1, N + 1) / N
-    mu_sorted = mu_sorted[:-1]
-    F_mu = F_mu[:-1]
-    x = np.log(mu_sorted)
-    y = -np.log(1 - F_mu)
-    d = np.dot(x, y) / np.dot(x, x)
-    return float(d)
-
-
-def compute_sliding_metrics(
-    X_mut,
-    dpt_mut,
-    apop_mut,
-    dpt_window=0.1,
-    dpt_step=0.02,
-    density_samples=1000,
-    top_k_sv=0,
-    seed=42,
-):
-    rng = np.random.RandomState(seed)
-    eranks, twonns, apops, dpts = [], [], [], []
-    eranks_perm, twonns_perm = [], []
-
-    min_dpt = np.nanmin(dpt_mut)
-    max_dpt = np.nanmax(dpt_mut)
-
-    starts = np.arange(min_dpt, max_dpt - dpt_window + 1e-5, dpt_step)
-
-    for start in starts:
-        end = start + dpt_window
-
-        # Find cells within this DPT range
-        mask = (dpt_mut >= start) & (dpt_mut < end)
-        idx_in_window = np.where(mask)[0]
-
-        if len(idx_in_window) < density_samples:
-            # Skip this window because it lacks the required density
-            continue
-
-        # Downsample to exactly `density_samples`
-        chosen_idx = rng.choice(idx_in_window, size=density_samples, replace=False)
-
-        X_win = X_mut[chosen_idx]
-        apop_win = apop_mut[chosen_idx]
-        dpt_win = dpt_mut[chosen_idx]
-
-        # Center the window
-        X_win_centered = X_win - X_win.mean(axis=0)
-        s = np.linalg.svd(X_win_centered, compute_uv=False)
-        s = s[s > 1e-12]
-
-        if top_k_sv > 0:
-            s = s[:top_k_sv]
-
-        if len(s) > 0:
-            p = s / s.sum()
-            erank = np.exp(-np.sum(p * np.log(p)))
-            eranks.append(erank)
-
-            twonn = compute_twonn_id(X_win)
-            twonns.append(twonn)
-
-            apops.append(
-                np.nanmean(apop_win) if not np.isnan(apop_win).all() else np.nan
-            )
-            dpts.append(dpt_win.mean())
-
-            # Permutation Control (random cells from the entire manifold)
-            idx_perm = rng.choice(len(X_mut), size=density_samples, replace=False)
-            X_win_perm = X_mut[idx_perm]
-
-            X_win_perm_centered = X_win_perm - X_win_perm.mean(axis=0)
-            s_perm = np.linalg.svd(X_win_perm_centered, compute_uv=False)
-            s_perm = s_perm[s_perm > 1e-12]
-            if top_k_sv > 0:
-                s_perm = s_perm[:top_k_sv]
-            if len(s_perm) > 0:
-                p_perm = s_perm / s_perm.sum()
-                eranks_perm.append(np.exp(-np.sum(p_perm * np.log(p_perm))))
-            else:
-                eranks_perm.append(np.nan)
-
-            twonns_perm.append(compute_twonn_id(X_win_perm))
-
-    return (
-        np.array(dpts),
-        np.array(eranks),
-        np.array(twonns),
-        np.array(apops),
-        np.array(eranks_perm),
-        np.array(twonns_perm),
-    )
-
-
-def plot_sliding_metrics(
-    dpts,
-    eranks,
-    twonns,
-    apops,
-    eranks_perm,
-    twonns_perm,
-    mutation,
-    output_path,
-    dpi=200,
-):
-    if len(dpts) < 3:
-        logger.warning(f"Not enough sliding windows for {mutation} to plot metrics.")
-        return 0.0, 0.0, 0.0, 0.0
-
-    fig, axes = plt.subplots(1, 5, figsize=(25, 4.5))
-    color = MUTATION_COLORS.get(mutation, "gray")
-
-    # 1. DPT vs ERank
-    ax = axes[0]
-    ax.scatter(dpts, eranks_perm, color="gray", alpha=0.3, s=15, label="Permuted Null")
-    ax.scatter(dpts, eranks, color=color, alpha=0.85, s=30, label="Real")
-    rho_de, p_de = spearmanr(dpts, eranks)
-    rho_de = rho_de if not np.isnan(rho_de) else 0.0
-    ax.set_title(f"DPT vs ERank (ρ={rho_de:.2f}, p={p_de:.2e})", fontsize=11)
-    ax.set_xlabel("Mean Pseudotime (Window)", fontsize=10)
-    ax.set_ylabel("Effective Rank", fontsize=10)
-    ax.legend(fontsize=8)
-
-    try:
-        from pygam import LinearGAM
-        from pygam import s as s_term
-
-        gam_e = LinearGAM(s_term(0, n_splines=min(8, max(4, len(dpts) // 5)))).fit(
-            dpts.reshape(-1, 1), eranks
-        )
-        x_line = np.linspace(dpts.min(), dpts.max(), 100)
-        gam_e_pred = gam_e.predict(x_line)
-        ax.plot(x_line, gam_e_pred, color="black", lw=2)
-
-        # GAM for Permuted
-        gam_ep = LinearGAM(s_term(0, n_splines=min(8, max(4, len(dpts) // 5)))).fit(
-            dpts.reshape(-1, 1), eranks_perm
-        )
-        ax.plot(x_line, gam_ep.predict(x_line), "--", color="gray", lw=1.5)
-    except:
-        gam_e = None
-        gam_e_pred = None
-        x_line = np.linspace(dpts.min(), dpts.max(), 100)
-
-    # 2. DPT vs Two-NN
-    ax = axes[1]
-    ax.scatter(dpts, twonns_perm, color="gray", alpha=0.3, s=15, label="Permuted Null")
-    ax.scatter(dpts, twonns, color="#2CA02C", alpha=0.85, s=30, label="Real")
-    rho_dt, p_dt = spearmanr(dpts, twonns)
-    rho_dt = rho_dt if not np.isnan(rho_dt) else 0.0
-    ax.set_title(f"DPT vs Two-NN (ρ={rho_dt:.2f}, p={p_dt:.2e})", fontsize=11)
-    ax.set_xlabel("Mean Pseudotime (Window)", fontsize=10)
-    ax.set_ylabel("Two-NN Intrinsic Dim", fontsize=10)
-    ax.legend(fontsize=8)
-
-    try:
-        gam_t = LinearGAM(s_term(0, n_splines=min(8, max(4, len(dpts) // 5)))).fit(
-            dpts.reshape(-1, 1), twonns
-        )
-        gam_t_pred = gam_t.predict(x_line)
-        ax.plot(x_line, gam_t_pred, color="black", lw=2)
-
-        # GAM for Permuted
-        gam_tp = LinearGAM(s_term(0, n_splines=min(8, max(4, len(dpts) // 5)))).fit(
-            dpts.reshape(-1, 1), twonns_perm
-        )
-        ax.plot(x_line, gam_tp.predict(x_line), "--", color="gray", lw=1.5)
-    except:
-        gam_t = None
-        gam_t_pred = None
-
-    # 3. DPT vs cell_death
-    ax = axes[2]
-    ax.scatter(dpts, apops, color=color, alpha=0.85, s=30)
-    rho_da, p_da = spearmanr(dpts, apops)
-    rho_da = rho_da if not np.isnan(rho_da) else 0.0
-    ax.set_title(f"DPT vs cell_death (ρ={rho_da:.2f}, p={p_da:.2e})", fontsize=11)
-    ax.set_xlabel("Mean Pseudotime (Window)", fontsize=10)
-    ax.set_ylabel("Mean cell_death", fontsize=10)
-
-    try:
-        gam_a = LinearGAM(s_term(0, n_splines=min(8, max(4, len(dpts) // 5)))).fit(
-            dpts.reshape(-1, 1), apops
-        )
-        gam_a_pred = gam_a.predict(x_line)
-        ax.plot(x_line, gam_a_pred, color="black", lw=2)
-    except:
-        gam_a = None
-        gam_a_pred = None
-
-    # 4. ERank vs cell_death
-    ax = axes[3]
-    ax.scatter(eranks, apops, color=color, alpha=0.85, s=30)
-    rho_ea, p_ea = spearmanr(eranks, apops)
-    rho_ea = rho_ea if not np.isnan(rho_ea) else 0.0
-    ax.set_title(f"ERank vs cell_death (ρ={rho_ea:.2f}, p={p_ea:.2e})", fontsize=11)
-    ax.set_xlabel("Effective Rank", fontsize=10)
-    ax.set_ylabel("Mean cell_death", fontsize=10)
-
-    if len(eranks) > 1 and np.std(eranks) > 0:
-        z = np.polyfit(eranks, apops, 1)
-        x_line_e = np.linspace(eranks.min(), eranks.max(), 100)
-        ax.plot(x_line_e, np.polyval(z, x_line_e), "--", color="black", lw=2)
-
-    # 5. Combined Plot (DPT vs ERank, Two-NN & cell_death)
-    ax_c = axes[4]
-    ax_c.set_title(f"DPT Trajectory Overlay", fontsize=11)
-    ax_c.set_xlabel("Mean Pseudotime (Window)", fontsize=10)
-
-    ax_erank = ax_c.twinx()
-
-    # Plot cell_death on left Y
-    ax_c.scatter(dpts, apops, color="#DD8452", alpha=0.5, s=15)
-    ax_c.set_ylabel("Mean cell_death", color="#DD8452", fontsize=10, fontweight="bold")
-    ax_c.tick_params(axis="y", labelcolor="#DD8452")
-    if gam_a is not None:
-        ax_c.plot(x_line, gam_a_pred, color="#A55628", lw=2.5, label="cell_death (GAM)")
-
-    # Plot ERank and Two-NN on right Y
-    ax_erank.scatter(dpts, eranks_perm, color="gray", alpha=0.3, s=10)
-    ax_erank.scatter(dpts, twonns_perm, color="gray", alpha=0.3, s=10)
-
-    ax_erank.scatter(dpts, eranks, color="#4C72B0", alpha=0.5, s=15)
-    ax_erank.scatter(dpts, twonns, color="#2CA02C", alpha=0.5, s=15)
-    ax_erank.set_ylabel(
-        "Intrinsic Dim (ERank / Two-NN)",
-        color="#4C72B0",
-        fontsize=10,
-        fontweight="bold",
-    )
-    ax_erank.tick_params(axis="y", labelcolor="#4C72B0")
-    if gam_e is not None:
-        ax_erank.plot(x_line, gam_e_pred, color="#2B4B80", lw=2.5, label="ERank (GAM)")
-    if gam_t is not None:
-        ax_erank.plot(x_line, gam_t_pred, color="#1A601A", lw=2.5, label="Two-NN (GAM)")
-
-    lines_1, labels_1 = ax_c.get_legend_handles_labels()
-    lines_2, labels_2 = ax_erank.get_legend_handles_labels()
-    if lines_1 or lines_2:
-        ax_c.legend(
-            lines_1 + lines_2,
-            labels_1 + labels_2,
-            loc="upper center",
-            bbox_to_anchor=(0.5, -0.15),
-            ncol=2,
-            fontsize=9,
-        )
-
-    for idx, ax in enumerate(axes):
-        ax.grid(True, alpha=0.2)
-        if idx < 4:
-            sns.despine(ax=ax)
-        else:
-            sns.despine(ax=ax, right=False)  # Keep right spine for twinx
-
-    fig.tight_layout()
-    fig.savefig(output_path, dpi=dpi, bbox_inches="tight")
-    fig.savefig(output_path.replace(".png", ".svg"), format="svg", bbox_inches="tight")
-    if _IN_COLAB:
-        plt.show()
-    plt.close(fig)
-    return rho_de, rho_dt, rho_da, rho_ea
 
 
 def run_pairwise_dpt(args):
@@ -627,7 +324,6 @@ def run_pairwise_dpt(args):
         )
 
         gam_r2 = 0.0
-        rho_de, rho_da, rho_ea = 0.0, 0.0, 0.0
 
         if not args.no_plot:
             out_path = os.path.join(
@@ -645,49 +341,6 @@ def run_pairwise_dpt(args):
                 gam_trim_pctl=args.gam_trim_pctl,
             )
 
-            # Compute and Plot Sliding ERank
-            # ERank only needs features and DPT order. We don't need to filter out cells missing cell_death labels!
-            valid_erank = np.isfinite(dpt_mut)
-            X_mut_raw = X_log[pair_mask][pair_mut_eval]
-
-            X_mut_e = X_mut_raw[valid_erank]
-            dpt_e = dpt_mut[valid_erank]
-            apop_e = apop_mut[valid_erank]
-
-            dpts, eranks, twonns, apops, eranks_perm, twonns_perm = (
-                compute_sliding_metrics(
-                    X_mut_e,
-                    dpt_e,
-                    apop_e,
-                    dpt_window=args.dpt_window_size,
-                    dpt_step=args.dpt_step,
-                    density_samples=args.density_samples,
-                    top_k_sv=args.erank_pca_dim,
-                    seed=args.seed,
-                )
-            )
-            erank_out = os.path.join(
-                out_dir, f"sliding_metrics_dpt_{args.norm}_{which_layer}_{mut}.png"
-            )
-            rho_de, rho_dt, rho_da, rho_ea = plot_sliding_metrics(
-                dpts,
-                eranks,
-                twonns,
-                apops,
-                eranks_perm,
-                twonns_perm,
-                mut,
-                erank_out,
-                dpi=args.dpi,
-            )
-        else:
-            gam_r2 = compute_gam_r2_only(
-                dpt_v,
-                apop_v,
-                gam_splines=args.gam_splines,
-                gam_trim_pctl=args.gam_trim_pctl,
-            )
-
         results.append(
             {
                 "Mutation": mut,
@@ -699,11 +352,6 @@ def run_pairwise_dpt(args):
                 "rho": rho,
                 "r": r,
                 "gam_r2": gam_r2,
-                "rho_dpt_erank": rho_de,
-                "rho_dpt_twonn": rho_dt,
-                "rho_dpt_apop": rho_da,
-                "rho_erank_apop": rho_ea,
-                "n_valid": valid.sum(),
             }
         )
         del adata_pair

@@ -214,7 +214,7 @@ def plot_phate_cell_death_gradient(
 
 def run_pairwise_vis(args):
     np.random.seed(args.seed)
-    X, superclasses, cell_death, which_layer = load_and_preprocess(args)
+    X, superclasses, cell_death, which_layer, _ = load_and_preprocess(args)
     out_dir = args.output_dir or os.path.join(
         os.path.dirname(args.features_cache), "pairwise_vis"
     )
@@ -237,35 +237,12 @@ def run_pairwise_vis(args):
         pair_sc = superclasses[pair_mask]
         pair_apop = cell_death[pair_mask]
 
-        # 1. DiffMap
+        # 1. Setup AnnData for PAGA/PHATE
         adata_pair = sc.AnnData(X_pair_pca.astype(np.float32))
         adata_pair.obsm["X_pca"] = X_pair_pca.astype(np.float32)
         adata_pair.obs["superclass"] = pd.Categorical(pair_sc)
 
         sc.pp.neighbors(adata_pair, n_neighbors=args.n_neighbors, use_rep="X_pca")
-        sc.tl.diffmap(adata_pair, n_comps=args.n_diffmap_comps)
-
-        diffmap_coords = adata_pair.obsm["X_diffmap"]
-        dc_2d = np.column_stack(
-            [diffmap_coords[:, 1], diffmap_coords[:, 2]]
-        )  # DC1 vs DC2 (0-indexed internally but Scanpy returns from DC1=idx1)
-        plot_phate_cell_death_gradient(
-            dc_2d,
-            pair_sc,
-            pair_apop,
-            mutation=mut,
-            out_dir=out_dir,
-            prefix=f"diffmap_{args.norm}_{which_layer}",
-            ctrl_size=args.plot_ctrl_size,
-            ctrl_alpha=args.plot_ctrl_alpha,
-            ctrl_color=args.plot_ctrl_color,
-            mut_size=args.plot_mut_size,
-            mut_alpha=args.plot_mut_alpha,
-            invalid_size=args.plot_invalid_size,
-            invalid_alpha=args.plot_invalid_alpha,
-            invalid_color=args.plot_invalid_color,
-        )
-
         # 2. PAGA
         sc.tl.leiden(
             adata_pair,

@@ -9,4 +9,6 @@ scipy==1.8.0
 tifffile==2025.5.10
 torchvision==0.22.0
 tqdm==4.67.3
-umap_learn==0.5.11
+umap-learn==0.5.11
+xgboost
+matplotlib==3.5.1

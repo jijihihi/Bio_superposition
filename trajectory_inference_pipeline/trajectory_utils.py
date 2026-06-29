@@ -7,7 +7,7 @@ import pandas as pd
 from sklearn.decomposition import PCA
 from sklearn.neighbors import NearestNeighbors
 
-from model_train.logging_utils import SUPERCLASS_MAP, get_logger
+from run_CNN.logging_utils import SUPERCLASS_MAP, get_logger
 
 logger = get_logger("trajectory_utils")
 

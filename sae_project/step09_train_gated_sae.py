@@ -2,8 +2,6 @@
 # Gated SAE Trainer with Hyperparameter Optimization
 # - L2-weighted reconstruction loss
 # - Sparsity warmup schedule
-# - lr 도 스케쥴러 선택가능. lienar cosine. 나는 cosine으로 학습시킴.
-# --dead_threshold로 dead neuron 기준 바꿀 수 있다.
 # - Automated grid search for sparsity, aux_coeff, tie_weights
 # - Linear probe evaluation for classification accuracy
 # ==============================================================================
@@ -23,14 +21,14 @@ from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
 from sae_project.step01_configs import get_args, resolve_paths
-from model_train.logging_utils import get_logger
-from model_train.data_shards import (build_uid_to_refidx,
+from run_CNN.logging_utils import get_logger
+from run_CNN.data_shards import (build_uid_to_refidx,
                                             load_all_sample_refs)
-from model_train.data_bank import (
+from run_CNN.data_bank import (
     InMemorySixteenBitDataset, InMemoryTarBank,
     StrictPlateBalancedBatchSamplerOnBank, collate_skip_none, load_split_csv,
     seed_worker)
-from model_train.model_encoder import (SupMoCoModel, parse_int_list,
+from run_CNN.model_encoder import (SupMoCoModel, parse_int_list,
                                               renorm_unit_per_out_channel_)
 from sae_project.step06_gated_sae import GatedSAE, get_sparsity_coeff
 from sae_project.step09_sae_eval import (DummyTrainer, LinearProbe,
@@ -999,7 +997,7 @@ def run_experiment(args, refs=None, uid_to_refidx=None, encoder=None):
         )
 
         sd = torch.load(args.model_state_path, map_location="cpu", weights_only=False)
-        from model_train.model_encoder import robust_load_state_dict
+        from run_CNN.model_encoder import robust_load_state_dict
 
         robust_load_state_dict(model, sd, strict=True)
         encoder = model.encoder
@@ -1114,7 +1112,7 @@ def main(args_list=None):
         proj_dropout=args.proj_dropout,
     )
     sd = torch.load(args.model_state_path, map_location="cpu", weights_only=False)
-    from model_train.model_encoder import robust_load_state_dict
+    from run_CNN.model_encoder import robust_load_state_dict
 
     robust_load_state_dict(model, sd, strict=True)
     encoder = model.encoder

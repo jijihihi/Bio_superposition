@@ -19,13 +19,13 @@ from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
 from sae_project.step01_configs import get_args, resolve_paths
-from model_train.logging_utils import get_logger
-from model_train.data_shards import (build_uid_to_refidx,
+from run_CNN.logging_utils import get_logger
+from run_CNN.data_shards import (build_uid_to_refidx,
                                             load_all_sample_refs)
-from model_train.data_bank import (InMemorySixteenBitDataset,
+from run_CNN.data_bank import (InMemorySixteenBitDataset,
                                           InMemoryTarBank, collate_skip_none,
                                           load_split_csv, seed_worker)
-from model_train.model_encoder import (SupMoCoModel, parse_int_list,
+from run_CNN.model_encoder import (SupMoCoModel, parse_int_list,
                                               renorm_unit_per_out_channel_)
 from sae_project.step06_gated_sae import GatedSAE
 
@@ -503,7 +503,7 @@ def main():
 
     # Resolve shard_root
     if args.shard_root is None:
-        from model_train.logging_utils import DEFAULT_SHARD_ROOT
+        from run_CNN.logging_utils import DEFAULT_SHARD_ROOT
 
         args.shard_root = DEFAULT_SHARD_ROOT
 
@@ -623,7 +623,7 @@ def main():
     )
 
     sd = torch.load(args.model_state_path, map_location="cpu", weights_only=False)
-    from model_train.model_encoder import robust_load_state_dict
+    from run_CNN.model_encoder import robust_load_state_dict
 
     robust_load_state_dict(model, sd, strict=True)
     encoder = model.encoder

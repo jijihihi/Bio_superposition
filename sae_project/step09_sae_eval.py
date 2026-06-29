@@ -14,7 +14,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
-from model_train.logging_utils import get_logger
+from run_CNN.logging_utils import get_logger
 from sae_project.step06_gated_sae import GatedSAE
 
 logger = get_logger("sae_eval")

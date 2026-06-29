@@ -11,7 +11,7 @@ import torch.optim as optim
 from sklearn.model_selection import train_test_split
 from tqdm import tqdm
 
-from model_train.data_bank import load_split_csv
+from run_CNN.data_bank import load_split_csv
 from sae_project.step09_sae_eval import train_linear_probe
 
 
@@ -60,15 +60,22 @@ def main():
         default=4,
         help="Number of original classes to evaluate on (e.g., 4 for Control, SNCA, GBA, LRRK2)",
     )
+    parser.add_argument(
+        "--target_configs",
+        type=str,
+        nargs="+",
+        default=None,
+        help="List of target configs (e.g. 600_50 1024_800) to evaluate. If none, evaluates all.",
+    )
     args = parser.parse_args()
 
     # 모든 .npz 파일 검색 (CNN_seed*/SAE_dim* 등 하위 폴더 모두 포함)
     pattern = os.path.join(args.cache_dir, "**", "*.npz")
     npz_files = glob.glob(pattern, recursive=True)
 
-    # SAE 파일만 필터링 (CNN cache 제외)
+    # SAE 파일만 필터링 (명확하게 sae_refactoring_gap_ 이 포함된 파일만 선택)
     sae_files = [
-        f for f in npz_files if "SAE_dim" in f or "sae_" in os.path.basename(f)
+        f for f in npz_files if "sae_refactoring_gap_" in os.path.basename(f)
     ]
 
     if not sae_files:
@@ -84,12 +91,17 @@ def main():
         # CNN Seed, Dimension, Lambda 추출
         # 지원하는 패턴: CNN_seed42, SAE_dim4096_lambda800 또는 sae_gap_d4096_lam800
         m_seed = re.search(r"(?:CNN_seed|seed)(\d+)", fpath)
-        m_dim = re.search(r"(?:SAE_dim|_d)(\d+)", fpath)
+        m_dim = re.search(r"(?:SAE_dim|_d|dim)(\d+)", fpath)
         m_lam = re.search(r"(?:_lambda|_lam)(\d+)", fpath)
 
         cnn_seed = int(m_seed.group(1)) if m_seed else -1
         dim = int(m_dim.group(1)) if m_dim else -1
         lam = int(m_lam.group(1)) if m_lam else -1
+
+        if args.target_configs:
+            config_str = f"{dim}_{lam}"
+            if config_str not in args.target_configs:
+                continue
 
         try:
             data = np.load(fpath, allow_pickle=True)

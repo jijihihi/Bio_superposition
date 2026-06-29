@@ -360,16 +360,6 @@ def main():
             )
             std_dim = df_dim.groupby("Dimension").std(numeric_only=True).reset_index()
 
-            ax.plot(
-                mean_dim["L0"],
-                mean_dim[y_col],
-                color="gray",
-                linestyle="--",
-                linewidth=1.5,
-                zorder=1,
-                label="Trend: Fixed Lambda=800",
-            )
-
             unique_dims = sorted(df_dim["Dimension"].unique())
             palette_dim = sns.color_palette("tab10", n_colors=len(unique_dims))
 
@@ -411,45 +401,7 @@ def main():
                     verticalalignment="bottom",
                 )
 
-        # --- CNN Proxy (d=600, lambda=50) ---
-        df_proxy = df[
-            (df["Dimension"].astype(float) == 600.0)
-            & (df["Lambda"].astype(float) == 50.0)
-        ].copy()
-        if not df_proxy.empty:
-            mean_p = df_proxy.mean(numeric_only=True)
-            std_p = df_proxy.std(numeric_only=True)
 
-            ax.scatter(
-                df_proxy["L0"],
-                df_proxy[y_col],
-                color="green",
-                alpha=0.4,
-                marker="*",
-                zorder=2,
-            )
-            ax.errorbar(
-                mean_p["L0"],
-                mean_p[y_col],
-                xerr=std_p["L0"],
-                yerr=std_p[y_col],
-                fmt="*",
-                color="green",
-                capsize=5,
-                zorder=4,
-                markersize=15,
-                markeredgecolor="black",
-                label="CNN Proxy (d=600, λ=50)",
-            )
-            ax.text(
-                mean_p["L0"],
-                mean_p[y_col],
-                " Proxy",
-                color="green",
-                fontsize=12,
-                fontweight="bold",
-                zorder=5,
-            )
 
         if df["L0"].mean() > 0.1:
             x_label_text = "L0 (Active Features per Token)"
@@ -477,16 +429,6 @@ def main():
                 .sort_values(by="L0")
             )
             std_lam = df_lam.groupby("Lambda").std(numeric_only=True).reset_index()
-
-            ax.plot(
-                mean_lam["L0"],
-                mean_lam[y_col],
-                color="black",
-                linestyle=":",
-                linewidth=1.5,
-                zorder=1,
-                label="Trend: Fixed d=4096",
-            )
 
             unique_lams = sorted(df_lam["Lambda"].unique())
             palette_lam = sns.color_palette("husl", n_colors=len(unique_lams))
@@ -529,45 +471,7 @@ def main():
                     verticalalignment="top",
                 )
 
-        # --- CNN Proxy (d=600, lambda=50) ---
-        df_proxy = df[
-            (df["Dimension"].astype(float) == 600.0)
-            & (df["Lambda"].astype(float) == 50.0)
-        ].copy()
-        if not df_proxy.empty:
-            mean_p = df_proxy.mean(numeric_only=True)
-            std_p = df_proxy.std(numeric_only=True)
 
-            ax.scatter(
-                df_proxy["L0"],
-                df_proxy[y_col],
-                color="green",
-                alpha=0.4,
-                marker="*",
-                zorder=2,
-            )
-            ax.errorbar(
-                mean_p["L0"],
-                mean_p[y_col],
-                xerr=std_p["L0"],
-                yerr=std_p[y_col],
-                fmt="*",
-                color="green",
-                capsize=5,
-                zorder=4,
-                markersize=15,
-                markeredgecolor="black",
-                label="CNN Proxy (d=600, λ=50)",
-            )
-            ax.text(
-                mean_p["L0"],
-                mean_p[y_col],
-                " Proxy",
-                color="green",
-                fontsize=12,
-                fontweight="bold",
-                zorder=5,
-            )
 
         if df["L0"].mean() > 0.1:
             x_label_text = "L0 (Active Features per Token)"
@@ -866,169 +770,7 @@ def main():
 
     plot_erank_trend(df_erank_all, args.save_dir)
 
-    # 5. Plotting Function for Trend Lines (N_Alive)
-    def plot_trend(
-        df, x_col, y_col, fixed_col, fixed_val, x_label, y_label, base_save_name, color
-    ):
-        df_sub = df[df[fixed_col] == fixed_val].copy()
-        if df_sub.empty or df_sub[y_col].isna().all():
-            return
 
-        plt.figure(figsize=(10, 6))
-        mean_df = (
-            df_sub.groupby(x_col)
-            .mean(numeric_only=True)
-            .reset_index()
-            .sort_values(by=x_col)
-        )
-        std_df = (
-            df_sub.groupby(x_col)
-            .std(numeric_only=True)
-            .reset_index()
-            .sort_values(by=x_col)
-        )
-
-        # Connect means with a subtle line
-        plt.plot(
-            mean_df[x_col],
-            mean_df[y_col],
-            color="gray",
-            linestyle="--",
-            linewidth=1.5,
-            zorder=1,
-            label=f"Trend: Fixed {fixed_col}={fixed_val}",
-        )
-
-        unique_x = sorted(df_sub[x_col].unique())
-        # Use tab10 for Dimension, husl for Lambda
-        palette = (
-            sns.color_palette("tab10", n_colors=len(unique_x))
-            if x_col == "Dimension"
-            else sns.color_palette("husl", n_colors=len(unique_x))
-        )
-        marker_style = "o" if x_col == "Dimension" else "s"
-
-        for i, x_val in enumerate(unique_x):
-            sub_x_df = df_sub[df_sub[x_col] == x_val]
-            c = palette[i]
-
-            # Scatter seeds
-            plt.scatter(
-                sub_x_df[x_col],
-                sub_x_df[y_col],
-                color=c,
-                alpha=0.3,
-                marker=marker_style,
-                zorder=2,
-            )
-
-            # Mean and error bar
-            m_row = mean_df[mean_df[x_col] == x_val].iloc[0]
-            s_row = std_df[std_df[x_col] == x_val].iloc[0]
-            plt.errorbar(
-                m_row[x_col],
-                m_row[y_col],
-                yerr=s_row[y_col],
-                fmt=marker_style,
-                color=c,
-                capsize=4,
-                zorder=3,
-                markersize=8,
-                markeredgecolor="black",
-            )
-
-        plt.xlabel(x_label, fontsize=12)
-        plt.ylabel(y_label, fontsize=12)
-        plt.title(f"{y_label} vs {x_label}", fontsize=15, fontweight="bold")
-        if x_col == "Lambda":
-            plt.xscale("log")  # Lambda is often logarithmic
-
-        # --- Add CNN Proxy (d=600, Lambda=50) ---
-        df_proxy = df[(df["Dimension"] == 600) & (df["Lambda"] == 50)].copy()
-        if not df_proxy.empty and not df_proxy[y_col].isna().all():
-            mean_p = df_proxy[y_col].mean()
-            std_p = df_proxy[y_col].std()
-            proxy_x = 600 if x_col == "Dimension" else 50
-
-            sns.scatterplot(
-                data=df_proxy,
-                x=x_col,
-                y=y_col,
-                color="green",
-                alpha=0.3,
-                marker="*",
-                zorder=2,
-            )
-            plt.scatter(
-                [proxy_x],
-                [mean_p],
-                color="green",
-                marker="*",
-                s=200,
-                label="CNN Proxy (d=600, Lambda=50)",
-                zorder=4,
-            )
-            plt.errorbar(
-                [proxy_x],
-                [mean_p],
-                yerr=[std_p],
-                fmt="none",
-                ecolor="green",
-                capsize=4,
-                alpha=0.7,
-                zorder=2,
-            )
-            plt.text(
-                proxy_x,
-                mean_p,
-                " Proxy",
-                color="green",
-                fontsize=10,
-                fontweight="bold",
-                zorder=5,
-            )
-
-        plt.legend(loc="best")
-        plt.grid(True, linestyle="--", alpha=0.6, zorder=1)
-        plt.tight_layout()
-
-        plt.savefig(
-            os.path.join(args.save_dir, f"{base_save_name}.svg"),
-            format="svg",
-            bbox_inches="tight",
-        )
-        plt.savefig(
-            os.path.join(args.save_dir, f"{base_save_name}.pdf"),
-            format="pdf",
-            bbox_inches="tight",
-        )
-        plt.close()
-        print(f"Saved plots: {base_save_name}.svg and {base_save_name}.pdf")
-
-    # Plot N_Alive trends
-    if not df_merged["N_Alive"].isna().all():
-        plot_trend(
-            df_merged,
-            "Dimension",
-            "N_Alive",
-            "Lambda",
-            800,
-            "Dimension (d_sae)",
-            "Number of Alive Neurons",
-            "Trend_Alive_vs_Dimension",
-            "blue",
-        )
-        plot_trend(
-            df_merged,
-            "Lambda",
-            "N_Alive",
-            "Dimension",
-            4096,
-            "Sparsity Penalty (Lambda)",
-            "Number of Alive Neurons",
-            "Trend_Alive_vs_Lambda",
-            "red",
-        )
 
 
 if __name__ == "__main__":

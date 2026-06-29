@@ -58,6 +58,7 @@ def plot_heatmaps(data_dict, title_prefix, save_path_base, gamma=1.0):
 
     for idx, (label, sim_mat) in enumerate(data_dict.items()):
         ax = axes[idx]
+        ax.grid(False) # Add grid(False) before imshow to suppress warning
         # Use symmetric PowerNorm centered at zero to boost contrast of small values
         norm = SymmetricPowerNorm(gamma=gamma, vmin=-0.4, vmax=0.4)
         im = ax.imshow(sim_mat, cmap="coolwarm", norm=norm, aspect="auto")
@@ -106,18 +107,18 @@ def plot_distributions(data_dict, title_prefix, save_path_base):
 
         N = sim_mat.shape[0]
         i, j = np.triu_indices(N, k=1)
-        raw_vals = sim_mat[i, j]
+        raw_vals = np.array(sim_mat[i, j], dtype=np.float64).flatten()
         abs_vals = np.abs(raw_vals)
 
         # 1. Raw Distribution (-1 to 1)
-        sns.histplot(raw_vals, bins=50, kde=True, ax=ax_raw, color="green")
+        sns.histplot(raw_vals, bins=50, ax=ax_raw, color="green")
         ax_raw.set_title(f"[Raw] {label}", fontsize=10)
         ax_raw.set_xlim(-1.0, 1.0)
         ax_raw.set_xlabel("Raw Inner Product")
         ax_raw.set_ylabel("Frequency")
 
         # 2. Absolute Distribution (0 to 1)
-        sns.histplot(abs_vals, bins=50, kde=True, ax=ax_abs, color="purple")
+        sns.histplot(abs_vals, bins=50, ax=ax_abs, color="purple")
         ax_abs.set_title(f"[Absolute] {label}", fontsize=10)
         ax_abs.set_xlim(0.0, 1.0)
         ax_abs.set_xlabel("Absolute Inner Product")
@@ -157,6 +158,13 @@ def main():
         type=str,
         default="/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/caches_per_image_centering/disentanglement",
     )
+    parser.add_argument(
+        "--target_configs",
+        type=str,
+        nargs="+",
+        default=None,
+        help="List of target configs (e.g. 600_50 1024_800) to evaluate. If none, evaluates all.",
+    )
 
     import sys
 
@@ -191,6 +199,11 @@ def main():
         dim = int(match.group(2))
         lam = int(match.group(3))
 
+        if args.target_configs:
+            config_str = f"{dim}_{lam}"
+            if config_str not in args.target_configs:
+                continue
+
         try:
             device = "cuda" if torch.cuda.is_available() else "cpu"
             ckpt = torch.load(pt_file, map_location=device, weights_only=False)
@@ -223,7 +236,6 @@ def main():
             sim_raw.fill_diagonal_(0.0)
             sim_abs = sim_raw.abs()
 
-            max_ip = sim_abs.max().item()
 
             triu_indices = torch.triu_indices(N_alive, N_alive, offset=1)
             off_diag_vals = sim_abs[triu_indices[0], triu_indices[1]]
@@ -237,7 +249,6 @@ def main():
                     "Dimension": dim,
                     "Lambda": lam,
                     "N_Alive": N_alive,
-                    "Max_IP": max_ip,
                     "Mean_IP": mean_ip,
                     "Std_IP": std_ip,
                 }
@@ -245,7 +256,7 @@ def main():
 
             if cnn_seed == 42:
                 sim_np = sim_heatmap.cpu().numpy()
-                label = f"d={dim}, λ={lam}\nAlive={N_alive}, Max IP={max_ip:.3f}\nMean IP={mean_ip:.4f}±{std_ip:.4f}"
+                label = f"d={dim}, λ={lam}\nAlive={N_alive}\nMean IP={mean_ip:.4f}±{std_ip:.4f}"
 
                 if lam == 800 or (dim == 600 and lam == 50):
                     heatmaps_dim[dim] = (label, sim_np)
@@ -270,80 +281,7 @@ def main():
 
     sns.set_theme(style="whitegrid")
 
-    # =========================================================================
-    # Trend Plot 1: Varying Dimension (Lambda = 800)
-    # =========================================================================
-    df_dim = df_all[
-        (df_all["Lambda"] == 800)
-        | ((df_all["Dimension"] == 600) & (df_all["Lambda"] == 50))
-    ].copy()
-    if not df_dim.empty:
-        df_dim = df_dim.sort_values(by="Dimension")
-        df_dim["Config"] = df_dim["Dimension"].astype(str)
 
-        plt.figure(figsize=(9, 6))
-
-        sns.pointplot(
-            data=df_dim,
-            x="Config",
-            y="Max_IP",
-            color="red",
-            label="Max Inner Product",
-            capsize=0.1,
-            errorbar="sd",
-        )
-
-        plt.title(
-            "Superposition Disentanglement vs Dimension (Fixed λ=800)",
-            fontsize=14,
-            fontweight="bold",
-        )
-        plt.xlabel("Dimension (d_sae)", fontsize=12)
-        plt.ylabel("Absolute Inner Product (Max)", fontsize=12)
-        plt.legend(loc="upper right")
-        plt.tight_layout()
-
-        base_path = os.path.join(args.save_dir, "Trend_MaxIP_vs_Dimension")
-        plt.savefig(base_path + ".png", dpi=300)
-        plt.savefig(base_path + ".svg", format="svg")
-        plt.savefig(base_path + ".pdf", format="pdf")
-        plt.close()
-
-    # =========================================================================
-    # Trend Plot 2: Varying Lambda (Dimension = 4096)
-    # =========================================================================
-    df_lam = df_all[df_all["Dimension"] == 4096].copy()
-    if not df_lam.empty:
-        df_lam = df_lam.sort_values(by="Lambda")
-        df_lam["Lambda_str"] = df_lam["Lambda"].astype(str)
-
-        plt.figure(figsize=(9, 6))
-
-        sns.pointplot(
-            data=df_lam,
-            x="Lambda_str",
-            y="Max_IP",
-            color="red",
-            label="Max Inner Product",
-            capsize=0.1,
-            errorbar="sd",
-        )
-
-        plt.title(
-            "Superposition Disentanglement vs Sparsity (Fixed d=4096)",
-            fontsize=14,
-            fontweight="bold",
-        )
-        plt.xlabel("Lambda (Sparsity Coeff)", fontsize=12)
-        plt.ylabel("Absolute Inner Product (Max)", fontsize=12)
-        plt.legend(loc="upper right")
-        plt.tight_layout()
-
-        base_path = os.path.join(args.save_dir, "Trend_MaxIP_vs_Lambda")
-        plt.savefig(base_path + ".png", dpi=300)
-        plt.savefig(base_path + ".svg", format="svg")
-        plt.savefig(base_path + ".pdf", format="pdf")
-        plt.close()
 
     # =========================================================================
     # Heatmaps (CNN Seed 42)
@@ -378,24 +316,7 @@ def main():
             os.path.join(args.save_dir, "Distributions_vs_Lambda"),
         )
 
-    # =========================================================================
-    # 요약 출력
-    # =========================================================================
-    print("\n📊 [Configuration별 내적 평균 및 분산 요약 (8개 Seed 평균)]")
-    agg_df = (
-        df_all.groupby(["Dimension", "Lambda"])
-        .agg(
-            {
-                "N_Alive": ["mean", "std"],
-                "Mean_IP": ["mean", "std"],
-                "Std_IP": ["mean", "std"],
-                "Max_IP": ["mean", "std"],
-            }
-        )
-        .round(4)
-    )
 
-    print(agg_df)
 
 
 if __name__ == "__main__":

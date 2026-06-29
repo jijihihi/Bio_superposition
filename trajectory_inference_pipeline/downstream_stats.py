@@ -268,9 +268,48 @@ def plot_jt_terciles(dpt_vals, apop_vals, mutation, output_path, dpi=200, n_terc
     logger.info(f"    Saved JT Terciles: {output_path}")
 
 
+def plot_root_perturbation_robustness(results_dict, output_path, dpi=200):
+    mutations = ["SNCA", "GBA", "LRRK2"]
+    means, stds, labels, colors = [], [], [], []
+    
+    for mut in mutations:
+        if mut in results_dict and len(results_dict[mut]) > 0:
+            vals = results_dict[mut]
+            means.append(np.mean(vals))
+            stds.append(np.std(vals))
+            labels.append(mut)
+            colors.append(MUTATION_COLORS.get(mut, "gray"))
+            
+    if not means:
+        return
+        
+    fig, ax = plt.subplots(figsize=(4, 5))
+    x_pos = np.arange(len(labels))
+    
+    ax.bar(x_pos, means, yerr=stds, capsize=5, color=colors, alpha=0.8, edgecolor="black", zorder=2)
+    ax.set_xticks(x_pos)
+    ax.set_xticklabels(labels, fontsize=11, fontweight="bold")
+    ax.set_ylabel("Spearman ρ (DPT vs cell_death)", fontsize=11)
+    ax.set_title("DPT Robustness\n(Root Selection Perturbation)", fontsize=12)
+    ax.grid(axis='y', linestyle='--', alpha=0.5, zorder=1)
+    
+    # Add individual points
+    for i, mut in enumerate(labels):
+        vals = results_dict[mut]
+        x_scatter = np.random.normal(i, 0.05, size=len(vals))
+        ax.scatter(x_scatter, vals, color='black', alpha=0.6, s=15, zorder=3)
+        
+    sns.despine()
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=dpi, bbox_inches="tight")
+    fig.savefig(output_path.replace(".png", ".svg"), format="svg", bbox_inches="tight")
+    plt.close(fig)
+    logger.info(f"  Saved Root Perturbation Robustness Plot: {output_path}")
+
+
 def run_downstream_stats(args):
     np.random.seed(args.seed)
-    X, superclasses, cell_death, which_layer = load_and_preprocess(args)
+    X, superclasses, cell_death, which_layer, _ = load_and_preprocess(args)
     out_dir = args.output_dir or os.path.join(
         os.path.dirname(args.features_cache), "downstream_stats"
     )
@@ -280,6 +319,8 @@ def run_downstream_stats(args):
 
     n_pca = min(args.pca_dim, X.shape[1], X.shape[0] - 1)
     X_pca = PCA(n_components=n_pca, random_state=args.seed).fit_transform(X)
+
+    perturbation_results = {}
 
     for mut in ["SNCA", "GBA", "LRRK2"]:
         logger.info(f"\n  ── Downstream Stats: Control + {mut} ──")
@@ -303,12 +344,37 @@ def run_downstream_stats(args):
         diffmap_coords = adata_pair.obsm["X_diffmap"]
         pair_ctrl_mask = pair_sc == "Control"
         ctrl_centroid = diffmap_coords[pair_ctrl_mask].mean(axis=0)
-        root_in_pair = np.where(pair_ctrl_mask)[0][
-            np.argmin(
-                np.linalg.norm(diffmap_coords[pair_ctrl_mask] - ctrl_centroid, axis=1)
-            )
-        ]
+        
+        ctrl_indices = np.where(pair_ctrl_mask)[0]
+        dists = np.linalg.norm(diffmap_coords[ctrl_indices] - ctrl_centroid, axis=1)
+        sorted_ctrl_idx = ctrl_indices[np.argsort(dists)]
+        
+        # Select multiple roots around centroid for perturbation testing
+        n_roots = min(args.root_perturbation_n, len(sorted_ctrl_idx))
+        top_roots = sorted_ctrl_idx[:n_roots]
+        
+        rho_list = []
+        from scipy.stats import spearmanr
+        for r_idx in top_roots:
+            adata_pair.uns["iroot"] = int(r_idx)
+            sc.tl.dpt(adata_pair, n_dcs=max(min(args.n_dcs, n_diffmap_pair), 2))
+            dpt_tmp = adata_pair.obs["dpt_pseudotime"].values
+            
+            pair_mut_mask = pair_sc == mut
+            dpt_mut_tmp = dpt_tmp[pair_mut_mask]
+            apop_mut_tmp = pair_apop[pair_mut_mask]
+            
+            valid_tmp = np.isfinite(dpt_mut_tmp) & ~np.isnan(apop_mut_tmp)
+            if valid_tmp.sum() > 10:
+                rho, _ = spearmanr(dpt_mut_tmp[valid_tmp], apop_mut_tmp[valid_tmp])
+                if not np.isnan(rho):
+                    rho_list.append(rho)
+                    
+        perturbation_results[mut] = rho_list
+        logger.info(f"    Root Perturbation (n={n_roots}): Mean ρ = {np.mean(rho_list):.3f} ± {np.std(rho_list):.3f}")
 
+        # Restore single optimal root (Medoid) for downstream diagnostic plots
+        root_in_pair = top_roots[0]
         adata_pair.uns["iroot"] = int(root_in_pair)
         sc.tl.dpt(adata_pair, n_dcs=max(min(args.n_dcs, n_diffmap_pair), 2))
         dpt_pair = adata_pair.obs["dpt_pseudotime"].values
@@ -341,6 +407,14 @@ def run_downstream_stats(args):
             )
 
         del adata_pair
+
+    # Save Root Perturbation Robustness Plot
+    if any(len(v) > 0 for v in perturbation_results.values()):
+        robust_path = os.path.join(
+            out_dir, f"root_perturbation_robustness_{args.norm}_{which_layer}_seed{args.seed}.png"
+        )
+        plot_root_perturbation_robustness(perturbation_results, robust_path, dpi=args.dpi)
+
 
 
 if __name__ == "__main__":

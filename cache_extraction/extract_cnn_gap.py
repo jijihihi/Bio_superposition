@@ -28,13 +28,13 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
-from model_train.logging_utils import SUPERCLASS_MAP, get_logger
-from model_train.data_shards import (build_uid_to_refidx,
+from run_CNN.logging_utils import SUPERCLASS_MAP, get_logger
+from run_CNN.data_shards import (build_uid_to_refidx,
                                             load_all_sample_refs)
-from model_train.data_bank import (InMemorySixteenBitDataset,
+from run_CNN.data_bank import (InMemorySixteenBitDataset,
                                           InMemoryTarBank, collate_skip_none,
                                           load_split_csv, seed_worker)
-from model_train.model_encoder import (SupMoCoModel, parse_int_list,
+from run_CNN.model_encoder import (SupMoCoModel, parse_int_list,
                                               renorm_unit_per_out_channel_,
                                               robust_load_state_dict)
 

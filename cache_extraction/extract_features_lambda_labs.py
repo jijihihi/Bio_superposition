@@ -1,42 +1,33 @@
 # ==============================================================================
-# Feature Extraction + Cache  (Lambda Labs — GPU 필요)
+# Feature Extraction + Cache (GPU Required)
 #
-# ALL d_sae neurons 저장 (alive_mask 적용 안 함)
-# → 코랩/로컬에서 dead_threshold 자유롭게 변경 가능
+# Extracts and caches features from all Gated SAE neurons without applying 
+# the alive_mask upfront. This allows downstream scripts (e.g., in Colab) 
+# to dynamically adjust the dead_threshold without re-extracting.
 #
-# 저장 내용 (.npz):
-#   X_all       : (N, d_sae)     — 전체 SAE neuron GAP features
-#   y           : (N,)           — class labels
-#   lines       : (N,)           — cell line names
-#   uids        : (N,)           — unique image IDs
-#   usage_ema   : (d_sae,)       — SAE neuron usage EMA (alive_mask 재구성용)
-#   which_layer : str            — SAE가 학습된 layer 이름
+# Cached Data Format (.npz):
+#   X_all       : (N, d_sae) — Global Average Pooled (GAP) features for all SAE neurons
+#   y           : (N,)       — Class labels
+#   lines       : (N,)       — Cell line names
+#   uids        : (N,)       — Unique image IDs
+#   usage_ema   : (d_sae,)   — SAE neuron usage EMA (used to reconstruct alive_mask)
+#   which_layer : str        — Name of the CNN layer the SAE was trained on
 #
-# Usage:
-#   python -m kendall_correlation_coefficient.extract_features \
-#       --sae_ckpt /path/to/sae.pt \
-#       --save_dir /path/to/MoCo_seedXX \
+# Execution Notes:
+#   - This script must be run on a machine with sufficient GPU memory.
+#   - Batch Centering Strategy: For token normalization, the script computes the 
+#     channel-wise mean across all spatial tokens (B, H, W) in the batch.
+#   - StrictPlateBalanced vs Unshuffled: Ensure appropriate data loaders are used 
+#     based on whether you are extracting features for Diffusion Pseudotime (DPT) 
+#     or general linear probing.
+#
+# Usage Example:
+#   python -m cache_extraction.extract_features_lambda_labs \
+#       --sae_ckpt /path/to/sae_ep008.pt \
+#       --save_dir /path/to/MoCo_seed42 \
 #       --model_state_path /path/to/best_model.pt \
-#       --shard_root /path/to/wds_shards_tar \
-#       --restore_token_norm
+#       --shard_root /path/to/wds_shards_tar
 # ==============================================================================
-
-### 람다 랩스에서 돌려야지만 결과 나옴. 코랩은 안됨. 이유는 모르겠어.
-
-## 배치 센터링 할때, 한 배치의 모든 이미지 모든 토큰 함쳐서 B H W = 64*64*64 토큰. 이 토큰 채널별 평균 구함. 모든 토큰에서 이 평균 뺌.
-# 즉 같은 class 이미지들이 같은 배치에 들어갈 확률이 높음.
-
-
-# 토큰 워크 플로우
-
-# DPT. SAE sparsity 800, loss function에 L2 norm 안 곱해서 훈련. (strict plate 사용)
-# 각 이미지 뽑아낼때는 strict plate 사용 안하고 shuffle = false 해서 배치해서 각 이미지 벡터로 뽑아냄(extract_features_lambda_labs.py) 배치 사이즈 64. 토큰 centering하기 위한. (DPT 벡터 뽑아낼때)
-# 이걸로 min cv DE filter 함
-
-
-# bilinear interpolation. sparsity 3200, loss function에 L2 norm 안 곱해서 훈련 (strict plate 사용)
-# 각 이미지 bilinear interpolation 할때는 per imgae token centering함.
-# 어떤 뉴런 볼지 할때는 gap_csv 기반 했는데, batch centering (StrictPlateBalanced) 해서 각 뉴런 각 이미지에 대한 활성화하고, 여기서 DE filter로 해서 뽑아냄. (❌ restore_token_norm 없음, ❌ pooled 후 F.normalize 없음, ✅ 토큰 L2 정규화 있음, ✅ batch centering (StrictPlateBalanced))
 
 
 import argparse
@@ -51,13 +42,13 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
-from model_train.logging_utils import SUPERCLASS_MAP, get_logger
-from model_train.data_shards import (build_uid_to_refidx,
+from run_CNN.logging_utils import SUPERCLASS_MAP, get_logger
+from run_CNN.data_shards import (build_uid_to_refidx,
                                             load_all_sample_refs)
-from model_train.data_bank import (InMemorySixteenBitDataset,
+from run_CNN.data_bank import (InMemorySixteenBitDataset,
                                           InMemoryTarBank, collate_skip_none,
                                           load_split_csv, seed_worker)
-from model_train.model_encoder import (SupMoCoModel, parse_int_list,
+from run_CNN.model_encoder import (SupMoCoModel, parse_int_list,
                                               renorm_unit_per_out_channel_,
                                               robust_load_state_dict)
 from sae_project.step06_gated_sae import GatedSAE
@@ -566,7 +557,7 @@ def main():
     logger.info(f"  File size: {file_size_mb:.1f} MB")
 
     # ── Summary ──────────────────────────────────────────────────────────
-    from model_train.logging_utils import SUPERCLASS_MAP
+    from run_CNN.logging_utils import SUPERCLASS_MAP
 
     superclasses = [SUPERCLASS_MAP.get(ln, ln) for ln in lines]
     unique_classes, class_counts = np.unique(superclasses, return_counts=True)

@@ -59,8 +59,8 @@ if not _IN_COLAB:
     matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from model_train.logging_utils import get_logger
-from model_train.model_encoder import (SupMoCoModel, parse_int_list,
+from run_CNN.logging_utils import get_logger
+from run_CNN.model_encoder import (SupMoCoModel, parse_int_list,
                                               renorm_unit_per_out_channel_,
                                               robust_load_state_dict)
 from sae_project.step06_gated_sae import GatedSAE

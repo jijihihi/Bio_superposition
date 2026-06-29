@@ -125,14 +125,6 @@ def main():
             total_patches_generated += n_patches
             total_images_processed += 1
 
-    # Pipeline Performance Summary Execution Analytics
-    print("\n" + "=" * 60)
-    print("✅ PATCH GENERATION PIPELINE METRICS SUBMISSION")
-    print("=" * 60)
-    print(f"  - Successfully Processed Source Images : {total_images_processed}")
-    print(f"  - Total Standardized Patches Generated : {total_patches_generated}")
-    print(f"  - Export Destination Target Path       : {output_dir}")
-    print("=" * 60)
 
 
 if __name__ == "__main__":

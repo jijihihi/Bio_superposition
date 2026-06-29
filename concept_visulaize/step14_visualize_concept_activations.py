@@ -38,13 +38,13 @@ except ImportError:
     raise RuntimeError("matplotlib not installed. pip install matplotlib")
 
 from sae_project.step01_configs import get_args, resolve_paths
-from model_train.logging_utils import SUPERCLASS_MAP, get_logger
-from model_train.data_shards import (build_uid_to_refidx,
+from run_CNN.logging_utils import SUPERCLASS_MAP, get_logger
+from run_CNN.data_shards import (build_uid_to_refidx,
                                             load_all_sample_refs)
-from model_train.data_bank import (InMemoryTarBank,
+from run_CNN.data_bank import (InMemoryTarBank,
                                           SafeInstanceNormalize,
                                           load_split_csv)
-from model_train.model_encoder import (SupMoCoModel, parse_int_list,
+from run_CNN.model_encoder import (SupMoCoModel, parse_int_list,
                                               renorm_unit_per_out_channel_,
                                               robust_load_state_dict)
 from sae_project.step06_gated_sae import GatedSAE
@@ -408,7 +408,7 @@ def compute_gap_info_from_cache(
         'max_class': str, 'class_diff': float, 'entropy': float
     }
     """
-    from model_train.logging_utils import SUPERCLASS_MAP
+    from run_CNN.logging_utils import SUPERCLASS_MAP
 
     data = np.load(features_cache_path, allow_pickle=True)
     X_all = data["X_all"]  # (N, d_sae)
@@ -558,7 +558,7 @@ def select_concepts_by_de(
     Select class-specific concepts using DE analysis.
     Returns list of (concept_id, dominant_class, log2fc_value, direction).
     """
-    from model_train.logging_utils import SUPERCLASS_MAP
+    from run_CNN.logging_utils import SUPERCLASS_MAP
 
     # Load features
     data = np.load(features_cache_path, allow_pickle=True)
@@ -1601,7 +1601,7 @@ def main():
 
     if len(bank.labels) > 0:
         sample_labels = bank.labels[: min(100, len(bank.labels))]
-        from model_train.logging_utils import SUPERCLASS_MAP
+        from run_CNN.logging_utils import SUPERCLASS_MAP
 
         label_counts = Counter(sample_labels)
         mapped = Counter(SUPERCLASS_MAP.get(l, f"UNMAPPED:{l}") for l in sample_labels)

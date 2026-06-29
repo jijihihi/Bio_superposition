@@ -429,7 +429,7 @@ def resolve_paths(args):
 
     # shard_root default is stored in logging_utils constants
     if args.shard_root is None:
-        from model_train.logging_utils import DEFAULT_SHARD_ROOT
+        from run_CNN.logging_utils import DEFAULT_SHARD_ROOT
 
         args.shard_root = DEFAULT_SHARD_ROOT
 
