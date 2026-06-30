@@ -3,6 +3,8 @@
 This is the official github repo for the paper [Resolving superposition in AI for
 interpretability and cross-modal alignment in patient-neuronal images]
 
+> The code and documentation are currently being organized and will be updated progressively.
+
 
 ## Overview
 
