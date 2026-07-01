@@ -6,7 +6,7 @@ interpretability and cross-modal alignment in patient-neuronal images”**
 [![arXiv](https://img.shields.io/badge/arXiv-2606.31394v1-b31b1b.svg)](https://arxiv.org/abs/2606.31394v1)
 
 
-> The code and documentation are currently being organized and will be updated progressively.
+> The code and documentation are currently being organized and will be updated progressively. The dataset is also being processed and will be made available in future updates.
 
 
 ## Overview
@@ -119,5 +119,17 @@ python -m sae_project.step09_train_gated_sae \
     --tie_gate_weights
 ```  
 
+## Citation
+
+```bibtex
+@misc{park2026biosuperposition,
+  title        = {Resolving superposition in AI for interpretability and cross-modal alignment in patient-neuronal images},
+  author       = {Jisung Park and Seohyeon Kang and Daeun Yoo and Eunsu Lee and Seoin Cho and Wooyeop Choi and Ian Choi and James R. Evan and Daesoo Kim and Sonia Gandhi and Minee L. Choi},
+  year         = {2026},
+  eprint       = {2606.31394},
+  archivePrefix= {arXiv},
+  primaryClass = {cs.CV}
+}
+```
 
 
