@@ -4,4 +4,9 @@ venv/
 
 
 z_ignore/
+논문 제출용 figure/
+실험용/
+gene_prediction_biology/
+SNCA_3D_organoid_scRNA/
+.vscode/
 .venv/

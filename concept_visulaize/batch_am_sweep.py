@@ -49,7 +49,7 @@ if not _IN_COLAB:
     matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from activation_maximization_file.activation_maximization import (
+from concept_visulaize.activation_maximization import (
     get_spatial_activation_map, run_activation_maximization)
 from run_CNN.logging_utils import get_logger
 from run_CNN.model_encoder import (SupMoCoModel, parse_int_list,
