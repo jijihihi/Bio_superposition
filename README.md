@@ -17,7 +17,7 @@ We utilized gated sparse autoencoder (SAE) to resolve the superposition. By usin
 
 
 <div align="center">
-  <img src="FIG1.jpg" width="80%" />
+  <img src=".github/FIG1.jpg" width="80%" />
 </div>
 
 ## Superposition Contamination
@@ -25,7 +25,7 @@ We utilized gated sparse autoencoder (SAE) to resolve the superposition. By usin
 To verify this framework, we quantify the semantic similarity through the standard deviation of cell death rate.
 
 <div align="center">
-  <img src="local_isometry_prediction.png" width="80%" />
+  <img src=".github/local_isometry_prediction.png" width="80%" />
 </div>
 
 
@@ -36,7 +36,7 @@ mathematically mirrors the evolutionary constraints of energy-efficient, sparse 
 we directly adapted scRNA-seq analytical frameworks to the image domain
 
 <div align="center">
-  <img src="phate,PAGA,DPT_compressed.png" width="80%" />
+  <img src=".github/phate,PAGA,DPT_compressed.png" width="80%" />
 </div>
 
 
@@ -45,7 +45,7 @@ We introduce GW-map, coupling the image and authentic scRNA-seq via gromov-wasse
 
 
 <div align="center">
-  <img src="Fig5_GW_map_accuracy_simple.png" width="80%" />
+  <img src=".github/Fig5_GW_map_accuracy_simple.png" width="80%" />
 </div>
 
 
