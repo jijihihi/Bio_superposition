@@ -178,13 +178,13 @@ def run_cropping(args: argparse.Namespace) -> None:
         cytox_cache.clear()
 
     # Log execution summary
-    logger.info("=" * 50)
+    logger.info("=" * 40)
     logger.info("Processing complete. Execution Summary:")
     logger.info(f"  Total QC Images Evaluated: {summary_stats['total']}")
     logger.info(f"  Successfully Cropped Masks: {summary_stats['mask_success']}")
     logger.info(f"  Successfully Cropped Cytox: {summary_stats['cytox_success']}")
     logger.info(f"  Output Directory: {output_dir}")
-    logger.info("=" * 50)
+    logger.info("=" * 40)
 
 
 if __name__ == "__main__":

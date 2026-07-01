@@ -8,3 +8,5 @@ gene_prediction_biology/
 SNCA_3D_organoid_scRNA/
 .vscode/
 .venv/
+kendall_correlation_coefficient/
+bio_ai_paper/
