@@ -1,7 +1,10 @@
 # Superposition contaminates representation metric sapce beyond hindering interpretability.
 
-This is the official github repo for the paper [Resolving superposition in AI for
-interpretability and cross-modal alignment in patient-neuronal images]
+This repository is the official implementation of **“Resolving superposition in AI for
+interpretability and cross-modal alignment in patient-neuronal images”**
+
+[![arXiv](https://img.shields.io/badge/arXiv-2606.31394v1-b31b1b.svg)](https://arxiv.org/abs/2606.31394v1)
+
 
 > The code and documentation are currently being organized and will be updated progressively.
 
