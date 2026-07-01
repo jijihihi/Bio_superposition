@@ -1,8 +1,6 @@
 Bio_AI_paper.venv/
 venv/
 **/__pycache__/
-
-
 z_ignore/
 논문 제출용 figure/
 실험용/
