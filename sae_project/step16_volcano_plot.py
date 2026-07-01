@@ -18,15 +18,15 @@
 #   main()
 # ==============================================================================
 
-## SAE는 step14의 select_concepts_by_gap_csv_de와 동일한 방식으로 DE 필터
-## CNN GAP은 per-image class mean log2FC 기반
-## 둘 다 mut_only, dedup, gini 필터 적용 (step14 일관성)
+
+
+
 
 # import sys
 # sys.argv = [
 #     "step16_volcano_plot",
 #     "--cnn_gap_cache", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/CNN_GAP/cnn_gap_stage5_out_all.npz",
-#     "--sae_cache", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_sparsity3200_loss_L2norm곱해줌/gated_sae_stage5_out_d4096_sp3200.0_aux0.03125_tied_class_gap_means_per_image.npz",
+
 #     "--output_dir", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/volcano_plots",
 #     "--min_log2fc", "0.58",
 #     "--adj_p", "1e-40",
@@ -55,7 +55,7 @@ from matplotlib.lines import Line2D
 from scipy.stats import mannwhitneyu
 from statsmodels.stats.multitest import multipletests
 
-# ── step14에서 import (일관성 유지) ──
+
 from concept_visulaize.step14_visualize_concept_activations import (
     compute_gini_impurity, load_gap_csv, select_concepts_by_gap_csv_de)
 from run_CNN.logging_utils import SUPERCLASS_MAP, get_logger
@@ -84,7 +84,7 @@ def compute_de_cnn(X, superclasses, mutation, min_log2fc=0.0):
     mut_means = X_mut.mean(axis=0)
     log2fc = np.log2((mut_means + eps) / (ctrl_means + eps))
 
-    # Wilcoxon (volcano y축 시각화용)
+    
     pvals = np.ones(d)
     for j in range(d):
         c_vals = X_ctrl[:, j]
@@ -763,7 +763,7 @@ def main():
     class_names = ["Control", "SNCA", "GBA", "LRRK2"]
 
     # ==========================================================================
-    # 1) SAE: per-image npz → usage_ema 필터 → class mean log2FC (step14 동일)
+    
     # ==========================================================================
     logger.info("=" * 60)
     logger.info("SAE: Loading per-image cache with usage_ema")
@@ -774,7 +774,7 @@ def main():
         sae_lines = sae_lines.astype(str)
     sc_sae = [SUPERCLASS_MAP.get(ln, ln) for ln in sae_lines]
 
-    # usage_ema 기반 dead neuron 필터
+    
     n_total_sae = X_sae.shape[1]
     if "usage_ema" in sae_data:
         usage_ema = sae_data["usage_ema"]
@@ -792,7 +792,7 @@ def main():
         n_alive_sae = n_total_sae
         logger.info(f"  SAE: {n_total_sae} neurons (no usage_ema found)")
 
-    # Per-class mean 계산 → gap_info dict 구성 (select_concepts_by_gap_csv_de에 전달)
+    
     sc_arr = np.array(sc_sae)
     sae_gap_info = {}
     for i, orig_idx in enumerate(alive_indices):
@@ -808,7 +808,7 @@ def main():
             **vals,
         }
 
-    # step14 select_concepts_by_gap_csv_de 동일 로직
+    
     sae_selected = select_concepts_by_gap_csv_de(
         sae_gap_info, max_gini=args.max_gini, de_min_log2fc=args.min_log2fc
     )
@@ -850,9 +850,9 @@ def main():
     logger.info("CNN GAP: Loading cache and running step14-style DE filter")
     X_cnn, sc_cnn, _ = load_features(args.cnn_gap_cache, apply_l2_norm=args.gap_l2_norm)
 
-    # [수정됨] Toy Models of Superposition 대응:
-    # CNN GAP이 음수일 수 있으므로, '활성화의 크기(Magnitude)'를 보기 위해 절대값을 취함.
-    # 이렇게 하면 양방향으로 중첩(Superposition)된 채널은 모든 클래스에서 활성화된 것으로 간주되어 특이적(Specific) 피처에서 자연스럽게 탈락됨.
+    
+    
+    
     X_cnn = np.abs(X_cnn)
 
     logger.info(

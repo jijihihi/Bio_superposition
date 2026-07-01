@@ -1,10 +1,10 @@
 #!/bin/bash
-# Lambda Labs에서 L2 Norm 유무에 따른 CNN 모델 훈련 스크립트
+
 
 SCRIPT_DIR="/home/ubuntu/model-east3"                  
 BASE_DIR="/home/ubuntu/model-east3/outputs"
 
-# 파이썬이 run_CNN을 패키지로 인식할 수 있도록 상위 디렉토리로 이동
+
 cd "$SCRIPT_DIR"
 
 echo "============================================"
@@ -58,7 +58,7 @@ for SEED in "${SEEDS_L2[@]}"; do
         --warmup_epochs 4
 
     for LAYER in "stage5_mid" "stage5_out" "refine_out"; do
-        python -m cache_extraction.extract_cnn_gap \
+        python -m representation_eval.extract_cnn_gap \
             --save_dir "$SAVE_DIR" \
             --model_state_path "$SAVE_DIR/best_model.pt" \
             --shard_root "${SCRIPT_DIR}/wds_shards_tar" \
@@ -130,7 +130,7 @@ for SEED in "${SEEDS_NO_L2[@]}"; do
         --warmup_epochs 4
 
     for LAYER in "stage5_mid" "stage5_out" "refine_out"; do
-        python -m cache_extraction.extract_cnn_gap \
+        python -m representation_eval.extract_cnn_gap \
             --save_dir "$SAVE_DIR" \
             --model_state_path "$SAVE_DIR/best_model.pt" \
             --shard_root "${SCRIPT_DIR}/wds_shards_tar" \
@@ -190,9 +190,8 @@ echo ""
 echo "=========================================================================="
 echo " 5) Cell Death R² Prediction Evaluation"
 echo "=========================================================================="
-# CSV 경로 (preprocessing.sh 출력 경로 기준)
-#CELL_DEATH_CSV="${BASE_DIR}/CellDeath_QC_patches/per_image_celldeath_rate.csv"
-CELL_DEATH_CSV="/home/ubuntu/model-east3/이미지별_세포사멸율_7200.csv"
+
+CELL_DEATH_CSV="${BASE_DIR}/CellDeath_QC_patches/per_image_celldeath_rate.csv"
 OUT_ROOT="${BASE_DIR}/refactoring/cell_death_evaluation"
 mkdir -p "${OUT_ROOT}"
 

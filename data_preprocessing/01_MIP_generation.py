@@ -99,9 +99,9 @@ EXPERIMENTS = {
     # "Diverse_GBA": {
     #     "rows": [4],
     #     "input_dirs": [
-    #         ##r"C:\Users\admin\Desktop\professor_data\005004__2022-08-16T13_36_04-Measurement 1_diverse\Images",  플레이트 이상
+    
     #         r"C:\Users\admin\Desktop\professor_data\005005__2022-08-16T14_22_56-Measurement 1_diverse\Images",
-    #         ##r"C:\Users\admin\Desktop\professor_data\005006__2022-08-16T15_10_03-Measurement 1_diverse\Images",  플레이트 이상
+    
     #         r"C:\Users\admin\Desktop\professor_data\005007__2022-08-16T16_06_39-Measurement 1_diverse\Images",
     #     ]
     # },
@@ -119,7 +119,7 @@ EXPERIMENTS = {
         "input_dirs": [
             r"D:\professor_data\New_data\004001__2022-06-27T11_22_54-Measurement 1_C4_LRRK2\Images",
             r"D:\professor_data\New_data\004002__2022-06-27T12_12_52-Measurement 1_C4_LRRK2\Images",
-        #    r"D:\professor_data\New_data\004003__2022-06-27T13_02_42-Measurement 1_C4_LRRK2\Images", ### 안에 이미지 없음. 따라서 150 * 3(row 개수) * 2(파일 개수) = 900개
+        
         ]
     },
     "Control_C4": {
@@ -127,7 +127,7 @@ EXPERIMENTS = {
         "input_dirs": [
             r"C:\Users\admin\Desktop\professor_data\New_data\004001__2022-06-27T11_22_54-Measurement 1_C4_LRRK2\Images",
             r"C:\Users\admin\Desktop\professor_data\New_data\004002__2022-06-27T12_12_52-Measurement 1_C4_LRRK2\Images",
-         #   r"C:\Users\admin\Desktop\professor_data\New_data\004003__2022-06-27T13_02_42-Measurement 1_C4_LRRK2\Images", ### 안에 이미지 없음. 따라서 150 * 3(row 개수) * 2(파일 개수) = 900개
+         
         ]
     },
     "Control_C18": {
@@ -141,9 +141,9 @@ EXPERIMENTS = {
     # "Diverse_C18": {
     #     "rows": [3],
     #     "input_dirs": [
-    #         ##r"C:\Users\admin\Desktop\professor_data\005004__2022-08-16T13_36_04-Measurement 1_diverse\Images",  플레이트 이상
+    
     #         r"C:\Users\admin\Desktop\professor_data\005005__2022-08-16T14_22_56-Measurement 1_diverse\Images",
-    #         ##r"C:\Users\admin\Desktop\professor_data\005006__2022-08-16T15_10_03-Measurement 1_diverse\Images",  플레이트 이상
+    
     #         r"C:\Users\admin\Desktop\professor_data\005007__2022-08-16T16_06_39-Measurement 1_diverse\Images",
     #     ]
     # },

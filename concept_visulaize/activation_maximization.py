@@ -29,17 +29,17 @@
 # ==============================================================================
 
 
-## AM할때 gated SAE는 eval할때 gradient가 0이 된다.
-# eval 모드
 
-# eval 모드 (self.training = False)
+
+
+
 # gate = (gate_pre > 0).float()  # ← step function, gradient = 0!
 # acts = gate * mag
 
 
-# 피처맵 bilinear interpolation할때 [0, 1]로 정규화 하지 않는다.
-# # step14 방식
-# a01 = minmax_normalize(spatial_act)   # [0, 1]로 정규화
+
+
+
 # heatmap_rgb = apply_colormap_01(a01, "jet")  # jet colormap
 # overlay = create_overlay(base_rgb, heatmap_rgb, alpha=0.5)
 
@@ -243,10 +243,10 @@ def forward_to_sae_neuron(
     C = fmap.shape[-1]
 
     flat_tokens = fmap.view(-1, C)
-    # NOTE: Per-image centering 제거 (AM 전용)
-    # extraction에서는 배치(~64장) 전체 토큰의 평균을 빼므로 개별 이미지 DC 성분 유지됨
-    # AM에서 1장만 넣으면 mean(dim=0) = 이 이미지의 공간 평균 = GAP 벡터 자체이므로
-    # DC 성분이 완전히 제거되어 SAE가 학습 시 보던 분포와 달라짐
+    
+    
+    
+    
 
     # Save per-token L2 norms before normalization
     token_l2_norms = flat_tokens.norm(dim=1, keepdim=True).clamp_min(1e-12)
@@ -434,7 +434,7 @@ def run_activation_maximization(
         img_raw = fourier_to_image(fourier_coeffs, decay_mask)
 
         # ── Pixel clipping: match SafeInstanceNormalize range ──
-        # 학습 때 IN 적용하여 ~[-3, 3] 분포 → clamp로 OOD 방지
+        
         img = torch.clamp(img_raw, -3.5, 3.5)
 
         # ── Transformation robustness ──

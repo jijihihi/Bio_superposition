@@ -9,9 +9,9 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
-# ─── [핵심 추가] SVG와 PDF 저장 시 글자를 무조건 진짜 텍스트로 보존하는 설정 ───
-plt.rcParams["svg.fonttype"] = "none"  # SVG 내 글자를 그림(path)이 아닌 텍스트로 저장
-plt.rcParams["pdf.fonttype"] = 42  # PDF 내 폰트를 TrueType 텍스트 형태로 유지
+
+plt.rcParams["svg.fonttype"] = "none"  
+plt.rcParams["pdf.fonttype"] = 42  
 # ───────────────────────────────────────────────────────────────────────
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -24,7 +24,7 @@ from trajectory_utils import get_logger
 
 logger = get_logger("plot_dpt_heatmap")
 
-base_cmap = plt.get_cmap("cool")  # 쨍한 cool 컬러맵 가져오기
+base_cmap = plt.get_cmap("cool")  
 colors = base_cmap(np.linspace(0, 1, 256))
 white = np.array([1, 1, 1, 1])
 
@@ -92,7 +92,7 @@ def run_plot_heatmap(args):
         pivot_rho = df_mut.pivot(index="kNN", columns="PCA", values="rho")
         pivot_r = df_mut.pivot(index="kNN", columns="PCA", values="r")
 
-        # Spearman Heatmap (경계선 격자 추가)
+        
         sns.heatmap(
             pivot_rho,
             annot=True,
@@ -101,15 +101,15 @@ def run_plot_heatmap(args):
             vmin=-0.5,
             vmax=-0.15,
             ax=axes_rho[i],
-            linewidths=0.5,  # 격자 두께
-            linecolor="lightgray",  # 격자 색상 (파스텔톤 매칭)
+            linewidths=0.5,  
+            linecolor="lightgray",  
             cbar=(i == len(mutations_order) - 1),
             cbar_kws={"label": "Spearman ρ"} if i == len(mutations_order) - 1 else None,
         )
         axes_rho[i].set_title(f"{mut} - Spearman ρ")
         axes_rho[i].invert_yaxis()
 
-        # Pearson Heatmap (중복 코드 제거 및 경계선 격자 추가)
+        
         sns.heatmap(
             pivot_r,
             annot=True,
@@ -118,15 +118,15 @@ def run_plot_heatmap(args):
             vmin=-0.5,
             vmax=-0.15,
             ax=axes_r[i],
-            linewidths=0.5,  # 격자 두께
-            linecolor="lightgray",  # 격자 색상
+            linewidths=0.5,  
+            linecolor="lightgray",  
             cbar=(i == len(mutations_order) - 1),
             cbar_kws={"label": "Pearson r"} if i == len(mutations_order) - 1 else None,
         )
         axes_r[i].set_title(f"{mut} - Pearson r")
         axes_r[i].invert_yaxis()
 
-    # Spearman 파일 저장 (고해상도 600dpi로 업그레이드)
+    
     fig_rho.tight_layout()
     rho_path = os.path.join(args.input_dir, "heatmap_dpt_spearman_all_mutations.png")
     fig_rho.savefig(rho_path, dpi=600, bbox_inches="tight")
@@ -134,7 +134,7 @@ def run_plot_heatmap(args):
     fig_rho.savefig(rho_path.replace(".png", ".svg"), format="svg", bbox_inches="tight")
     plt.close(fig_rho)
 
-    # Pearson 파일 저장
+    
     fig_r.tight_layout()
     r_path = os.path.join(args.input_dir, "heatmap_dpt_pearson_all_mutations.png")
     fig_r.savefig(r_path, dpi=600, bbox_inches="tight")

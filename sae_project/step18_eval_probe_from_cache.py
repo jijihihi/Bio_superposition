@@ -69,11 +69,11 @@ def main():
     )
     args = parser.parse_args()
 
-    # 모든 .npz 파일 검색 (CNN_seed*/SAE_dim* 등 하위 폴더 모두 포함)
+    
     pattern = os.path.join(args.cache_dir, "**", "*.npz")
     npz_files = glob.glob(pattern, recursive=True)
 
-    # SAE 파일만 필터링 (명확하게 sae_refactoring_gap_ 이 포함된 파일만 선택)
+    
     sae_files = [
         f for f in npz_files if "sae_refactoring_gap_" in os.path.basename(f)
     ]
@@ -88,8 +88,8 @@ def main():
     )
 
     for fpath in tqdm(sae_files, desc="Evaluating"):
-        # CNN Seed, Dimension, Lambda 추출
-        # 지원하는 패턴: CNN_seed42, SAE_dim4096_lambda800 또는 sae_gap_d4096_lam800
+        
+        
         m_seed = re.search(r"(?:CNN_seed|seed)(\d+)", fpath)
         m_dim = re.search(r"(?:SAE_dim|_d|dim)(\d+)", fpath)
         m_lam = re.search(r"(?:_lambda|_lam)(\d+)", fpath)
@@ -110,7 +110,7 @@ def main():
             lines_all = data["lines"]
             usage_ema = data["usage_ema"]
 
-            # 1. 원래 학습에 쓰였던 4개 클래스 (0, 1, 2, 3) 데이터만 걸러내기
+            
             orig_mask = y_all < args.num_classes
             X_orig = X_all[orig_mask]
             y_orig = y_all[orig_mask]
@@ -122,13 +122,13 @@ def main():
                 )
                 continue
 
-            # 2. Dead Neuron 필터링 (usage_ema >= 1e-5)
+            
             alive_mask = usage_ema >= args.dead_threshold
             n_alive = int(alive_mask.sum())
             X_orig = X_orig[:, alive_mask]
 
-            # 3. Train/Test 분할 (실제 모델이 학습에 사용했던 train_split.csv 기반)
-            # cache에서 저장된 uid와 각 split에 해당하는 uid를 매칭하여 X_train과 X_test를 완벽 분리합니다.
+            
+            
             model_dir = os.path.join(args.model_base_dir, f"MoCo_seed{cnn_seed}")
             train_csv = os.path.join(model_dir, "train_split.csv")
             val_csv = os.path.join(model_dir, "val_split.csv")
@@ -147,8 +147,8 @@ def main():
             )
             eval_uids = val_uids.union(test_uids)
 
-            # npz 안에 저장된 uids 기반으로 인덱스 찾기
-            # 캐시에 저장된 uid는 상대 경로일 수 있으므로 끝부분만 매칭하거나, 그대로 매칭
+            
+            
             def _normalize_uid(u):
                 return u.replace("\\", "/")
 
@@ -185,7 +185,7 @@ def main():
             X_test = X_orig[eval_idx]
             y_test = y_orig[eval_idx]
 
-            # 4. Linear Probe 훈련 (step09_sae_eval.py 와 완벽하게 동일한 구조: 스케일 보정을 위해 벡터 L2 정규화 후 분류기 학습)
+            
             import torch.nn.functional as F
 
             X_train_t = torch.from_numpy(X_train).float()
@@ -193,7 +193,7 @@ def main():
             X_train = F.normalize(X_train_t, dim=1, eps=1e-12).numpy()
             X_test = F.normalize(X_test_t, dim=1, eps=1e-12).numpy()
 
-            # step09_sae_eval의 train_linear_probe는 dict를 반환함: {"train_acc": X, "test_acc": Y, "d_probe": Z, ...}
+            
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             probe_results = train_linear_probe(
                 X_train,
@@ -236,7 +236,7 @@ def main():
         df.to_csv(save_path, index=False)
         print(f"\nSaved detailed results to {save_path}")
 
-        # Dimension과 Lambda 별 평균 정확도 요약 출력
+        
         valid_df = df[df["CNN_Seed"] != -1]
         if not valid_df.empty:
             summary = valid_df.groupby(["Dimension", "Lambda"])["Test_Acc"].agg(

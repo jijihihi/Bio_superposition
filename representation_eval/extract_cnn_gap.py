@@ -1,20 +1,3 @@
-# ==============================================================================
-# CNN GAP Feature Extraction (SAE 없이 CNN 자체의 GAP 벡터 추출)
-#
-# 저장 내용 (.npz):
-#   X_gap       : (N, C)         — CNN feature map GAP vector (L2 normalized)
-#   y           : (N,)           — class labels
-#   lines       : (N,)           — cell line names
-#   uids        : (N,)           — unique image IDs
-#   which_layer : str            — 추출한 layer 이름
-#
-# Usage:
-#   python -m cache_extraction.extract_cnn_gap \
-#       --save_dir /path/to/MoCo_seedXX \
-#       --model_state_path /path/to/best_model.pt \
-#       --shard_root /path/to/wds_shards_tar \
-#       --which_layer stage5_mid
-# ==============================================================================
 
 import argparse
 import gc
@@ -166,7 +149,7 @@ def extract_cnn_gap_features(
         with torch.amp.autocast(**autocast_kwargs):
             fmap = encoder.forward_feature_maps(x, which=which_layer)  # (B, C, H, W)
 
-        # GAP → (B, C)  — raw (L2 norm 안 함, 필요시 후처리)
+        
         gap = fmap.float().mean(dim=(2, 3))
 
         X_list.append(gap.cpu().numpy())
@@ -248,8 +231,8 @@ def make_balanced_loader(
             if rel_key in rel_to_refidx:
                 refidx_list.append(rel_to_refidx[rel_key])
 
-        # [NEW] CSV 파일에 없는 OOD 클래스 (Label 4 이상)는 폴더에 있는 모든 이미지를 무조건 포함!
-        # (이미 targz_to_wds 변환 단계에서 27,000장으로 맞춰두었으므로 그대로 다 쓰면 됩니다)
+        
+        
         for rel_key, ridx in rel_to_refidx.items():
             if int(refs[ridx].label) >= 4:
                 refidx_list.append(ridx)

@@ -40,9 +40,9 @@ GROUPS_OF_INTEREST = ["SNCA only", "GBA only", "LRRK2 only"]
 GENE_LABELS = {"SNCA only": "SNCA", "GBA only": "GBA", "LRRK2 only": "LRRK2"}
 
 COLORS = {
-    "CNN": "#f0a74f",  # CNN 각 seed 색상
-    "SAE": "#a9789c",  # SAE 각 seed 색상
-    "mean_line": "#000000",  # 가운데 평균 연결 선 색상 (검은색)
+    "CNN": "
+    "SAE": "
+    "mean_line": "
 }
 MODELS = ["Ridge", "XGBoost"]
 
@@ -89,19 +89,19 @@ def plot_cnn_vs_sae(
 ):
     os.makedirs(output_dir, exist_ok=True)
 
-    # ── mm -> inch 변환 및 레이아웃 정밀 계산 ──
+    
     mm_to_inch = 1.0 / 25.4
 
-    # [수정] 순수 x축 데이터 영역 너비를 기존 19.087mm에서 15% 늘린 21.950mm로 확장
+    
     ax_w_mm = 21.950
     ax_h_mm = 34.373
 
-    # 긴 이름이 들어올 것을 대비해 주변 여백 및 서브플롯 간격을 넉넉히 확보 (mm 단위)
+    
     margin_left_mm = 22.0
     margin_right_mm = 20.0
     margin_bottom_mm = 14.0
     margin_top_mm = 18.0
-    w_space_mm = 42.0  # 축 이름이 길어지므로 플롯 사이 간격을 더 확장
+    w_space_mm = 42.0  
 
     total_w_mm = margin_left_mm + (3 * ax_w_mm) + (2 * w_space_mm) + margin_right_mm
     total_h_mm = margin_bottom_mm + ax_h_mm + margin_top_mm
@@ -109,7 +109,7 @@ def plot_cnn_vs_sae(
     fig_w_in = total_w_mm * mm_to_inch
     fig_h_in = total_h_mm * mm_to_inch
 
-    # 개별 seed 점 크기 (지름 1.969mm로 정밀 고정)
+    
     mm_to_pt = 72.0 / 25.4
     seed_diameter_mm = 1.969
     seed_size_pt2 = (seed_diameter_mm * mm_to_pt) ** 2
@@ -134,10 +134,10 @@ def plot_cnn_vs_sae(
             color_cnn = COLORS["CNN"]
             color_sae = COLORS["SAE"]
 
-            # [수정] 그래프 자체 내부에서 두 점의 거리를 더 벌리기 위해 좌표 간격을 0~1에서 0~1.5로 확장
+            
             x_cnn, x_sae = 0.0, 1.5
 
-            # 데이터 필터링
+            
             cnn_f = [
                 r
                 for r in cnn_data
@@ -192,7 +192,7 @@ def plot_cnn_vs_sae(
             y_sae_vals = []
 
             # ── Paired lines and dots ──
-            # 넓어진 축 너비 비율에 맞춰 jitter 범위 최적화
+            
             rng = np.random.default_rng(42)
             for seed in common_seeds:
                 y_c = cnn_dict[seed]
@@ -251,7 +251,7 @@ def plot_cnn_vs_sae(
                 solid_capstyle="round",
             )
 
-            # 평균값 마커 흰색 테두리 두께 2배 강화 (linewidths=1.5)
+            
             ax.scatter(
                 [x_cnn],
                 [gc],
@@ -273,7 +273,7 @@ def plot_cnn_vs_sae(
                 zorder=7,
             )
 
-            # 축 너비가 늘어났으므로 숫자 텍스트가 점과 겹치지 않게 가로 오프셋 간격을 0.35로 조정
+            
             ax.text(
                 x_cnn - 0.35,
                 gc,
@@ -326,16 +326,16 @@ def plot_cnn_vs_sae(
                 va="bottom",
             )
 
-            # [수정] 잘림 현상 해결을 위한 고정 Y축 범위 및 눈금 상한선 상향 조정 (6개 눈금)
+            
             if gene_label == "SNCA":
                 ax.set_ylim(0.4, 0.65)
                 ax.set_yticks([0.4, 0.45, 0.5, 0.55, 0.6, 0.65])
-            else:  # GBA 및 LRRK2
+            else:  
                 ax.set_ylim(0.2, 0.45)
                 ax.set_yticks([0.2, 0.25, 0.3, 0.35, 0.4, 0.45])
 
             ax.set_xticks([x_cnn, x_sae])
-            # 실제 사용하실 훨씬 긴 이름을 축 라벨 자리에 그대로 넣어주시면 됩니다.
+            
             ax.set_xticklabels(["CNN GAP", "SAE"], fontsize=9.5, fontweight="bold")
 
             ax.tick_params(axis="y", labelsize=8.5)
@@ -347,7 +347,7 @@ def plot_cnn_vs_sae(
 
             ax.set_title(f"{gene_label}", fontsize=11, fontweight="bold", pad=28)
 
-            # [수정] 데이터와 텍스트가 양옆으로 균형 있게 벌어지도록 축 제한값(xlim) 확장 (-0.8, 2.3)
+            
             ax.set_xlim(-0.8, 2.3)
             ax.grid(axis="y", alpha=0.15, zorder=0)
             ax.set_axisbelow(True)

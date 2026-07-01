@@ -74,7 +74,7 @@ def collate_skip_none(batch):
     return default_collate(batch)
 
 
-# 클래스 라인별로 이미지 균형있게 뽑는 함수
+
 
 
 class StrictPlateBalancedBatchSamplerOnBank(Sampler[List[int]]):

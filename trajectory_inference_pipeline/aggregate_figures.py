@@ -1,6 +1,6 @@
 # !python -m trajectory_inference_pipeline.aggregate_figures \
 # --features_cache "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/caches_per_image_centering/CNN_seed445_SAE/sae_gap_d8192_lam800_normrestored_withnewclass.npz" \
-# --cell_death_csv "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv" \
+
 #  --vis_dir "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/caches_per_image_centering/pairwise_phate" \
 #  --dpt_dir "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/caches_per_image_centering/DPT_445" \
 #  --stats_dir "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/caches_per_image_centering/DPT_445"

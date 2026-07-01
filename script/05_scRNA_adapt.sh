@@ -2,7 +2,7 @@
 set -e
 
 BASE="/home/ubuntu/model-east3"
-CELL_DEATH_CSV="${BASE}/이미지별_세포사멸율_7200.csv"
+CELL_DEATH_CSV="${BASE_DIR}/CellDeath_QC_patches/per_image_celldeath_rate.csv"
 OUT_BASE="${BASE}/outputs/refactoring/scRNA_adapt"
 
 PCAS=(30 40 50)

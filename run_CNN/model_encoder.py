@@ -179,12 +179,12 @@ def build_projector(
     def lin(a, b):
         return nn.Linear(
             a, b, bias=False
-        )  # BN 쓰면 bias=False 하는게 일반적. 이게 표준
+        )  
 
     def bn(d):
         return nn.BatchNorm1d(d) if use_bn else nn.Identity()
 
-    def do():  # 뒤에 dropout 안 씀. p.add_argument("--proj_dropout", type=float, default=0.0) 이고 결국 proj_dropout이 들어가는데 설정에서 0.0으로 해놨음. 선택만 가능 일반적으로 projector에 dropout 안씀
+    def do():  
         return nn.Dropout(p=dropout) if dropout > 0 else nn.Identity()
 
     if proj_layers <= 1:
@@ -231,7 +231,7 @@ class SupMoCoModel(nn.Module):
         proj_layers: int = 2,
         proj_hidden: int = 2048,
         proj_bn: bool = False,
-        # dropout 안씀
+        
         proj_dropout: float = 0.0,
         use_l2_norm_pool: bool = True,
     ):

@@ -18,7 +18,7 @@ def get_args(args_list=None):
         default=None,
         help="default uses DEFAULT_SHARD_ROOT from logging_utils",
     )
-    # default 에 아무것도 안들어오면 DEFAULT_SHARD_ROOT 로 실행되게 내부 알고리즘으로 구현이 되어 있는데 이는 "/content/wds_shards" 즉 코랩 기반. 근데 안 적어주면 오류뜨네. 뭐지. 람다랩스에서 쓸거면 항상 경로 적어줘야해
+    
     p.add_argument(
         "--save_dir",
         type=str,
@@ -159,7 +159,7 @@ def get_args(args_list=None):
         choices=[
             "per-token",
             "gap-scalar",
-        ],  # 지금 기본적으로 그 레이어 GAP L2 norm으로 각 그리드 모두 나눠 준 후에 각 토큰도 L2 norm으로 나눠주는데 loss function mse에서 그 토큰 L2 norm 곱해줘서 L2 norm 큰거에 집중하도록 유도.
+        ],  
         help="per-token: old mode, gap-scalar: normalize whole FMap by GAP norm",
     )
 
@@ -335,7 +335,7 @@ def get_args(args_list=None):
     if "ipykernel" in sys.modules:
         return p.parse_args(
             args_list if args_list is not None else []
-        )  # ✅ 주피터/코랩이면 외부 인자 무시
+        )  
     return p.parse_args()
 
 
@@ -352,10 +352,10 @@ def get_step15_args(args_list=None):
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Gini impurity <= 0.5인 class-specific concepts만 추출
+  
   python -m sae_project.step15_filter_concepts --input_csv gap_means.csv --max_gini 0.5
   
-  # Gini <= 0.3 (더 엄격한 필터), 최소 50개 이미지에서 활성화된 concept만
+  
   python -m sae_project.step15_filter_concepts --input_csv gap_means.csv --max_gini 0.3 --min_active 50
 """,
     )

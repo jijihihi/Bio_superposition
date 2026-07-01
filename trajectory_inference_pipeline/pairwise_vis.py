@@ -1,6 +1,6 @@
 # !python -m trajectory_inference_pipeline.pairwise_vis \
 # --features_cache "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/caches_per_image_centering/CNN_seed445_SAE/sae_gap_d8192_lam800_normrestored_withnewclass.npz" \
-# --cell_death_csv "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv" \
+
 # --output_dir "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/caches_per_image_centering/pairwise_phate_seed445" \
 # --phate_decay 100 \
 # --n_neighbors 5 \
@@ -29,7 +29,7 @@
 #     --de_mode "per_mut"
 
 # vmin_p = np.percentile(apop_valid_vals, 15)
-# vmax_p = np.percentile(apop_valid_vals, 90) 으로 시각화
+
 
 
 import argparse
@@ -176,7 +176,7 @@ def plot_phate_cell_death_gradient(
         norm = mcolors.PowerNorm(gamma=1.2, vmin=vmin_p, vmax=vmax_p, clip=True)
         sort_idx = np.argsort(apop_valid_vals)
 
-        # SAE_cell_death_UMAP.py와 동일하게 YlGnBu의 0.2 ~ 1.0 구간 사용
+        
         actual_cmap = mcolors.LinearSegmentedColormap.from_list(
             "truncated_YlGnBu", plt.cm.YlGnBu(np.linspace(0.2, 1.0, 100))
         )

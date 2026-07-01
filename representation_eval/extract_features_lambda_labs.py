@@ -1,34 +1,3 @@
-# ==============================================================================
-# Feature Extraction + Cache (GPU Required)
-#
-# Extracts and caches features from all Gated SAE neurons without applying 
-# the alive_mask upfront. This allows downstream scripts (e.g., in Colab) 
-# to dynamically adjust the dead_threshold without re-extracting.
-#
-# Cached Data Format (.npz):
-#   X_all       : (N, d_sae) — Global Average Pooled (GAP) features for all SAE neurons
-#   y           : (N,)       — Class labels
-#   lines       : (N,)       — Cell line names
-#   uids        : (N,)       — Unique image IDs
-#   usage_ema   : (d_sae,)   — SAE neuron usage EMA (used to reconstruct alive_mask)
-#   which_layer : str        — Name of the CNN layer the SAE was trained on
-#
-# Execution Notes:
-#   - This script must be run on a machine with sufficient GPU memory.
-#   - Batch Centering Strategy: For token normalization, the script computes the 
-#     channel-wise mean across all spatial tokens (B, H, W) in the batch.
-#   - StrictPlateBalanced vs Unshuffled: Ensure appropriate data loaders are used 
-#     based on whether you are extracting features for Diffusion Pseudotime (DPT) 
-#     or general linear probing.
-#
-# Usage Example:
-#   python -m cache_extraction.extract_features_lambda_labs \
-#       --sae_ckpt /path/to/sae_ep008.pt \
-#       --save_dir /path/to/MoCo_seed42 \
-#       --model_state_path /path/to/best_model.pt \
-#       --shard_root /path/to/wds_shards_tar
-# ==============================================================================
-
 
 import argparse
 import gc
@@ -200,17 +169,17 @@ def extract_all_sae_features(
         # ==============================================================================
         # [SAFE & CORRECT] Per-Image Spatial Centering (Data Leakage 0%)
         # ==============================================================================
-        # 1. fmap_reshaped: 현재 배치의 형태를 (B, H_W, C)로 변환합니다.
+        
         fmap_reshaped = fmap.view(curr_bs, H_W, C)
 
-        # 2. image_means: 오직 '자기 자신 1장의 이미지' 내부에 있는 공간 토큰들(dim=1)의 평균만 구합니다.
-        #    배치 차원(dim=0)에 대해서 평균을 구하지 않으므로, 옆에 있는 다른 이미지의 정보나
-        #    클래스 라벨 정보가 절대로 섞여 들어가지 않습니다. (Data Leakage 원천 차단)
+        
+        
+        
         image_means = fmap_reshaped.mean(dim=1, keepdim=True)  # (B, 1, C)
 
-        # 3. 평균 빼기: 각 이미지에서 '자신의 평균'만을 뺍니다.
-        #    이렇게 하면 데이터셋의 라벨이나 배치 구성(shuffle 여부)에 완벽하게 독립적인,
-        #    가장 정석적이고 안전한 정규화(Normalization)가 수행됩니다.
+        
+        
+        
         fmap_reshaped = fmap_reshaped - image_means
 
         flat_tokens = fmap_reshaped.view(-1, C)
@@ -220,7 +189,7 @@ def extract_all_sae_features(
 
         flat_tokens = F.normalize(
             flat_tokens, dim=1, eps=1e-12
-        )  ## SAE 넣어줄때 토큰 L2 정규화해서 넣어준다. 그렇게 학습했으니까.
+        )  
 
         # SAE forward in chunks
         token_batch_size = 8192
@@ -241,7 +210,7 @@ def extract_all_sae_features(
         # Pool → image-level GAP
         acts = acts.view(curr_bs, H_W, sae.d_sae)
         pooled = acts.mean(dim=1)  # (B, d_sae)
-        # pooled = F.normalize(pooled, dim=1)  # 이걸 왜 하지. 이미지별로 L2 norm을 할 이유가 없어. SAE 벡터인데 이걸 L2 norm을 왜 해. 물론 DPT할때는 아마 크게 영향은 안줬을꺼야. 그래도 모르긴 한다. 이거 없이 다시 뽑아야해.
+        
 
         # Save ALL neurons (no alive_mask filtering!)
         X_list.append(pooled.cpu().numpy())
@@ -339,7 +308,7 @@ def make_balanced_loader(
             )
         logger.info(f"  Matched: {len(refidx_list)}/{len(all_uids)} UIDs from CSVs")
 
-        # [CRITICAL RESTORE] CSV 파일에 없는 OOD 클래스 (Label 4 이상, 예: Alpha-Synuclein) 무조건 포함!
+        
         n_ood = 0
         for rel_key, ridx in rel_to_refidx.items():
             if int(refs[ridx].label) >= 4:

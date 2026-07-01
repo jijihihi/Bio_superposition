@@ -3,7 +3,7 @@ set -e
 
 BASE="/home/ubuntu/model-east3"
 
-CELL_DEATH_CSV="/home/ubuntu/model-east3/이미지별_세포사멸율_7200.csv"
+CELL_DEATH_CSV="${BASE_DIR}/CellDeath_QC_patches/per_image_celldeath_rate.csv"
 
 echo "=========================================================================="
 echo " 0. SAE Local Linearity (KNN Std) Evaluation"

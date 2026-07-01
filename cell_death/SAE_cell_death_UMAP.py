@@ -2,13 +2,13 @@
 # ==============================================================================
 # Simplified UMAP Cell Death Visualization
 #
-# SAE cache를 입력받아 지정된 각 mutation(e.g., SNCA, GBA, LRRK2)별로
-# 독립적으로 UMAP을 수행한 뒤, 세포사멸율(cell_death rate)을 색상으로 표시합니다.
+
+
 #
 # Usage:
 # !python cell_death/3D_cell_death_plot.py \
 #     --sae_cache "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/caches_per_image_centering/SAE_vector_per_image_centering/CNN_seed123_SAE/sae_gap_d8192_lam800_normrestored_withnewclass.npz" \
-#     --cell_death_csv "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv" \
+
 #     --classes SNCA LRRK2 GBA \
 #     --umap_n_neighbors 15 \
 #     --umap_min_dist 0.2 \
@@ -155,7 +155,7 @@ def get_args():
         help="Mutations to plot separately.",
     )
 
-    # Colab에서 그냥 실행 시 args 파싱 에러 방지
+    
     if "ipykernel" in sys.modules and len(sys.argv) == 1:
         return p.parse_known_args(args=[])[0]
     return p.parse_args()

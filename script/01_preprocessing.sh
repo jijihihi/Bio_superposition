@@ -11,7 +11,7 @@
 
 set -e
 
-# 1. 절대경로 앵커링: 어디서 실행하든 스크립트가 위치한 폴더로 안전하게 이동
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE}")" && pwd)"
 
 VENV_DIR=""
@@ -21,7 +21,7 @@ elif [ -d "$SCRIPT_DIR/../../.venv" ]; then
     VENV_DIR="$SCRIPT_DIR/../../.venv"
 fi
 
-# 2. 가상환경 내부 파이썬 알맹이를 직접 지정 (윈도우/맥/리눅스 자동 호환)
+
 if [ -n "$VENV_DIR" ]; then
     if [ -d "$VENV_DIR/Scripts" ]; then
         VENV_PYTHON="$VENV_DIR/Scripts/python"  # Windows
@@ -35,7 +35,7 @@ else
 fi
 
 # =========================================================
-# 3. 텐서플로우 버전 및 환경 정상 검증
+
 # =========================================================
 echo "[*] Checking TensorFlow installation..."
 $VENV_PYTHON -c "import tensorflow as tf; print('TensorFlow Version:', tf.__version__)"

@@ -56,7 +56,7 @@ class GatedSAE(nn.Module):
         )
         self.b_mag = nn.Parameter(
             torch.zeros(self.d_sae)
-        )  # 일반적인 bias ReLU에 들어가는.
+        )  
 
         # Gating encoder (W_gate, b_gate)
         # We initialize b_gate to 1.0 (positive) to prevent neurons from being dead
@@ -65,7 +65,7 @@ class GatedSAE(nn.Module):
             # W_gate shares with W_mag (handled by property W_gate_effective)
             self.b_gate = nn.Parameter(
                 torch.ones(self.d_sae) * 0.1
-            )  # 이 gate를 켤지 말지 결정.
+            )  
             # Register dummy so state_dict knows we're tying
             self.register_buffer("_tied_weights_flag", torch.tensor(1))
         else:

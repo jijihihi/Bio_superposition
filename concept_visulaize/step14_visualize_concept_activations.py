@@ -6,7 +6,7 @@
 # ==============================================================================
 
 
-# 이거할때는 GAP_csv 기준. GAP_csv는 dead threshold가 5e-4 기준으로 했기때문에 통과된 피처맴 개수가 적은것.
+
 
 
 import argparse
@@ -77,33 +77,33 @@ spatial activation map에 L2 norm을 적용하는 것은 의미가 없습니다.
 
 """
 
-## 시각화할때 control vs mutation 각 쌍으로 해서 mutation이 더 많이 나타난면, 그 거 선택 DE filter
-# 이 떄 bilinear interpolation할때 그 mutation에서 많이 나타난다고 하면, 그 mutation만 bilinear interpolation해서 필터링 함.
-# 이떄 SNCA와 GBA 모두에서 control보다 많이 나타나는거라고 하면, 둘 다 나오게끔. Top-20에서 순위대로 했을때 SNAC GBA 순서대로 해서 다 보이게끔.
-# control - high인 경우에는, 모든 class 에서 top-k를 뽑느다. control vs all mutation이어서 정확하지 않을 수 있다.
+
+
+
+
 
 
 # %matplotlib inline
 # import logging
 # logging.basicConfig(level=logging.INFO, force=True)
 
-# ##이거하자
+
 # %matplotlib inline
 # import sys
 # sys.argv = [
 #     "step14",
-#     "--features_cache","/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_sparsity3200_loss_L2norm곱해줌/features_cache_stage5_out_normrestored_all.npz",   # L2 norm 된 상태. gap_csv 만들때와 동일하게. strict 사용.
-#     "--sae_ckpt", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_sparsity3200_loss_L2norm곱해줌/stage5_out_d4096_gated_sp3200.0_aux0.03125_tied_ep008.pt",
-#     "--cell_death_csv", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv",
+
+
+
 #     "--model_state_path", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/best_model.pt",
 #     "--shard_root", "/content/wds_shards",
 #     "--save_dir", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87",
-#     "--output_dir", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_sparsity3200_loss_L2norm곱해줌/concept_by_gap_csv_d4096_sp3200_max_0.58",
+
 #     "--concept_ids", "de_filter_csv",
 #    "--max_gini", "0.75",
 #     "--de_min_log2fc", "0.58",
 #     "--mut_only",
-#     "--gap_csv", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_sparsity3200_loss_L2norm곱해줌/gated_sae_stage5_out_d4096_sp3200.0_aux0.03125_tied_class_gap_means.csv"
+
 
 
 # ]
@@ -115,41 +115,41 @@ spatial activation map에 L2 norm을 적용하는 것은 의미가 없습니다.
 # import logging
 # logging.basicConfig(level=logging.INFO, force=True)
 
-# ##이거하자
+
 # %matplotlib inline
 # import sys
 # sys.argv = [
 #     "step14",
-#     "--features_cache","/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_sparsity3200_loss_L2norm곱해줌/features_cache_stage5_out_normrestored_all.npz",   # L2 norm 된 상태. gap_csv 만들때와 동일하게. strict 사용.
-#     "--sae_ckpt", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_sparsity3200_loss_L2norm곱해줌/stage5_out_d4096_gated_sp3200.0_aux0.03125_tied_ep008.pt",
-#     "--cell_death_csv", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv",
+
+
+
 #     "--model_state_path", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/best_model.pt",
 #     "--shard_root", "/content/wds_shards",
 #     "--save_dir", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87",
-#     "--output_dir", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_sparsity3200_loss_L2norm곱해줌/concept_by_gap_csv_d4096_sp3200_max_0.58_superposition_interpretable",
+
 #     "--concept_ids", "de_filter_csv",
 #    "--max_gini", "1.0",
 #     "--de_min_log2fc", "0.58",
 #     "--mut_only",
-#     "--gap_csv", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_sparsity3200_loss_L2norm곱해줌/gated_sae_stage5_out_d4096_sp3200.0_aux0.03125_tied_class_gap_means.csv"
+
 #     ]
 # from concept_visulaize.step14_visualize_concept_activations import main
 # main()
 
-# bilinear interpolation을 할때 dead threshold를 설정 안했고 alive 로 그냥 햇기 때문에 "--dead_threshold", "5e-4" 된 상태로 된거. 이거는 usage ema 기준. GAP_csv 뽑아낸 방식 (strict)으로 DE filter한것.abs
-# 그렇다면 sparsity 800 인 경우도, dead threshold 잘 만 설정하면 보기 좋은 애들 많이 나오는거 아닐까?
+
+
 
 
 ### pseudotime heatmap
 
-# pseudotime heatmap 위홰서 sparsity 800 시각화
+
 # %matplotlib inline
 # import sys
 # sys.argv = [
 #     "step14",
-#     "--features_cache","/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_seed856_no_L2norm_loss/features_cache_stage5_out_normrestored_all_no_SAE_GAP_L2_norm_again_d8192_sp800.npz",   # L2 norm 된 상태. gap_csv 만들때와 동일하게. strict 사용.
+
 #     "--sae_ckpt", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_seed856_no_L2norm_loss/stage5_out_d8192_gated_sp800.0_aux0.03125_tied_ep008.pt",
-#     "--cell_death_csv", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv",
+
 #     "--model_state_path", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/best_model.pt",
 #     "--shard_root", "/content/wds_shards",
 #     "--save_dir", "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87",
@@ -814,7 +814,7 @@ def compute_concept_activations_for_images(
             fmap = encoder.forward_feature_maps(xb, which=which_layer)
 
         # Normalize same as training: GAP-scalar norm
-        # config 1에서 dfualt로 지정한 --token_norm_mode", type=str, default="gap-scalar" 이렇게 되서 상관없다. 즉 양 보정하는 효과.
+        
         B = fmap.size(0)
         gap = fmap.mean(dim=(2, 3))
         gap_norm = gap.norm(dim=1, keepdim=True).view(B, 1, 1, 1).clamp_min(1e-12)
@@ -1185,10 +1185,10 @@ def visualize_concept(
         # CNN input view: SafeInstanceNormalize → global scale to uint8
         # Key: scale all 3 channels together (not per-channel) to show
         # how InstanceNorm equalizes channel intensities — THIS is what CNN sees
-        # 채널별로 safenormalization 후 채널별로 percnetile해서 linear scaling을 하면, IN해도 각 채널별로 밝기 순위는 남는데 여기서 linear scaling을 하면 가장 밝은애는 255 가장 어두운 애는 0으로 만들어 버리기때문에 IN 없이 lienar scaling하는 것과 아무런 의미가 없어.
-        # 대신 global percentil로 scaling을 하면. 많이 밝은 애는 최대값에 많이 포함된다. 이 percentil에 많이 포함 안되는 채널도 있겠지. 걔는 가장 밝은 픽셀은 없겠지
-        # p99에 포함되지 않을 정도로만 밝은 애들만 있는 채널의 경우에는 global percentil하면 포함이 안된다. 따라서 그렇게 밝은 애는 없다.
-        # 이게 IN 한 CNN에 넣어주는 이미지와 비슷하다. 왜냐하면 채널별로 IN했을때 평균 0 표준편차 1 되지나 tail은 다 다르다. 근데 이걸 단순히 linear scaling하면 tail이 손상되는 효과가 있기 때문이다.
+        
+        
+        
+        
         normalize = SafeInstanceNormalize(threshold=0.01)
         cnn_float = img_u16.astype(np.float32) / 65535.0
         cnn_tensor = torch.from_numpy(cnn_float).permute(2, 0, 1)  # (3, H, W)

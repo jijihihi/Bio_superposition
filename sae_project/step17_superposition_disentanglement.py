@@ -67,7 +67,7 @@ def plot_heatmaps(data_dict, title_prefix, save_path_base, gamma=1.0):
         ax.set_yticks([])
         cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, extend="both")
 
-        # Colorbar 눈금도 -0.4 ~ 0.4에 맞춰서 수정
+        
         cbar.set_ticks([-0.4, -0.2, 0.0, 0.2, 0.4])
         cbar.set_ticklabels(["-0.4", "-0.2", "0.0", "0.2", "0.4"])
 

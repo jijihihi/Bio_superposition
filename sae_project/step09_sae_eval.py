@@ -20,8 +20,8 @@ from sae_project.step06_gated_sae import GatedSAE
 logger = get_logger("sae_eval")
 
 
-## GAP CSV 만들때. 이때는 StrictPlateBalancedBatchSampler 로 배치 센터링 한다. 학습 평가 맥락에서는 올바르다.
-# GAP_csv 만들때 restore_token_norm 없이, L2 정규화된 토큰의 raw SAE activation sum 기반입니다.
+
+
 
 # ==============================================================================
 # Linear Probe
@@ -329,7 +329,7 @@ def evaluate_concepts_for_sae(
     trainer,
     train_loader: DataLoader,
     val_loader: DataLoader,
-    test_loader: DataLoader,  # test loader 인자로 받음.
+    test_loader: DataLoader,  
     args,
     exp_config: dict,
 ) -> dict:

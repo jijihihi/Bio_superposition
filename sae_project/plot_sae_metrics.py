@@ -9,15 +9,15 @@ import pandas as pd
 import seaborn as sns
 
 # "Results are reported as \(\text{mean} \pm \text{standard deviation}\) across 8 random seeds
-# (where the score of each seed is the average of its inner products). 내적 평균의 경우
 
-# --- 일러스트레이터 편집 최적화 설정 ---
+
+
 plt.rcParams["svg.fonttype"] = (
-    "none"  # SVG 저장 시 텍스트를 패스로 변환하지 않고 텍스트 형태로 유지
+    "none"  
 )
-plt.rcParams["pdf.fonttype"] = 42  # TrueType 폰트로 저장 (가장 추천)
-plt.rcParams["ps.fonttype"] = 42  # PostScript 출력도 함께 표준화
-# Arial이 없을 경우 코랩 기본 폰트(Liberation Sans 등)로 자동 대체하여 폰트 경고 방지
+plt.rcParams["pdf.fonttype"] = 42  
+plt.rcParams["ps.fonttype"] = 42  
+
 plt.rcParams["font.family"] = "sans-serif"
 plt.rcParams["font.sans-serif"] = [
     "Arial",
@@ -25,7 +25,7 @@ plt.rcParams["font.sans-serif"] = [
     "DejaVu Sans",
     "sans-serif",
 ]
-plt.rcParams["axes.unicode_minus"] = False  # 마이너스 기호 깨짐 방지
+plt.rcParams["axes.unicode_minus"] = False  
 
 
 def main():
@@ -69,7 +69,7 @@ def main():
         help="Directory containing effective rank JSON files",
     )
 
-    # Colab(Jupyter) 환경에서 셀 실행 시 발생하는 argument 에러 방지
+    
     import sys
 
     if "ipykernel" in sys.modules:
@@ -78,7 +78,7 @@ def main():
         args, _ = parser.parse_known_args()
 
     # 1. Load True L0 and FVU from all_experiments_summary.csv (Preferred)
-    # 폴더 구조: base_dir / MoCo_seed42 / SAE_dim... / all_experiments_summary.csv
+    
     pattern_summary = os.path.join(
         args.base_dir, "*", "*", "all_experiments_summary.csv"
     )
@@ -245,7 +245,7 @@ def main():
     if os.path.exists(welch_csv_path):
         print(f"✅ Found disentanglement_results.csv at: {welch_csv_path}")
         df_welch = pd.read_csv(welch_csv_path)
-        # [DEBUG CODE START] 나중에 지우기 쉽게 표시
+        
         print("\n=== DEBUG: df_welch columns ===")
         print(df_welch.columns.tolist())
         print("=== DEBUG END ===\n")
@@ -488,10 +488,10 @@ def main():
             spine.set_edgecolor("black")
             spine.set_linewidth(1.5)
 
-    # 플롯 그릴 때는 Lambda=0 (스파시티 없음) 제외 (L0가 너무 커서 그래프가 망가짐)
+    
     df_plot = df_merged[df_merged["Lambda"].astype(float) != 0.0].copy()
 
-    # 1x4 통합 Figure 생성 (한 줄에 4개)
+    
     fig, axes = plt.subplots(1, 4, figsize=(28, 6.5))
 
     plot_pareto_fixed_lambda(
@@ -575,7 +575,7 @@ def main():
             alive_m, alive_s = sub["N_Alive"].mean(), sub["N_Alive"].std()
             fvu_m, fvu_s = sub["FVU"].mean(), sub["FVU"].std()
 
-            # --- [수정 구간] Test_Acc 백분율(%) 변환 로직 추가 ---
+            
             acc_vals = sub["Test_Acc"].astype(float)
             if not acc_vals.empty and acc_vals.mean() <= 1.0:
                 acc_vals = acc_vals * 100

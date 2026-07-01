@@ -2,21 +2,21 @@
 # Supervised MoCo (large queue)  + strict Plate/Line balanced batching
 # - EMA teacher (model_k) produces keys k (no grad)
 # - Large FIFO queue stores (feat, label) -> K, YK
-# - Loss uses your supervised_contrastive_q_vs_k 그대로: q vs (k + queue)
-# - XBM 제거
-# - Optimizer: SGD(+momentum) 추천 (renorm 매 step과 궁합)
+
+
+
 # - Optional symmetric loss
-# - Per-epoch Linear Probe(3 epochs) for early stopping (그대로 유지)
+
 # ==============================================================================
 
 
-## CNN encoder 구조.
 
-## stem (3->64. resblock 없음) 그 뒤로 resblock 있음
+
+
 # stage2 (64 -> 128) 2
 # stage3 (128 -> 256) 2
 # stage4 (256 -> 512) 3
-# stage5 (512 -> 512) 3  resblock은 4개니까. stage4_out
+
 # refine (512 -> 512) 1  refinement block output
 
 # "We extract intermediate feature maps from two locations in the encoder:
@@ -599,7 +599,7 @@ class Trainer:
         for p in self.model_k.parameters():
             p.requires_grad = False
 
-        # SGD 추천 (renorm 매 step과 궁합)
+        
         self.opt = optim.SGD(
             self.model_q.parameters(),
             lr=float(args.lr),
@@ -684,7 +684,7 @@ class Trainer:
 
     def train_epoch(self, epoch: int):
         self.model_q.train()
-        self.model_k.eval()  # EMA teacher는 eval 유지
+        self.model_k.eval()  
 
         total_loss = 0.0
         total_grad_norm = 0.0
@@ -785,15 +785,15 @@ class Trainer:
                 self.scaler.update()
                 did_step = True
 
-            # (중요) queue enqueue는 key(k)로, step/EMA 업데이트와 독립
+            
             with torch.no_grad():
                 self.queue.enqueue(k, y)
 
-            # renorm (너는 매 step)
+            
             if did_step and (self.global_step % int(self.args.renorm_every) == 0):
                 renorm_unit_per_out_channel_(self.model_q)
 
-            # EMA update: model_q가 업데이트된 다음에 model_k를 따라가게
+            
             with torch.no_grad():
                 momentum_update_(self.model_q, self.model_k, float(self.args.moco_m))
                 if self.args.renorm_k_every > 0 and (
@@ -900,7 +900,7 @@ class Trainer:
                     tqdm.write("Early Stopping Triggered")
                     break
 
-            # per-epoch CSV (논문 figure 용)
+            
             self.epoch_csv.log(
                 {
                     "epoch": epoch,
@@ -958,8 +958,8 @@ def get_args():
 
     # Train (SGD)
     p.add_argument("--epochs", type=int, default=100)
-    p.add_argument("--lr", type=float, default=0.1)  # SGD 권장 시작
-    p.add_argument("--wd", type=float, default=1e-4)  # SGD L2: 보통 작게
+    p.add_argument("--lr", type=float, default=0.1)  
+    p.add_argument("--wd", type=float, default=1e-4)  
     p.add_argument("--sgd_momentum", type=float, default=0.9)
     p.add_argument("--sgd_nesterov", action="store_true")
 
@@ -980,7 +980,7 @@ def get_args():
 
     # MoCo (EMA + queue)
     p.add_argument("--moco_m", type=float, default=0.995)
-    p.add_argument("--queue_size", type=int, default=65536)  # 64k 추천 시작
+    p.add_argument("--queue_size", type=int, default=65536)  
     p.add_argument("--queue_dtype_fp16", action="store_true")  # on -> fp16 queue
 
     # Linear Probe

@@ -1,10 +1,10 @@
 # ==============================================================================
-# Effective Rank Analysis — CNN vs SAE 정보 풍부도 비교
+
 #
-# SVD 기반 effective rank = exp(H(σ/Σσ)) 로 feature matrix의
-# 실질적 차원 수(정보 풍부도)를 측정.
+
+
 #
-# 6가지 조건에서 erank 계산:
+
 #   1) raw (no filter, no norm, no PCA)
 #   2) raw → PCA
 #   3) raw → std → PCA

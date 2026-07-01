@@ -1,18 +1,18 @@
 # ==============================================================================
 # Local Linearity Verification — KNN cell_death Rate Standard Deviation
 #
-# Feature space에서 가까운 이미지들이 비슷한 세포사멸율을 가지는지 검증.
-# 이거 잘 보면 ridge regression에서 예측이 된다고 해서 local로 비슷한게 아닐 수 있다.
-# 이 스크립트는 KNN 이웃들의 cell_death rate 표준편차가 해당 클래스 전체
-# 표준편차보다 유의미하게 작은지를 검증한다.
+
+
+
+
 #
-# CNN feature vector와 SAE feature vector 각각에 대해 수행.
+
 #
 # Usage (Colab):
 # !python -m cell_death.local_knn_std \
 #     --cnn_cache "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/CNN_GAP/cnn_gap_stage5_out_all.npz" \
 #     --sae_cache "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/MoCo_seed87/SAE_seed856_no_L2norm_loss/features_cache_stage5_out_normrestored_all_no_SAE_GAP_L2_norm_again_d8192_sp800.npz" \
-#     --cell_death_csv "/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv" \
+
 #     --k_neighbors 5 10 15 \
 #     --n_permutations 1000 \
 #     --gap_l2_norm \
@@ -22,7 +22,7 @@
 
 # dpt. L2 norm → DE filter → log_std → PCA → KNN (Euclidean)
 
-# min cv 할때 전체 클래스 기준으로 cv 높은거만 남긴다.
+
 
 import argparse
 import json
@@ -50,9 +50,9 @@ plt.rcParams["pdf.fonttype"] = 42
 sns.set_style("ticks")
 
 
-# KNN은 valid_mask로 필터된 셀들만으로 피팅됩니다.
-# 즉, 세포사멸 정보가 없는 이미지는 KNN 이웃 탐색 대상 자체에서 제외되어 있으므로,
-# 이웃의 cell_death rate를 구할 때 NaN이 나올 일이 없습니다.
+
+
+
 
 
 # ==============================================================================
@@ -1079,13 +1079,13 @@ def main():
     for (source, mut, k), res in sorted(all_results.items()):
 
         # Save per-sample local_stds and ratios for later MWU
-        # CNN seeds / SAE seeds 각각 NPZ 모아서 pool → per-(mutation, k) MWU
+        
         npz_filename = os.path.join(out_dir, f"ratios_{source}_{mut}_k{k}.npz")
         np.savez_compressed(
             npz_filename,
-            local_stds=res["local_stds"],  # raw std (N,) — MWU용 핵심
+            local_stds=res["local_stds"],  
             ratios=res["ratios"],  # local_std / global_std (N,)
-            global_std=np.array([res["global_std"]]),  # scalar를 배열로
+            global_std=np.array([res["global_std"]]),  
         )
 
         json_results.append(

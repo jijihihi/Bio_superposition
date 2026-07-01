@@ -165,7 +165,7 @@ def load_npz_pooled_stds(base_dir, fixed_log2fc=-1):
 
     pattern = os.path.join(base_dir, "**", "ratios_*.npz")
     for npz_path in glob.glob(pattern, recursive=True):
-        # log2fc 필터
+        
         if fixed_log2fc >= 0:
             parts = npz_path.replace("\\", "/").split("/")
             matched = False
@@ -186,7 +186,7 @@ def load_npz_pooled_stds(base_dir, fixed_log2fc=-1):
 
         try:
             data = np.load(npz_path, allow_pickle=False)
-            # local_stds 우선; 구버전 NPZ는 ratios fallback
+            
             if "local_stds" in data:
                 arr = data["local_stds"]
             elif "ratios" in data:
@@ -199,7 +199,7 @@ def load_npz_pooled_stds(base_dir, fixed_log2fc=-1):
         except Exception as e:
             print(f"  [SKIP NPZ] {npz_path}: {e}")
 
-    # seed별 배열을 concat → 하나의 큰 배열
+    
     result = defaultdict(lambda: defaultdict(dict))
     for source in pooled:
         for mut in pooled[source]:
@@ -232,7 +232,7 @@ def compute_mwu_from_pooled(pooled_stds, mutations):
                 continue
             stat, p = stats.mannwhitneyu(sae_arr, cnn_arr, alternative="less")
             n1, n2 = len(sae_arr), len(cnn_arr)
-            r_rb = 1 - (2 * stat) / (n1 * n2)  # > 0 이면 SAE < CNN
+            r_rb = 1 - (2 * stat) / (n1 * n2)  
             mwu_results[mut][k] = {
                 "stat": float(stat),
                 "p": float(p),
@@ -298,7 +298,7 @@ def permutation_test_morans_i(cnn_vals, sae_vals, n_perm=0, seed=42):
     observed_delta = np.mean(sae) - np.mean(cnn)
 
     if n_perm == 0:
-        # Exhaustive: C(n_total, n2) 조합 전수
+        
         deltas = []
         for sae_idx in combinations(range(n_total), n2):
             sae_set = set(sae_idx)
@@ -314,7 +314,7 @@ def permutation_test_morans_i(cnn_vals, sae_vals, n_perm=0, seed=42):
             d = np.mean(pooled[perm[:n2]]) - np.mean(pooled[perm[n2:]])
             deltas[i] = d
 
-    # 단측 p: null 중 observed_delta 이상인 비율
+    
     p_value = np.mean(deltas >= observed_delta)
     return observed_delta, p_value, len(deltas), deltas
 
@@ -476,7 +476,7 @@ def plot_morans_i_trend(
         axes = [axes]
 
     for ax, mut in zip(axes, mutations):
-        y_all = []  # y range 추적
+        y_all = []  
         for source in ["CNN", "SAE"]:
             if source not in morans_data or mut not in morans_data[source]:
                 continue
@@ -564,7 +564,7 @@ def plot_morans_i_trend(
                         color="black",
                     )
 
-        # y=0 reference: Moran's I ~ 0 는 무작위 수체와 동일
+        
         ax.axhline(0, color="gray", linestyle=":", linewidth=1, alpha=0.5)
 
         ax.set_xlabel("K (neighbors)", fontsize=12)
@@ -834,7 +834,7 @@ def main():
         print(f"  Sources: {list(mean_data.keys())}")
         print(f"  Mutations: {mutations}")
 
-        # ── Per-sample pooled MWU (각 seed 의 local_stds 배열을 concat하여 MWU) ──
+        
         print(f"\nLoading per-sample NPZ arrays for pooled MWU...")
         pooled_stds = load_npz_pooled_stds(args.base_dir, fixed_log2fc=log2fc_filter)
         mwu_pooled = compute_mwu_from_pooled(pooled_stds, mutations)
@@ -848,7 +848,7 @@ def main():
         print(f"\n{hdr}")
         print("-" * len(hdr))
 
-        mwu_pvals_for_plot = defaultdict(dict)  # star 어노테이션용
+        mwu_pvals_for_plot = defaultdict(dict)  
 
         for mut in mutations:
             ks = set()
@@ -896,11 +896,11 @@ def main():
                 )
 
         # ── Moran's I: Exact permutation test (seed-level scalar) ──
-        # 각 seed마다 Moran's I scalar 1개 → CNN 4값 vs SAE 4값
-        # Seed가 적어서 MWU 대신 라벨 permutation (C(8,4)=70 exhaustive)
+        
+        
         morans_data = load_morans_i_from_jsons(json_files)
 
-        # n_total 확인: 반복 가능 요소 수 여부 판단
+        
         sample_n_cnn = max(
             (
                 len(v)
@@ -919,7 +919,7 @@ def main():
         )
         n_total_perm = sample_n_cnn + sample_n_sae
 
-        # C(12,6)=924 이하면 exhaustive, 초과시 9999 random
+        
         use_exhaustive = n_total_perm <= 12
         n_perm_moran = 0 if use_exhaustive else 9999
         perm_label = "exhaustive" if use_exhaustive else f"n_perm={n_perm_moran}"
@@ -964,7 +964,7 @@ def main():
                     f"{p:.4f} {star:5s} | {n_act:8d}"
                 )
 
-        # ── label (모든 plot 공통으로 사용) ──
+        
         exp_label = args.experiment
         if log2fc_filter >= 0:
             exp_label = f"{args.experiment}_log2fc{log2fc_filter}"

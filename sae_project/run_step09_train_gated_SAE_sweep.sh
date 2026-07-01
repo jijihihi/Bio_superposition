@@ -1,7 +1,7 @@
 #!/bin/bash
 
 
-# 공간적 위치에 L2norm 곱하는 방식 (loss function에 가중치 주기) 으로 하려면 token_l2_norm 곱하면 된다.
+
 
 export PYTHONPATH="$(cd .. && pwd):$PYTHONPATH"
 
@@ -41,7 +41,7 @@ for CNN_SEED in "${CNN_SEEDS[@]}"; do
         # SAE Directory naming
         SAE_SAVE_DIR="${MODEL_DIR}/SAE_dim${D_SAE}_lambda${LAMBDA}_seed${SAE_SEED}_no_L2norm_loss"
         
-        # 이미 학습이 완료된 설정인지 자동 검사 (ep008.pt 파일이 존재하면 완료된 것으로 간주하고 스킵)
+        
         if ls ${SAE_SAVE_DIR}/*_ep008.pt 1> /dev/null 2>&1; then
             echo "⏩ Skipping already finished config (ep008.pt exists): CNN_SEED=${CNN_SEED}, d_sae=${D_SAE}, lambda=${LAMBDA}"
             continue
