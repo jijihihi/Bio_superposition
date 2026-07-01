@@ -9,7 +9,7 @@
 #   which_layer : str            — 추출한 layer 이름
 #
 # Usage:
-#   python -m kendall_correlation_coefficient.extract_cnn_gap \
+#   python -m cache_extraction.extract_cnn_gap \
 #       --save_dir /path/to/MoCo_seedXX \
 #       --model_state_path /path/to/best_model.pt \
 #       --shard_root /path/to/wds_shards_tar \

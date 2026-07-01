@@ -21,7 +21,7 @@ from sklearn.preprocessing import StandardScaler
 from xgboost import XGBRegressor
 
 from run_CNN.logging_utils import get_logger
-from kendall_correlation_coefficient.dpt import load_and_match_cell_death, load_features_cache
+from trajectory_inference_pipeline.trajectory_utils import load_and_match_cell_death, load_features_cache
 
 logger = get_logger("cell_death_r2_test_clean")
 

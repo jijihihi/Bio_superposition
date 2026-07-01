@@ -103,7 +103,7 @@ def add_trajectory_arguments(p):
     p.add_argument(
         "--samples_per_class",
         type=int,
-        default=15000,
+        default=10000,
         help="Max samples per class (0 = use ALL). Prioritizes valid cell_death.",
     )
 

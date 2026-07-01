@@ -46,7 +46,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.decomposition import PCA
 
-from kendall_correlation_coefficient.dpt import (apply_normalization,
+from trajectory_inference_pipeline.trajectory_utils import (apply_normalization,
                                                          compute_cv_per_neuron,
                                                          compute_de_neurons,
                                                          load_features_cache)

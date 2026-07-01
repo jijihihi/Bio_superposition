@@ -7,24 +7,33 @@ KS=(15 20 25 30 35)
 
 BASE_CACHE_DIR="/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/caches_per_image_centering"
 APOP_CSV="/content/drive/MyDrive/Final_paper/lambda_labs_moco_only/세포이미지별 사멸율/이미지별_세포사멸율_7200.csv"
-OUT_DIR="${BASE_CACHE_DIR}/DPT_Sweep"
+OUT_DIR="${BASE_CACHE_DIR}/DPT_Sweep_CNNSAE"
 
 mkdir -p "$OUT_DIR"
 
 echo "Starting DPT parameter sweep..."
 
-for SEED in "${SEEDS[@]}"; do
-  CACHE_FILE="${BASE_CACHE_DIR}/CNN_seed${SEED}_SAE/sae_gap_d8192_lam800_normrestored_withnewclass.npz"
-  
-  if [ ! -f "$CACHE_FILE" ]; then
-    echo "Warning: Cache file not found for seed $SEED: $CACHE_FILE"
-    continue
-  fi
+MODELS=("CNN" "SAE")
 
-  for PCA in "${PCAS[@]}"; do
-    for K in "${KS[@]}"; do
-      echo "--------------------------------------------------------"
-      echo "Running DPT for SEED=$SEED, PCA=$PCA, K=$K"
+for SEED in "${SEEDS[@]}"; do
+  for MODEL in "${MODELS[@]}"; do
+    if [ "$MODEL" == "CNN" ]; then
+      CACHE_FILE="${BASE_CACHE_DIR}/CNN_seed${SEED}/cnn_gap_stage5_out_all.npz"
+      NORM="none"
+    else
+      CACHE_FILE="${BASE_CACHE_DIR}/CNN_seed${SEED}_SAE/sae_gap_d8192_lam800_normrestored_withnewclass.npz"
+      NORM="log_std"
+    fi
+
+    if [ ! -f "$CACHE_FILE" ]; then
+      echo "Warning: Cache file not found for seed $SEED, model $MODEL: $CACHE_FILE"
+      continue
+    fi
+
+    for PCA in "${PCAS[@]}"; do
+      for K in "${KS[@]}"; do
+        echo "--------------------------------------------------------"
+        echo "Running DPT for MODEL=$MODEL, SEED=$SEED, PCA=$PCA, K=$K"
       
       python -m trajectory_inference_pipeline.pairwise_dpt \
         --features_cache "$CACHE_FILE" \
@@ -34,11 +43,11 @@ for SEED in "${SEEDS[@]}"; do
         --pca_dim $PCA \
         --seed $SEED \
         --filter_mode "none" \
-        --min_cv 0.0 \
+        --min_cv 0.1 \
         --de_adj_p 1.0 \
         --de_min_log2fc 0.0 \
         --dead_threshold 1e-5 \
-        --norm "log_std" \
+        --norm "$NORM" \
         --gap_l2_norm \
         --root_mode "diffmap" \
         --gam_splines 8 \
@@ -47,6 +56,7 @@ for SEED in "${SEEDS[@]}"; do
         --gpu \
         --no_plot
         
+    done
     done
   done
 done

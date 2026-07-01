@@ -56,7 +56,7 @@ logger = get_logger("visualize_concept")
 concept 선별(DE)과 heatmap 시각화는 분리해서 생각해야 합니다:
 
 1. Concept 선별 (DE filter) → normrestored + L2 norm ✅
-features_cache에 normrestored + L2 norm된 것을 넣으면 dpt_kendall과 동일한 기준으로 DE가 뽑힙니다. step14에 --features_cache로 해당 cache를 넣으면 됩니다. 이건 이미 된 겁니다.
+features_cache에 normrestored + L2 norm된 것을 넣으면 dpt과 동일한 기준으로 DE가 뽑힙니다. step14에 --features_cache로 해당 cache를 넣으면 됩니다. 이건 이미 된 겁니다.
 
 2. 이미지 랭킹 (top-K 선택) → normrestored만, L2 norm은 안 하는게 좋음
 step14의 
@@ -575,7 +575,7 @@ def select_concepts_by_de(
     else:
         alive_indices = np.arange(X.shape[1])
 
-    # Load superclasses from cell_death CSV (same matching logic as dpt_kendall.py)
+    # Load superclasses from cell_death CSV (same matching logic as dpt.py)
     import csv as csv_mod
 
     # Build uid_to_superclass from cell_death CSV

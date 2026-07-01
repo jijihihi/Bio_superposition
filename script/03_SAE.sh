@@ -150,7 +150,7 @@ echo "🏁 Linear Probe evaluation complete! Results saved to ${PROBE_RESULTS_CS
 
 
 # ==============================================================================
-# 5. Superposition Disentanglement (Mean/Max IP & Heatmaps)
+# 5. Superposition Disentanglement 
 # ==============================================================================
 DISENTANGLEMENT_OUT="${BASE}/refactoring/disentanglement"
 mkdir -p "${DISENTANGLEMENT_OUT}"

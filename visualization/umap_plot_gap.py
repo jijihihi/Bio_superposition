@@ -38,7 +38,7 @@ except ImportError:
     os.system("pip -q install umap-learn")
     import umap
 
-from kendall_correlation_coefficient.dpt import load_and_match_cell_death
+from trajectory_inference_pipeline.trajectory_utils import load_and_match_cell_death
 from run_CNN.logging_utils import get_logger
 
 logger = get_logger("umap_plot_gap")
@@ -95,7 +95,7 @@ def main():
     # -------------------------------------------------------------------------
     # 0. Filter by Cell Death First
     # -------------------------------------------------------------------------
-    from kendall_correlation_coefficient.dpt import load_and_match_cell_death
+    from trajectory_inference_pipeline.trajectory_utils import load_and_match_cell_death
     logger.info("--- Loading Cell Death Rates and Filtering ---")
     cell_death_rates = load_and_match_cell_death(args.cell_death_csv, uids)
     

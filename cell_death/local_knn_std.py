@@ -104,7 +104,7 @@ def get_args():
 
 
 
-    # PCA (applied AFTER normalization, BEFORE KNN — matches dpt_kendall.py)
+    # PCA (applied AFTER normalization, BEFORE KNN — matches dpt.py)
     p.add_argument(
         "--pca_dim",
         type=int,
@@ -142,19 +142,19 @@ def get_args():
         default=0,
         help="Max samples per class (0 = use ALL). "
         "Prioritizes samples with valid cell_death. "
-        "Set to 5000 to match dpt_kendall.py default.",
+        "Set to 5000 to match dpt.py default.",
     )
 
     return p.parse_args()
 
 
 # ==============================================================================
-# Load features (reuse pattern from dpt_kendall.py main)
+# Load features (reuse pattern from dpt.py main)
 # ==============================================================================
 def load_cache(cache_path, dead_threshold):
     """Load feature cache. Returns X, lines, uids, label.
-    No L2 norm here — handled uniformly in main() to match dpt_kendall.py."""
-    from kendall_correlation_coefficient.dpt import load_features_cache
+    No L2 norm here — handled uniformly in main() to match dpt.py."""
+    from trajectory_inference_pipeline.trajectory_utils import load_features_cache
 
     data = np.load(cache_path, allow_pickle=True)
     cache_keys = list(data.keys())
@@ -636,7 +636,7 @@ def main():
 
     from sklearn.decomposition import PCA
 
-    from kendall_correlation_coefficient.dpt import (
+    from trajectory_inference_pipeline.trajectory_utils import (
         apply_normalization, compute_cv_per_neuron, compute_de_neurons,
         load_and_match_cell_death)
 
@@ -652,12 +652,12 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
 
     # ── Load feature caches ──────────────────────────────────────────
-    # Matches dpt_kendall.py main(): load raw → pre_l2_norm → divide_hw → gap_l2_norm
+    # Matches dpt.py main(): load raw → pre_l2_norm → divide_hw → gap_l2_norm
     # Both CNN and SAE go through the same pipeline.
     sources = {}  # label → (X, superclasses, uids, cell_death)
 
     def _load_and_preprocess(cache_path):
-        """Load cache and apply pre-processing exactly like dpt_kendall.py main()."""
+        """Load cache and apply pre-processing exactly like dpt.py main()."""
         X, lines, uids, label = load_cache(cache_path, args.dead_threshold)
 
         # Optional: per-image L2 normalize BEFORE everything else
@@ -770,7 +770,7 @@ def main():
                 X_use = apply_normalization(X_use, args.norm)
                 logger.info(f"    Applied normalization: '{args.norm}'")
 
-            # ── PCA (after norm, before KNN — matches dpt_kendall.py) ──
+            # ── PCA (after norm, before KNN — matches dpt.py) ──
             if args.pca_dim > 0 and X_use.shape[1] > args.pca_dim:
                 # Fit more PCs for diagnostics, keep pca_dim for downstream
                 n_plot = min(30, X_use.shape[1], X_use.shape[0] - 1)

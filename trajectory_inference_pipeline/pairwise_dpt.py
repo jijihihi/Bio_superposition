@@ -41,7 +41,14 @@ import sys
 import matplotlib.pyplot as plt
 import scanpy as sc
 import seaborn as sns
-from scipy.stats import pearsonr, spearmanr
+from pygam import LinearGAM, s
+from scipy.stats import kendalltau, pearsonr, spearmanr
+
+try:
+    import rapids_singlecell as rsc
+    HAS_RSC = True
+except Exception:
+    HAS_RSC = False
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from trajectory_utils import (MUTATION_COLORS, add_trajectory_arguments,
@@ -257,25 +264,18 @@ def run_pairwise_dpt(args):
         n_diffmap_pair = max(min(args.n_diffmap_comps, X_pair_pca.shape[0] - 2), 2)
         n_dcs_pair = max(min(args.n_dcs, n_diffmap_pair), 2)
 
-        if getattr(args, "gpu", False):
-            try:
-                import rapids_singlecell as rsc
-
-                rsc.get.anndata_to_GPU(adata_pair)
-                rsc.pp.neighbors(
-                    adata_pair, n_neighbors=args.n_neighbors, use_rep="X_pca"
-                )
-                rsc.tl.diffmap(adata_pair, n_comps=n_diffmap_pair)
-                rsc.get.anndata_to_CPU(adata_pair)
-            except ImportError:
-                logger.warning(
-                    "rapids_singlecell not found. Falling back to CPU scanpy."
-                )
-                sc.pp.neighbors(
-                    adata_pair, n_neighbors=args.n_neighbors, use_rep="X_pca"
-                )
-                sc.tl.diffmap(adata_pair, n_comps=n_diffmap_pair)
+        if getattr(args, "gpu", False) and HAS_RSC:
+            rsc.get.anndata_to_GPU(adata_pair)
+            rsc.pp.neighbors(
+                adata_pair, n_neighbors=args.n_neighbors, use_rep="X_pca"
+            )
+            rsc.tl.diffmap(adata_pair, n_comps=n_diffmap_pair)
+            rsc.get.anndata_to_CPU(adata_pair)
         else:
+            if getattr(args, "gpu", False) and not HAS_RSC:
+                logger.warning(
+                    "GPU was requested but rapids_singlecell is not available (cuml missing). Falling back to CPU scanpy."
+                )
             sc.pp.neighbors(adata_pair, n_neighbors=args.n_neighbors, use_rep="X_pca")
             sc.tl.diffmap(adata_pair, n_comps=n_diffmap_pair)
 

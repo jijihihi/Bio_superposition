@@ -264,7 +264,7 @@ def extract_all_sae_features(
 
 
 # ==============================================================================
-# Data Loading (val + test, balanced) — copied from dpt_kendall.py
+# Data Loading (val + test, balanced) — copied from dpt.py
 # ==============================================================================
 def make_balanced_loader(
     args, refs, uid_to_refidx, samples_per_class, seed, include_train=False

@@ -43,7 +43,7 @@ import seaborn as sns
 from matplotlib.colors import Normalize, PowerNorm
 
 from cell_death.local_knn_std import load_cache
-from kendall_correlation_coefficient.dpt import \
+from trajectory_inference_pipeline.trajectory_utils import \
     load_and_match_cell_death
 from run_CNN.logging_utils import SUPERCLASS_MAP, get_logger
 
